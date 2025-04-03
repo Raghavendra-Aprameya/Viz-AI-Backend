@@ -22,3 +22,23 @@ class DBConnectionsRequest(BaseModel):
 
 class DBConnectionResponse(BaseModel):
     db_entry_id: UUID
+
+class UserRequest(BaseModel):
+    username: str
+    password: str
+    email: str
+    
+
+
+class LoginData(BaseModel):
+    username: str
+    password: str
+
+class UserResponse(BaseModel):
+    id: UUID
+    username: str
+    email: str
+
+    class Config:
+        from_attributes = True  # This allows Pydantic to work with SQLAlchemy models
+

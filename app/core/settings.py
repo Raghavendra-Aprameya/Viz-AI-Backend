@@ -2,13 +2,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
 
+    
     DB_URI: str
     SECRET_KEY: str
+    REFRESH_SECRET_KEY: str  # <-- ADD THIS LINE
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int
-    LLM_URI: str
+    # LLM_URI: str
     ENCRYPTION_KEY: str
+
 
     class Config:
         env_file = ".env"
