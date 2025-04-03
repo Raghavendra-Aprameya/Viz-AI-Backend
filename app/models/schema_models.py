@@ -16,12 +16,16 @@ class UserModel(Base):
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 
     user_project_roles = relationship("UserProjectRoleModel", back_populates="user", cascade="all, delete-orphan")
+    api_key = relationship("ApiKeyModel", back_populates="user", uselist=False, cascade="all, delete-orphan")  # Ensures deletion
 
 # API Key Model (For Users)
 class ApiKeyModel(Base):
     __tablename__ = 'api_key'
     user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
     api_key = Column(String, nullable=False)
+
+    user = relationship("UserModel", back_populates="api_key") 
+
 
 # Project Model
 class ProjectModel(Base):
@@ -36,17 +40,17 @@ class ProjectModel(Base):
     project_permissions = relationship("ProjectPermissionModel", back_populates="project", cascade="all, delete-orphan")
     dashboards = relationship("DashboardModel", back_populates="project", cascade="all, delete-orphan")
 
-# Role Model
+# Role Model    
 class RoleModel(Base):
     __tablename__ = 'role'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String, unique=True, nullable=False)
     description = Column(Text, nullable=True)
 
-    user_project_roles = relationship("UserProjectRoleModel", back_populates="role")
-    project_permissions = relationship("ProjectPermissionModel", back_populates="role")
-    dashboard_permissions = relationship("DashboardPermissionModel", back_populates="role")
-    chart_permissions = relationship("ChartPermissionModel", back_populates="role")
+    user_project_roles = relationship("UserProjectRoleModel", back_populates="role", cascade="all, delete-orphan")
+    project_permissions = relationship("ProjectPermissionModel", back_populates="role", cascade="all, delete-orphan")
+    dashboard_permissions = relationship("DashboardPermissionModel", back_populates="role", cascade="all, delete-orphan")
+    chart_permissions = relationship("ChartPermissionModel", back_populates="role", cascade="all, delete-orphan")
 
 # User-Project-Role Mapping (Many-to-Many)
 class UserProjectRoleModel(Base):
@@ -74,7 +78,7 @@ class ProjectPermissionModel(Base):
 
     role = relationship("RoleModel", back_populates="project_permissions")
     project = relationship("ProjectModel", back_populates="project_permissions")
-    permission = relationship("PermissionModel")
+    permission = relationship("PermissionModel",back_populates="project_permissions")
 
 # Dashboard Model
 class DashboardModel(Base):
@@ -114,6 +118,7 @@ class ChartModel(Base):
     is_user_generated = Column(Boolean, nullable=False, default=False)
 
     chart_permissions = relationship("ChartPermissionModel", back_populates="chart", cascade="all, delete-orphan")
+    dashboard_charts = relationship("DashboardChartsModel", back_populates="chart")
 
 # Dashboard-Chart Relationship (Many-to-Many)
 class DashboardChartsModel(Base):
@@ -122,7 +127,7 @@ class DashboardChartsModel(Base):
     chart_id = Column(UUID, ForeignKey("chart.id"), primary_key=True)
 
     dashboard = relationship("DashboardModel", back_populates="charts")
-    chart = relationship("ChartModel")
+    chart = relationship("ChartModel", back_populates="dashboard_charts")
 
 # Chart Permission Model
 class ChartPermissionModel(Base):
@@ -133,7 +138,7 @@ class ChartPermissionModel(Base):
 
     role = relationship("RoleModel", back_populates="chart_permissions")
     chart = relationship("ChartModel", back_populates="chart_permissions")
-    permission = relationship("PermissionModel")
+    permission = relationship("PermissionModel", back_populates="chart_permissions")
 
 # Database Connection Model (For External DBs)
 class DatabaseConnectionModel(Base):
@@ -141,10 +146,10 @@ class DatabaseConnectionModel(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     db_connection_string = Column(Text, nullable=False)
     db_schema = Column(String, nullable=True)
-    db_username = Column(String, nullable=False)
-    db_password = Column(String, nullable=False)
-    db_host_link = Column(String, nullable=False)
-    db_name = Column(String, nullable=False)
+    db_username = Column(String, nullable=True)
+    db_password = Column(String, nullable=True)
+    db_host_link = Column(String, nullable=True)
+    db_name = Column(String, nullable=True)
     project_id = Column(UUID, ForeignKey("project.id"), nullable=False)
 
-    project = relationship("ProjectModel")
+    project = relationship("ProjectModel", back_populates="database_connections")
