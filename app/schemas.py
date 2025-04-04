@@ -62,3 +62,6 @@ class ProjectResponse(BaseModel):
     
     class Config:
         from_attributes = True  # For Pydantic v2, this replaces orm_mode
+
+class ConnectionRequest(BaseModel):
+    project_id: UUID
