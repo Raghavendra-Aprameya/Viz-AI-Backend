@@ -2,8 +2,9 @@ from sqlalchemy import Column, String, ForeignKey, DateTime, func, Text, Boolean
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import UUID
 from uuid import uuid4
+from app.core.base import Base
 
-Base = declarative_base()
+
 
 # User Model
 class UserModel(Base):
@@ -151,7 +152,7 @@ class ChartPermissionModel(Base):
 class DatabaseConnectionModel(Base):
     __tablename__ = 'database_connection'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    name = Column(String, nullable=False)
+    connection_name = Column(String, nullable=False)
     db_connection_string = Column(Text, nullable=False)
     db_schema = Column(String, nullable=True)
     db_username = Column(String, nullable=True)

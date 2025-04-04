@@ -5,23 +5,23 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 
 class DBConnectionRequest(BaseModel):
+    connection_name: str  
     connection_string: Optional[str] = None
     domain: Optional[str] = None
     db_type: Optional[str] = None
     api_key: Optional[str] = None
     password: Optional[str] = None
     host: Optional[str] = None
-    db_name: Optional[str] = None
-    name: Optional[str] = None  # Username
-
-class DBConnectionsRequest(BaseModel):
-    user_id: UUID  # User ID comes from frontend
+    db_name: Optional[str] = None 
+    user_id: UUID
     project_id: UUID
-    role: UUID   
-    connections: List[DBConnectionRequest]
+    role: UUID
+    name: Optional[str] = None         # 👈 Needed
+
 
 class DBConnectionResponse(BaseModel):
     db_entry_id: UUID
+
 
 class UserRequest(BaseModel):
     username: str

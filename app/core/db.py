@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine,inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 from typing import Generator
 from app.core.settings import settings
@@ -14,11 +14,12 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind= engine, autoflush= False)
-
+Base.metadata.create_all(engine)
+inspector = inspect(engine)
+print(f"Tables in database after creation: {inspector.get_table_names()}")
 def get_db() -> Generator:
     """Create the database tables"""
     db = SessionLocal()
-    Base.metadata.create_all(engine)
     try:
         yield db
     finally:
