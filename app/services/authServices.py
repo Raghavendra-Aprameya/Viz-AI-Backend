@@ -1,5 +1,6 @@
 from fastapi import APIRouter, status, Depends, Response, HTTPException
 from sqlalchemy.orm import Session
+from uuid import UUID
 
 import bcrypt
 import jwt
@@ -40,9 +41,9 @@ async def register_user(user: UserRequest, response: Response, db: Session = Non
         db.commit()
         db.refresh(new_user)
 
-        # Generate tokens
-        access_token = create_access_token({"sub": new_user.id})
-        refresh_token = create_refresh_token({"sub": new_user.id})
+        # Generate tokens with UUID
+        access_token = create_access_token(new_user.id)
+        refresh_token = create_refresh_token(new_user.id)
 
         response.status_code = status.HTTP_201_CREATED
         return {
@@ -69,9 +70,9 @@ async def login_user(login_data: LoginData, response: Response, db: Session = No
         if not bcrypt.checkpw(login_data.password.encode(), user.password.encode()):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid password")
 
-        # Generate tokens
-        access_token = create_access_token({"sub": user.id})
-        refresh_token = create_refresh_token({"sub": user.id})
+        # Generate tokens with UUID
+        access_token = create_access_token(user.id)
+        refresh_token = create_refresh_token(user.id)
 
         response.status_code = status.HTTP_200_OK
         return {
@@ -99,7 +100,7 @@ async def refresh_token(refresh_token_str: str, db: Session = None) -> dict:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
         
-        access_token = create_access_token({"sub": user.id})
+        access_token = create_access_token(user.id)
         return {"access_token": access_token}
     
     except jwt.ExpiredSignatureError:

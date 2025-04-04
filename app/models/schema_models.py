@@ -151,6 +151,7 @@ class ChartPermissionModel(Base):
 class DatabaseConnectionModel(Base):
     __tablename__ = 'database_connection'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    name = Column(String, nullable=False)
     db_connection_string = Column(Text, nullable=False)
     db_schema = Column(String, nullable=True)
     db_username = Column(String, nullable=True)
