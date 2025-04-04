@@ -42,3 +42,23 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True  # This allows Pydantic to work with SQLAlchemy models
 
+class ProjectRequest(BaseModel):
+    name: str  
+    description: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+
+class ProjectResponse(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    super_user_id: UUID
+    created_at: datetime
+    
+    
+    class Config:
+        from_attributes = True  # For Pydantic v2, this replaces orm_mode
