@@ -1,12 +1,12 @@
 from fastapi import APIRouter, status, Response, Depends, Request, Path
 from sqlalchemy.orm import Session
-from typing import Listfrom uuid import UUID
+from uuid import UUID
 
 from app.core.db import get_db
 from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest
-from app.services.project import create_project, get_connections
+from app.services.project import create_project
 from app.utils.token_parser import parse_token
-from app.services.db_connection import create_database_connection
+from app.services.db_connection import create_database_connection, get_connections
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
