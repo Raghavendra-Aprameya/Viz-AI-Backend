@@ -4,12 +4,12 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest
+from app.schemas import ProjectRequest, ConnectionRequest
 from app.core.db import get_db
 from app.utils.token_parser import parse_token
 
 
-from app.models.schema_models import ProjectModel 
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel
 
 async def create_project(project: ProjectRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     try:
@@ -49,3 +49,4 @@ async def create_project(project: ProjectRequest, request: Request, response: Re
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
