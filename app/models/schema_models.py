@@ -15,7 +15,7 @@ class UserModel(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 
-    user_project_roles = relationship("UserProjectRoleModel", back_populates="user", cascade="all, delete-orphan")
+    user_project_role = relationship("UserProjectRoleModel", back_populates="user", cascade="all, delete-orphan")
     api_key = relationship("ApiKeyModel", back_populates="user", uselist=False, cascade="all, delete-orphan")  # Ensures deletion
 
 # API Key Model (For Users)
@@ -36,9 +36,10 @@ class ProjectModel(Base):
     description = Column(Text)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
-    user_project_roles = relationship("UserProjectRoleModel", back_populates="project", cascade="all, delete-orphan")
-    project_permissions = relationship("ProjectPermissionModel", back_populates="project", cascade="all, delete-orphan")
+    user_project_role = relationship("UserProjectRoleModel", back_populates="project", cascade="all, delete-orphan")
+    project_permission = relationship("ProjectPermissionModel", back_populates="project", cascade="all, delete-orphan")
     dashboards = relationship("DashboardModel", back_populates="project", cascade="all, delete-orphan")
+    database_connections = relationship("DatabaseConnectionModel", back_populates="project", cascade="all, delete-orphan") 
 
 # Role Model    
 class RoleModel(Base):
@@ -47,8 +48,8 @@ class RoleModel(Base):
     name = Column(String, unique=True, nullable=False)
     description = Column(Text, nullable=True)
 
-    user_project_roles = relationship("UserProjectRoleModel", back_populates="role", cascade="all, delete-orphan")
-    project_permissions = relationship("ProjectPermissionModel", back_populates="role", cascade="all, delete-orphan")
+    user_project_role = relationship("UserProjectRoleModel", back_populates="role", cascade="all, delete-orphan")
+    project_permission = relationship("ProjectPermissionModel", back_populates="role", cascade="all, delete-orphan")
     dashboard_permissions = relationship("DashboardPermissionModel", back_populates="role", cascade="all, delete-orphan")
     chart_permissions = relationship("ChartPermissionModel", back_populates="role", cascade="all, delete-orphan")
 
@@ -59,15 +60,21 @@ class UserProjectRoleModel(Base):
     project_id = Column(UUID, ForeignKey("project.id"), primary_key=True)
     role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
 
-    user = relationship("UserModel", back_populates="user_project_roles")
-    project = relationship("ProjectModel", back_populates="user_project_roles")
-    role = relationship("RoleModel", back_populates="user_project_roles")
+    user = relationship("UserModel", back_populates="user_project_role")
+    project = relationship("ProjectModel", back_populates="user_project_role")
+    role = relationship("RoleModel", back_populates="user_project_role")
 
 # Permission Model
 class PermissionModel(Base):
     __tablename__ = 'permission'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     type = Column(String, nullable=False)
+    
+    project_permission = relationship("ProjectPermissionModel", back_populates="permission")
+    chart_permissions = relationship("ChartPermissionModel", back_populates="permission")
+    dashboard_permissions = relationship("DashboardPermissionModel", back_populates="permission")
+
+
 
 # Project Permission Model (Mapping Roles to Project-Level Permissions)
 class ProjectPermissionModel(Base):
@@ -76,9 +83,9 @@ class ProjectPermissionModel(Base):
     project_id = Column(UUID, ForeignKey("project.id"), primary_key=True)
     permission_id = Column(UUID, ForeignKey("permission.id"), primary_key=True)
 
-    role = relationship("RoleModel", back_populates="project_permissions")
-    project = relationship("ProjectModel", back_populates="project_permissions")
-    permission = relationship("PermissionModel",back_populates="project_permissions")
+    role = relationship("RoleModel", back_populates="project_permission")
+    project = relationship("ProjectModel", back_populates="project_permission")
+    permission = relationship("PermissionModel",back_populates="project_permission")
 
 # Dashboard Model
 class DashboardModel(Base):

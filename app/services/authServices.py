@@ -9,14 +9,19 @@ from app.core.settings import settings
 from app.models.schema_models import UserModel  # SQLAlchemy ORM model
 from app.schemas import LoginData, UserRequest, UserResponse
 from app.utils.jwt import create_access_token, create_refresh_token
+from app.core.db import engine
+from app.models.schema_models import Base
 
 async def register_user(user: UserRequest, response: Response, db: Session = None) -> dict:
-    if db is None:
-        # This function is called directly from router, not through Depends
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                           detail="Database connection not provided")
+    # if db is None:
+    #     # This function is called directly from router, not through Depends
+    #     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+    #                        detail="Database connection not provided")
     
     try:
+       
+
+        Base.metadata.create_all(engine)
         existing_user = db.query(UserModel).filter(UserModel.username == user.username).first()
         if existing_user:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
@@ -51,7 +56,7 @@ async def register_user(user: UserRequest, response: Response, db: Session = Non
 
 async def login_user(login_data: LoginData, response: Response, db: Session = None) -> dict:
     if db is None:
-        # This function is called directly from router, not through Depends
+        
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                            detail="Database connection not provided")
     
@@ -80,7 +85,6 @@ async def login_user(login_data: LoginData, response: Response, db: Session = No
 
 async def refresh_token(refresh_token_str: str, db: Session = None) -> dict:
     if db is None:
-        # This function is called directly from router, not through Depends
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                            detail="Database connection not provided")
     
@@ -94,7 +98,7 @@ async def refresh_token(refresh_token_str: str, db: Session = None) -> dict:
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-        # Generate new access token
+        
         access_token = create_access_token({"sub": user.id})
         return {"access_token": access_token}
     
