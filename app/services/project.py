@@ -6,14 +6,18 @@ from uuid import UUID
 
 from app.schemas import ProjectRequest, ConnectionRequest
 from app.core.db import get_db
-from app.utils.token_parser import parse_token
-
+from app.utils.token_parser import get_current_user
 
 from app.models.schema_models import ProjectModel, DatabaseConnectionModel
 
-async def create_project(project: ProjectRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+async def create_project(
+    project: ProjectRequest, 
+    request: Request, 
+    response: Response, 
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
     try:
-        token_payload = parse_token(request)
         user_id_str = token_payload.get("sub")
 
         if not user_id_str:
@@ -43,10 +47,34 @@ async def create_project(project: ProjectRequest, request: Request, response: Re
                 "description": new_project.description,
                 "super_user_id": new_project.super_user_id,
                 "created_at": new_project.created_at,
-                
             }
         }
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
+async def get_projects(
+    request: Request, 
+    response: Response, 
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id_str = token_payload.get("sub")
+
+        if not user_id_str:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+            
+        user_id = UUID(user_id_str)
+
+
+            
+        projects = db.query(ProjectModel).filter(ProjectModel.super_user_id == user_id).all()
+
+        return {
+            "message": "Projects retrieved successfully",
+            "projects": [project for project in projects]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+

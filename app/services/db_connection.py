@@ -10,7 +10,7 @@ from app.models.schema_models import DatabaseConnectionModel, UserProjectRoleMod
 from app.schemas import DBConnectionRequest, DBConnectionResponse
 from app.utils.crypt import encrypt_string
 from app.utils.schema_structure import get_schema_structure
-from app.utils.token_parser import parse_token
+from app.utils.token_parser import parse_token, get_current_user
 
 async def create_database_connection(data: DBConnectionRequest, db: Session):
     user_id = data.user_id
@@ -75,9 +75,14 @@ async def create_database_connection(data: DBConnectionRequest, db: Session):
 
     return DBConnectionResponse(db_entry_id=db_entry.id)
 
-async def get_connections(project_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+async def get_connections(
+    project_id: UUID, 
+    request: Request, 
+    response: Response, 
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
     try:
-        token_payload = parse_token(request)
         user_id_str = token_payload.get("sub")
 
         if not user_id_str:

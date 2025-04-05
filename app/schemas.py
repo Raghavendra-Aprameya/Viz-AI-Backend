@@ -65,3 +65,15 @@ class ProjectResponse(BaseModel):
 
 class ConnectionRequest(BaseModel):
     project_id: UUID
+
+class ProjectResponse(BaseModel):
+    id: UUID
+    name: str
+    # Add all other fields you want to expose
+    
+    class Config:
+        from_attributes = True  # Allows conversion from SQLAlchemy models
+
+class ProjectsResponse(BaseModel):
+    message: str
+    projects: List[ProjectResponse]
