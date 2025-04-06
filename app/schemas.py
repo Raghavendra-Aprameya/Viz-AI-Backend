@@ -108,3 +108,16 @@ class ListAllUsersProjectResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class RoleResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str
+
+class ListAllRolesProjectResponse(BaseModel):
+    message: str
+    roles: List[RoleResponse]
+
+    class Config:
+        from_attributes = True
+

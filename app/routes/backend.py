@@ -4,11 +4,12 @@ from uuid import UUID
 
 from app.core.db import get_db
 from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse
-from app.services.project import create_project, get_projects
+from app.services.project import create_project, get_projects, list_all_roles_project
 from app.utils.token_parser import get_current_user
 from app.services.db_connection import create_database_connection, get_connections
 from app.services.userService import create_user_project, list_all_users_project
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse
+from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse
+
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
 
@@ -66,3 +67,11 @@ async def list_all_users(
     token_payload: dict = Depends(get_current_user)
 ):
     return await list_all_users_project(project_id, db, token_payload)
+
+@backend_router.get("/projects/{project_id}/roles", status_code=status.HTTP_200_OK, response_model=ListAllRolesProjectResponse)
+async def list_all_roles(
+    project_id: UUID = Path(..., description="Project ID to list all roles for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await list_all_roles_project(project_id, db, token_payload)
