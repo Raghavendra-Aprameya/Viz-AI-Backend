@@ -88,3 +88,23 @@ class CreateUserProjectResponse(BaseModel):
     message: str
     user_project: UserProjectRole
     user: UserResponse
+
+class UserProjectDetails(BaseModel):
+    id: UUID
+    user_id: UUID  
+    project_id: UUID
+    role_id: UUID
+    username: str
+    password: str
+    email: str
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+class ListAllUsersProjectResponse(BaseModel):
+    message: str
+    users: List[UserProjectDetails]
+
+    class Config:
+        from_attributes = True
