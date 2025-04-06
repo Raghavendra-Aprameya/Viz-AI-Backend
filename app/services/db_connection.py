@@ -1,13 +1,16 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, status
-from uuid import uuid4
+from fastapi import HTTPException, status, Depends, Request, Response
+from uuid import uuid4, UUID
+
 import json
 from urllib.parse import urlparse, quote_plus
 
+from app.core.db import get_db
 from app.models.schema_models import DatabaseConnectionModel, UserProjectRoleModel
 from app.schemas import DBConnectionRequest, DBConnectionResponse
 from app.utils.crypt import encrypt_string
 from app.utils.schema_structure import get_schema_structure
+from app.utils.token_parser import parse_token, get_current_user
 
 async def create_database_connection(data: DBConnectionRequest, db: Session):
     user_id = data.user_id
@@ -71,3 +74,50 @@ async def create_database_connection(data: DBConnectionRequest, db: Session):
     db.refresh(db_entry)
 
     return DBConnectionResponse(db_entry_id=db_entry.id)
+
+async def get_connections(
+    project_id: UUID, 
+    request: Request, 
+    response: Response, 
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id_str = token_payload.get("sub")
+
+        if not user_id_str:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        try:
+            user_id = UUID(user_id_str)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
+        
+        # Query all connections for the project
+        connections = db.query(DatabaseConnectionModel).filter(
+            DatabaseConnectionModel.project_id == project_id
+        ).all()
+        
+        # Convert SQLAlchemy models to dictionaries
+        connections_list = []
+        for conn in connections:
+            conn_dict = {
+                "id": str(conn.id),
+                "project_id": str(conn.project_id),
+                "db_connection_string": conn.db_connection_string,
+                "db_schema": conn.db_schema,
+                "db_username": conn.db_username,
+                "db_password": conn.db_password,
+                "db_host_link": conn.db_host_link,
+                "db_name": conn.db_name
+            }
+            connections_list.append(conn_dict)
+
+        return {
+            "message": "Connections retrieved successfully",
+            "connections": connections_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+    

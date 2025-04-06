@@ -57,7 +57,6 @@ async def register_user(user: UserRequest, response: Response, db: Session = Non
 
 async def login_user(login_data: LoginData, response: Response, db: Session = None) -> dict:
     if db is None:
-        
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                            detail="Database connection not provided")
     
@@ -73,6 +72,22 @@ async def login_user(login_data: LoginData, response: Response, db: Session = No
         # Generate tokens with UUID
         access_token = create_access_token(user.id)
         refresh_token = create_refresh_token(user.id)
+        
+        # Set cookies using set_cookie method
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=True,
+            samesite="strict"
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=True,
+            samesite="strict"
+        )
 
         response.status_code = status.HTTP_200_OK
         return {
@@ -99,8 +114,9 @@ async def refresh_token(refresh_token_str: str, db: Session = None) -> dict:
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-        
+    
         access_token = create_access_token(user.id)
+
         return {"access_token": access_token}
     
     except jwt.ExpiredSignatureError:

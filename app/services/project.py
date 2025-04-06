@@ -4,16 +4,20 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest
+from app.schemas import ProjectRequest, ConnectionRequest
 from app.core.db import get_db
-from app.utils.token_parser import parse_token
+from app.utils.token_parser import get_current_user
 
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel
 
-from app.models.schema_models import ProjectModel 
-
-async def create_project(project: ProjectRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+async def create_project(
+    project: ProjectRequest, 
+    request: Request, 
+    response: Response, 
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
     try:
-        token_payload = parse_token(request)
         user_id_str = token_payload.get("sub")
 
         if not user_id_str:
@@ -43,9 +47,63 @@ async def create_project(project: ProjectRequest, request: Request, response: Re
                 "description": new_project.description,
                 "super_user_id": new_project.super_user_id,
                 "created_at": new_project.created_at,
-                
             }
         }
 
     except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def get_projects(
+    request: Request, 
+    response: Response, 
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id_str = token_payload.get("sub")
+
+        if not user_id_str:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+            
+        user_id = UUID(user_id_str)
+
+
+            
+        projects = db.query(ProjectModel).filter(ProjectModel.super_user_id == user_id).all()
+
+        return {
+            "message": "Projects retrieved successfully",
+            "projects": [project for project in projects]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+async def list_all_roles_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+   try:
+    user_id = UUID(token_payload.get("sub"))
+
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    
+    roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.project_id == project_id).all()
+    roles_list = []
+    for role in roles:
+        role_data = db.query(RoleModel).filter(RoleModel.id == role.role_id).first()
+        roles_list.append({
+            "id": role.role_id,
+            "name": role_data.name,
+            "description": role_data.description or ""
+        })
+        
+
+
+    return {
+        "message": "Roles retrieved successfully",
+        "roles": roles_list
+    }
+   except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
