@@ -27,6 +27,22 @@ async def create_user_project(
                 detail=f"Role with ID {data.role_id} does not exist"
             )
         
+        # Check if username already exists
+        existing_user = db.query(UserModel).filter(UserModel.username == data.username).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already exists"
+            )
+        
+        # Check if email already exists
+        existing_email = db.query(UserModel).filter(UserModel.email == data.email).first()
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already exists"
+            )
+        
         password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
         new_user = UserModel(
@@ -48,9 +64,17 @@ async def create_user_project(
         db.refresh(user_project)
         db.refresh(new_user)
 
+        
+        user_project_role = {
+            "id": user_project.user_id,  
+            "user_id": user_project.user_id,
+            "project_id": user_project.project_id,
+            "role_id": user_project.role_id
+        }
+
         return {
             "message": "User project created successfully",
-            "user_project": user_project,
+            "user_project": user_project_role,
             "user": new_user
         }
     except Exception as e:
