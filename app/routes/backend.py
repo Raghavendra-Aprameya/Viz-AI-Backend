@@ -7,8 +7,8 @@ from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest,
 from app.services.project import create_project, get_projects
 from app.utils.token_parser import get_current_user
 from app.services.db_connection import create_database_connection, get_connections
-from app.services.userService import create_user_project
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse
+from app.services.userService import create_user_project, list_all_users_project
+from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
 
@@ -58,3 +58,11 @@ async def add_user_project(
     token_payload: dict = Depends(get_current_user)
 ):
     return await create_user_project(data, db, token_payload, project_id)
+
+@backend_router.get("/projects/{project_id}/users", status_code=status.HTTP_200_OK, response_model=ListAllUsersProjectResponse)
+async def list_all_users(
+    project_id: UUID = Path(..., description="Project ID to list all users for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await list_all_users_project(project_id, db, token_payload)

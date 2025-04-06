@@ -1,11 +1,13 @@
 from fastapi import HTTPException, status, Depends, Path
 from sqlalchemy.orm import Session
+
 from uuid import UUID
+import bcrypt
+
 from app.core.db import get_db
 from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse
 from app.utils.token_parser import get_current_user
 from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel
-import bcrypt
 
 async def create_user_project(
     data: CreateUserProjectRequest, 
@@ -80,3 +82,44 @@ async def create_user_project(
     except Exception as e:
         db.rollback()  # Added rollback on error
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def list_all_users_project(
+    project_id: UUID,
+    db: Session,
+    token_payload: dict
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        # Get all user-project-role mappings for the project
+        user_project_roles = db.query(UserProjectRoleModel).filter(
+            UserProjectRoleModel.project_id == project_id
+        ).all()
+
+        # Create response with all required fields
+        users = []
+        for upr in user_project_roles:
+            user = db.query(UserModel).filter(UserModel.id == upr.user_id).first()
+            if user:
+                users.append({
+                    "id": upr.user_id,  # Using user_id as id since it's unique in this context
+                    "user_id": upr.user_id,
+                    "project_id": upr.project_id,
+                    "role_id": upr.role_id,
+                    "username": user.username,
+                    "password": user.password, # optional if we want to hide the password
+                    "email": user.email,
+                    "created_at": str(user.created_at)
+                })
+
+        return {
+            "message": "Users retrieved successfully",
+            "users": users
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+      
+        
