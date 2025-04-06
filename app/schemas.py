@@ -1,8 +1,7 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, Any, List
+from pydantic import BaseModel
+from typing import Optional,Union,List
 from uuid import UUID
 from datetime import datetime
-from dataclasses import dataclass, asdict
 
 class DBConnectionRequest(BaseModel):
     connection_name: str  
@@ -62,3 +61,24 @@ class ProjectResponse(BaseModel):
     
     class Config:
         from_attributes = True  # For Pydantic v2, this replaces orm_mode
+        
+class QueryRequest(BaseModel):
+    db_schema: str
+    db_type: str
+    role: str
+    domain: str
+    min_date: Optional[Union[datetime, str]] = None
+    max_date: Optional[Union[datetime, str]] = None
+    api_key: Optional[str] = None
+
+
+class QueryForExecutor(BaseModel):
+    query: str
+    explanation: str
+    relevance: float
+    is_time_based: bool
+    chart_type: str
+
+
+class QueriesForExecutorResponse(BaseModel):
+    queries: List[QueryForExecutor]
