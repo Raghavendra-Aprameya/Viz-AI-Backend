@@ -8,7 +8,7 @@ from app.schemas import ProjectRequest, ConnectionRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 
-from app.models.schema_models import ProjectModel, DatabaseConnectionModel
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel
 
 async def create_project(
     project: ProjectRequest, 
@@ -78,3 +78,32 @@ async def get_projects(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+async def list_all_roles_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+   try:
+    user_id = UUID(token_payload.get("sub"))
+
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    
+    roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.project_id == project_id).all()
+    roles_list = []
+    for role in roles:
+        role_data = db.query(RoleModel).filter(RoleModel.id == role.role_id).first()
+        roles_list.append({
+            "id": role.role_id,
+            "name": role_data.name,
+            "description": role_data.description or ""
+        })
+        
+
+
+    return {
+        "message": "Roles retrieved successfully",
+        "roles": roles_list
+    }
+   except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
