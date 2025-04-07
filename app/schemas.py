@@ -6,19 +6,13 @@ from dataclasses import dataclass, asdict
 from app.models.schema_models import UserProjectRoleModel, UserModel
 
 class DBConnectionRequest(BaseModel):
-    connection_name: str  
+    connection_name: str
     connection_string: Optional[str] = None
-    domain: Optional[str] = None
-    db_type: Optional[str] = None
-    api_key: Optional[str] = None
+    db_type: str
+    name: Optional[str] = None
     password: Optional[str] = None
     host: Optional[str] = None
-    db_name: Optional[str] = None 
-    user_id: UUID
-    project_id: UUID
-    role: UUID
-    name: Optional[str] = None         # 👈 Needed
-
+    db_name: Optional[str] = None
 
 class DBConnectionResponse(BaseModel):
     db_entry_id: UUID
@@ -123,13 +117,12 @@ class ListAllRolesProjectResponse(BaseModel):
         from_attributes = True
 
 class QueryRequest(BaseModel):
-    db_schema: str
     db_type: str
-    role: str
     domain: str
     min_date: Optional[Union[datetime, str]] = None
     max_date: Optional[Union[datetime, str]] = None
     api_key: Optional[str] = None
+    role:str
 
 
 class QueryForExecutor(BaseModel):
@@ -142,3 +135,12 @@ class QueryForExecutor(BaseModel):
 
 class QueriesForExecutorResponse(BaseModel):
     queries: List[QueryForExecutor]
+    
+class Nl2SQLChatRequest(BaseModel):
+    nl_query: str
+    api_key: Optional[str] 
+
+class Nl2SQLChartResponse(BaseModel):
+    status: str 
+    sql_query: str 
+    chart_id: UUID 

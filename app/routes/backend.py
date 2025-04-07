@@ -1,16 +1,19 @@
-from fastapi import APIRouter, status, Response, Depends, Request,Path, HTTPException
+from fastapi import APIRouter, status, Response, Depends, Request,Path, HTTPException,Body
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 from uuid import UUID
 from typing import List
 from app.core.db import get_db
-from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest,ConnectionRequest, ProjectsResponse,QueryRequest
+from app.schemas import ProjectRequest,DBConnectionRequest, ProjectsResponse,QueryRequest,Nl2SQLChatRequest
 from app.services.project import create_project, get_projects, list_all_roles_project
 from app.utils.token_parser import parse_token,get_current_user
-from app.services.db_connection import create_database_connection, get_connections
+from app.services.db_connection import create_database_connection
 from app.services.userService import create_user_project, list_all_users_project
 from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse
-from app.dependencies import get_db_session
-from app.services import generate_charts_for_db
+from app.core.db import get_db
+from app.services.generate_queries import generate_and_store_charts
+from app.services.nl2sql import generate_nl_sql_and_save
+from app.models.schema_models import UserProjectRoleModel
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
 
@@ -24,13 +27,18 @@ async def create_project_route(
 ):
     return await create_project(project, request, response, db, token_payload)
 
-@backend_router.post("/database/", response_model=DBConnectionResponse)
+from fastapi import Path
+
+@backend_router.post("/database/{project_id}")
 async def add_database_connection(
     data: DBConnectionRequest,
+    project_id: UUID = Path(..., description="Project ID to link this DB connection to"),
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
-    return await create_database_connection(data, db,token_payload)
+    return await create_database_connection(project_id, data, db, token_payload)
+
+
 
 @backend_router.get("/connections/{project_id}", status_code=status.HTTP_200_OK, response_model=dict)
 async def get_connections_route(
@@ -76,15 +84,46 @@ async def list_all_roles(
 ):
     return await list_all_roles_project(project_id, db, token_payload)
 
-@backend_router.post("/generate_charts/{db_id}")
+@backend_router.post("/generate_charts/{project_id}/{dashboard_id}")
 async def generate_charts(
-    db_id: UUID,
+    project_id: UUID,
+    dashboard_id: UUID,
     request: QueryRequest,
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
 ):
-    llm_url = "http://llm-service:8001/generate-query"  # Passed here instead of hardcoding
+    user_id_str = token_payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_id = UUID(user_id_str)
+
+    user_project_role =  db.execute(
+        select(UserProjectRoleModel).filter_by(user_id=user_id, project_id=project_id)
+    )
+    user_project_role = user_project_role.scalar_one_or_none()
+    if not user_project_role:
+        raise HTTPException(status_code=403, detail="Access denied: User not in project")
+
+    role = user_project_role.role.name.lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can generate charts")
+
     try:
-        charts = await generate_charts_for_db(db, db_id, request, llm_url)
-        return {"success": True, "generated_charts": [chart.id for chart in charts]}
+        charts = await generate_and_store_charts(db,dashboard_id,project_id, request)
+        return {"success": True, "generated_chart_ids": [chart.id for chart in charts]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@backend_router.post("/nl2sql/generate-and-save")
+async def generate_and_save_route(
+    data: Nl2SQLChatRequest = Body(...),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    user_id_str = token_payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_id = UUID(user_id_str)
+    return await generate_nl_sql_and_save(data, db, user_id)

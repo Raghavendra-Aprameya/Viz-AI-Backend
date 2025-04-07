@@ -4,8 +4,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from uuid import uuid4
 from app.core.base import Base
 
-
-
 # User Model
 class UserModel(Base):
     __tablename__ = 'user'
@@ -74,8 +72,6 @@ class PermissionModel(Base):
     project_permission = relationship("ProjectPermissionModel", back_populates="permission")
     chart_permissions = relationship("ChartPermissionModel", back_populates="permission")
     dashboard_permissions = relationship("DashboardPermissionModel", back_populates="permission")
-
-
 
 # Project Permission Model (Mapping Roles to Project-Level Permissions)
 class ProjectPermissionModel(Base):
