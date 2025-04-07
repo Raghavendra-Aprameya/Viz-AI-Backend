@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest
+from app.schemas import ProjectRequest, ConnectionRequest   
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 
@@ -35,8 +35,19 @@ async def create_project(
         )
 
         db.add(new_project)
+        db.flush()
+        role_id = db.query(RoleModel).filter(RoleModel.name == "Project Owner").first().id
+
+        # Add user to user project role table
+        user_project_role = UserProjectRoleModel(
+            user_id=user_id,
+            project_id=new_project.id,
+            role_id=role_id
+        )
+        db.add(user_project_role)
         db.commit()
         db.refresh(new_project)
+
 
         # Return dictionary with project data that can be serialized
         return {
