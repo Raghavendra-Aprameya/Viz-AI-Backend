@@ -1,14 +1,15 @@
-from fastapi import Response, Depends, HTTPException, status, Request
+from fastapi import Response, Depends, HTTPException, status, Request, Path
 from sqlalchemy.orm import Session
 
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest   
+from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 
-from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel
+
 
 async def create_project(
     project: ProjectRequest, 
@@ -27,7 +28,11 @@ async def create_project(
             user_id = UUID(user_id_str)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
-
+        
+        project_name=db.query(ProjectModel).filter(ProjectModel.name == project.name).first()
+        if project_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project name already exists")
+        
         new_project = ProjectModel(
             name=project.name,
             description=project.description,
@@ -117,4 +122,38 @@ async def list_all_roles_project(
         "roles": roles_list
     }
    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+   
+async def create_dashboard(
+    data: CreateDashboardRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+    project_id: UUID = Path(..., description="Project ID to create dashboard for")
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        dashboard_title=db.query(DashboardModel).filter(DashboardModel.title == data.title).first()
+        if dashboard_title:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dashboard title already exists")
+        
+        new_dashboard = DashboardModel(
+            title=data.title,
+            description=data.description,
+            project_id=project_id,
+            created_by=user_id
+        )
+
+        db.add(new_dashboard)
+        db.commit()
+        db.refresh(new_dashboard)
+
+        return {
+            "message": "Dashboard created successfully",
+            "dashboard": new_dashboard
+        }
+    except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

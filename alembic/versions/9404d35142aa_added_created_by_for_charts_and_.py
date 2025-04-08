@@ -1,8 +1,8 @@
-"""Added Foreign key in userProjectRole model
+"""Added created by for charts and dashboard
 
-Revision ID: f0d738997512
-Revises: 2a414a52ffc1
-Create Date: 2025-04-05 20:47:51.133503
+Revision ID: 9404d35142aa
+Revises: ef16259a967b
+Create Date: 2025-04-07 18:28:33.476436
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f0d738997512'
-down_revision: Union[str, None] = '2a414a52ffc1'
+revision: str = '9404d35142aa'
+down_revision: Union[str, None] = 'ef16259a967b'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

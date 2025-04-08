@@ -4,11 +4,11 @@ from uuid import UUID
 
 from app.core.db import get_db
 from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse
-from app.services.project import create_project, get_projects, list_all_roles_project
+from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard
 from app.utils.token_parser import get_current_user
 from app.services.db_connection import create_database_connection, get_connections
 from app.services.userService import create_user_project, list_all_users_project
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse
+from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
@@ -75,3 +75,12 @@ async def list_all_roles(
     token_payload: dict = Depends(get_current_user)
 ):
     return await list_all_roles_project(project_id, db, token_payload)
+
+@backend_router.post("/projects/{project_id}/dashboard", status_code=status.HTTP_201_CREATED, response_model=CreateDashboardResponse)
+async def dashboard(
+    project_id: UUID = Path(..., description="Project ID to create dashboard for"),
+    data: CreateDashboardRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await create_dashboard(data, db, token_payload, project_id)

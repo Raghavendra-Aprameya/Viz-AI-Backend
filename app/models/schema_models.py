@@ -17,16 +17,57 @@ class UserModel(Base):
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 
     user_project_role = relationship("UserProjectRoleModel", back_populates="user", cascade="all, delete-orphan")
-    api_key = relationship("ApiKeyModel", back_populates="user", uselist=False, cascade="all, delete-orphan")  # Ensures deletion
+    api_key = relationship("ApiKeyModel", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    user_dashboard = relationship("UserDashboardModel", back_populates="user")
+    user_chart = relationship("UserChartModel", back_populates="user")
+    dashboards = relationship("DashboardModel", back_populates="user")
+    charts = relationship("ChartModel", back_populates="user")
+    projects = relationship("ProjectModel", back_populates="super_user", foreign_keys="ProjectModel.super_user_id")
+    
+class RolePermissionModel(Base):
+    __tablename__ = 'role_permission'
+    role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
+    permission_id = Column(UUID, ForeignKey("permission.id"), primary_key=True)
+    dashboard_id = Column(UUID, ForeignKey("dashboard.id"), primary_key=True)
+
+    role = relationship("RoleModel", back_populates="role_permission")
+    permission = relationship("PermissionModel", back_populates="role_permission")
+    dashboard = relationship("DashboardModel", back_populates="role_permission")
+
+class UserDashboardModel(Base):
+    __tablename__ = 'user_dashboard'
+    user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
+    dashboard_id = Column(UUID, ForeignKey("dashboard.id"), primary_key=True)
+    can_write = Column(Boolean, nullable=False, default=False)
+    can_read = Column(Boolean, nullable=False, default=False)
+    can_delete = Column(Boolean, nullable=False, default=False)
+
+    user = relationship("UserModel", back_populates="user_dashboard")
+    dashboard = relationship("DashboardModel", back_populates="user_dashboard")
+
+class UserChartModel(Base):
+    __tablename__ = 'user_chart'
+    user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
+    chart_id = Column(UUID, ForeignKey("chart.id"), primary_key=True)
+    can_write = Column(Boolean, nullable=False, default=False)
+    can_read = Column(Boolean, nullable=False, default=False)
+    can_delete = Column(Boolean, nullable=False, default=False)
+
+    user = relationship("UserModel", back_populates="user_chart")
+    chart = relationship("ChartModel", back_populates="user_chart")
+    
+    
 
 # API Key Model (For Users)
 class ApiKeyModel(Base):
     __tablename__ = 'api_key'
     user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
     api_key = Column(String, nullable=False)
+    secret_key = Column(String, nullable=False)
+    project_id = Column(UUID, ForeignKey("project.id"), nullable=False)
 
     user = relationship("UserModel", back_populates="api_key") 
-
+    project = relationship("ProjectModel", back_populates="api_key")
 
 # Project Model
 class ProjectModel(Base):
@@ -38,7 +79,10 @@ class ProjectModel(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     user_project_role = relationship("UserProjectRoleModel", back_populates="project", cascade="all, delete-orphan")
-    project_permission = relationship("ProjectPermissionModel", back_populates="project", cascade="all, delete-orphan")
+    api_key = relationship("ApiKeyModel", back_populates="project", cascade="all, delete-orphan")
+    roles = relationship("RoleModel", back_populates="project", cascade="all, delete-orphan")
+    super_user = relationship("UserModel", back_populates="projects", foreign_keys=[super_user_id])
+    
     dashboards = relationship("DashboardModel", back_populates="project", cascade="all, delete-orphan")
     database_connections = relationship("DatabaseConnectionModel", back_populates="project", cascade="all, delete-orphan") 
 
@@ -48,11 +92,11 @@ class RoleModel(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String, unique=True, nullable=False)
     description = Column(Text, nullable=True)
+    project_id = Column(UUID, ForeignKey("project.id"), nullable=True)
 
     user_project_role = relationship("UserProjectRoleModel", back_populates="role", cascade="all, delete-orphan")
-    project_permission = relationship("ProjectPermissionModel", back_populates="role", cascade="all, delete-orphan")
-    dashboard_permissions = relationship("DashboardPermissionModel", back_populates="role", cascade="all, delete-orphan")
-    chart_permissions = relationship("ChartPermissionModel", back_populates="role", cascade="all, delete-orphan")
+    role_permission = relationship("RolePermissionModel", back_populates="role", cascade="all, delete-orphan")
+    project = relationship("ProjectModel", back_populates="roles")
 
 # User-Project-Role Mapping (Many-to-Many)
 class UserProjectRoleModel(Base):
@@ -70,23 +114,8 @@ class PermissionModel(Base):
     __tablename__ = 'permission'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     type = Column(String, nullable=False)
-    
-    project_permission = relationship("ProjectPermissionModel", back_populates="permission")
-    chart_permissions = relationship("ChartPermissionModel", back_populates="permission")
-    dashboard_permissions = relationship("DashboardPermissionModel", back_populates="permission")
-
-
-
-# Project Permission Model (Mapping Roles to Project-Level Permissions)
-class ProjectPermissionModel(Base):
-    __tablename__ = 'project_permission'
-    role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
-    project_id = Column(UUID, ForeignKey("project.id"), primary_key=True)
-    permission_id = Column(UUID, ForeignKey("permission.id"), primary_key=True)
-
-    role = relationship("RoleModel", back_populates="project_permission")
-    project = relationship("ProjectModel", back_populates="project_permission")
-    permission = relationship("PermissionModel",back_populates="project_permission")
+    role_permission = relationship("RolePermissionModel", back_populates="permission",
+                              cascade="all, delete-orphan")
 
 # Dashboard Model
 class DashboardModel(Base):
@@ -95,21 +124,14 @@ class DashboardModel(Base):
     title = Column(String, nullable=False)
     project_id = Column(UUID, ForeignKey("project.id"), nullable=False)
     description = Column(Text)
+    created_by = Column(UUID, ForeignKey("user.id"), nullable=False)
 
+    user = relationship("UserModel", back_populates="dashboards")
     project = relationship("ProjectModel", back_populates="dashboards")
-    dashboard_permissions = relationship("DashboardPermissionModel", back_populates="dashboard", cascade="all, delete-orphan")
-    charts = relationship("DashboardChartsModel", back_populates="dashboard", cascade="all, delete-orphan")
+    role_permission = relationship("RolePermissionModel", back_populates="dashboard")
+    user_dashboard = relationship("UserDashboardModel", back_populates="dashboard")
+    charts = relationship("DashboardChartsModel", back_populates="dashboard")
 
-# Dashboard Permission Model
-class DashboardPermissionModel(Base):
-    __tablename__ = 'dashboard_permission'
-    role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
-    dashboard_id = Column(UUID, ForeignKey("dashboard.id"), primary_key=True)
-    permission_id = Column(UUID, ForeignKey("permission.id"), primary_key=True)
-
-    role = relationship("RoleModel", back_populates="dashboard_permissions")
-    dashboard = relationship("DashboardModel", back_populates="dashboard_permissions")
-    permission = relationship("PermissionModel")
 
 # Chart Model
 class ChartModel(Base):
@@ -124,8 +146,10 @@ class ChartModel(Base):
     chart_type = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     is_user_generated = Column(Boolean, nullable=False, default=False)
+    user_chart = relationship("UserChartModel", back_populates="chart")
+    created_by = Column(UUID, ForeignKey("user.id"), nullable=False)
 
-    chart_permissions = relationship("ChartPermissionModel", back_populates="chart", cascade="all, delete-orphan")
+    user = relationship("UserModel", back_populates="charts")
     dashboard_charts = relationship("DashboardChartsModel", back_populates="chart")
 
 # Dashboard-Chart Relationship (Many-to-Many)
@@ -137,16 +161,6 @@ class DashboardChartsModel(Base):
     dashboard = relationship("DashboardModel", back_populates="charts")
     chart = relationship("ChartModel", back_populates="dashboard_charts")
 
-# Chart Permission Model
-class ChartPermissionModel(Base):
-    __tablename__ = 'chart_permission'
-    role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
-    chart_id = Column(UUID, ForeignKey("chart.id"), primary_key=True)
-    permission_id = Column(UUID, ForeignKey("permission.id"), primary_key=True)
-
-    role = relationship("RoleModel", back_populates="chart_permissions")
-    chart = relationship("ChartModel", back_populates="chart_permissions")
-    permission = relationship("PermissionModel", back_populates="chart_permissions")
 
 # Database Connection Model (For External DBs)
 class DatabaseConnectionModel(Base):
