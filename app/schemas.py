@@ -121,3 +121,19 @@ class ListAllRolesProjectResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class CreateDashboardRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    
+
+class DashboardResponse(BaseModel):
+    id: UUID
+    title: str
+    description: Optional[str] = None
+    project_id: UUID
+    created_by: UUID
+    
+
+class CreateDashboardResponse(BaseModel):
+    message: str
+    dashboard: DashboardResponse
