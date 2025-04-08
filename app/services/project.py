@@ -52,7 +52,7 @@ async def create_project(
         db.add(user_project_role)
         db.commit()
         db.refresh(new_project)
-
+        db.refresh(user_project_role)
 
         # Return dictionary with project data that can be serialized
         return {
@@ -183,32 +183,27 @@ async def create_role(
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-        
+        # Create new role
         new_role = RoleModel(
             name=data.name,
             description=data.description,
             project_id=project_id,
         )
         db.add(new_role)
-        
-        
         db.flush()
         
         # Process permissions
-        for permission in data.permissions:
-            permission_data = db.query(PermissionModel).filter(PermissionModel.id == permission.permission_id).first()
+        for permission_id in data.permissions:
+            permission_data = db.query(PermissionModel).filter(PermissionModel.id == permission_id).first()
             if not permission_data:
-                
                 db.rollback()
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Permission not found")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Permission with ID {permission_id} not found")
 
             role_permission = RolePermissionModel(
                 role_id=new_role.id,
-                permission_id=permission.permission_id,
-                dashboard_id=permission.dashboard_id
+                permission_id=permission_id
             )
             db.add(role_permission)
-
         
         db.commit()
         db.refresh(new_role)
@@ -224,6 +219,5 @@ async def create_role(
             }
         }
     except Exception as e:
-        
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

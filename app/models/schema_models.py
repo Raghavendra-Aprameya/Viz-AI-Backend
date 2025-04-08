@@ -28,18 +28,18 @@ class RolePermissionModel(Base):
     __tablename__ = 'role_permission'
     role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
     permission_id = Column(UUID, ForeignKey("permission.id"), primary_key=True)
-    dashboard_id = Column(UUID, ForeignKey("dashboard.id"), primary_key=True)
+    
 
     role = relationship("RoleModel", back_populates="role_permission")
     permission = relationship("PermissionModel", back_populates="role_permission")
-    dashboard = relationship("DashboardModel", back_populates="role_permission")
+    
 
 class UserDashboardModel(Base):
     __tablename__ = 'user_dashboard'
     user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
     dashboard_id = Column(UUID, ForeignKey("dashboard.id"), primary_key=True)
     can_write = Column(Boolean, nullable=False, default=False)
-    can_read = Column(Boolean, nullable=False, default=False)
+    can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
 
     user = relationship("UserModel", back_populates="user_dashboard")
@@ -50,7 +50,7 @@ class UserChartModel(Base):
     user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
     chart_id = Column(UUID, ForeignKey("chart.id"), primary_key=True)
     can_write = Column(Boolean, nullable=False, default=False)
-    can_read = Column(Boolean, nullable=False, default=False)
+    can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
 
     user = relationship("UserModel", back_populates="user_chart")
@@ -128,7 +128,7 @@ class DashboardModel(Base):
 
     user = relationship("UserModel", back_populates="dashboards")
     project = relationship("ProjectModel", back_populates="dashboards")
-    role_permission = relationship("RolePermissionModel", back_populates="dashboard")
+    
     user_dashboard = relationship("UserDashboardModel", back_populates="dashboard")
     charts = relationship("DashboardChartsModel", back_populates="dashboard")
 
@@ -174,5 +174,6 @@ class DatabaseConnectionModel(Base):
     db_host_link = Column(String, nullable=True)
     db_name = Column(String, nullable=True)
     project_id = Column(UUID, ForeignKey("project.id"), nullable=False)
+    db_type = Column(String, nullable=True)
 
     project = relationship("ProjectModel", back_populates="database_connections")
