@@ -137,3 +137,40 @@ class DashboardResponse(BaseModel):
 class CreateDashboardResponse(BaseModel):
     message: str
     dashboard: DashboardResponse
+
+class PermissionResponse(BaseModel):
+    id: UUID
+    type: str
+
+class ListAllPermissionsResponse(BaseModel):
+    message: str
+    permissions: List[PermissionResponse]
+
+    class Config:
+        from_attributes = True
+
+class PermissionAssign(BaseModel):
+    permission_id: UUID
+    dashboard_id: UUID
+
+
+class CreateRoleRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    permissions: List[PermissionAssign]
+
+
+class RolePermissionResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    project_id: UUID
+    permissions: List[PermissionAssign]
+
+class CreateRoleResponse(BaseModel):
+    message: str
+    role: RolePermissionResponse
+
+
+
+
