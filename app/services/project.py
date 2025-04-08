@@ -4,11 +4,11 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest
+from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 
-from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel
 
 
 async def create_project(
@@ -156,4 +156,74 @@ async def create_dashboard(
             "dashboard": new_dashboard
         }
     except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def list_all_permissions(
+    db: Session = Depends(get_db),
+    
+):
+    try:
+        permissions = db.query(PermissionModel).all()
+        return {
+            "message": "Permissions retrieved successfully",
+            "permissions": [permission for permission in permissions]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def create_role(
+    data: CreateRoleRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+    project_id: UUID = Path(..., description="Project ID to create role for")
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        
+        new_role = RoleModel(
+            name=data.name,
+            description=data.description,
+            project_id=project_id,
+        )
+        db.add(new_role)
+        
+        
+        db.flush()
+        
+        # Process permissions
+        for permission in data.permissions:
+            permission_data = db.query(PermissionModel).filter(PermissionModel.id == permission.permission_id).first()
+            if not permission_data:
+                
+                db.rollback()
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Permission not found")
+
+            role_permission = RolePermissionModel(
+                role_id=new_role.id,
+                permission_id=permission.permission_id,
+                dashboard_id=permission.dashboard_id
+            )
+            db.add(role_permission)
+
+        
+        db.commit()
+        db.refresh(new_role)
+
+        return {
+            "message": "Role created successfully",
+            "role": {
+                "id": new_role.id,
+                "name": new_role.name,
+                "description": new_role.description,
+                "project_id": new_role.project_id,
+                "permissions": data.permissions
+            }
+        }
+    except Exception as e:
+        
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

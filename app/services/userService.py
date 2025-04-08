@@ -73,6 +73,7 @@ async def create_user_project(
             "project_id": user_project.project_id,
             "role_id": user_project.role_id
         }
+        
 
         return {
             "message": "User project created successfully",
