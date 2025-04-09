@@ -106,3 +106,33 @@ async def check_create_role_access(db: Session, project_id:UUID,token_payload:di
       return True
   except Exception as e:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+async def check_add_db_connection_access(db: Session, token_payload:dict,project_id:UUID):
+  try:
+    user_id = UUID(token_payload.get("sub"))
+    user_project_role = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id,UserProjectRoleModel.project_id == project_id).first()
+    if not user_project_role:
+      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to this project")
+    role_permission = db.query(RolePermissionModel).filter(RolePermissionModel.role_id == user_project_role.role_id, RolePermissionModel.permission_id == "f11a63e3-fc6e-4d36-aeae-943d118c3e27").first()
+    if not role_permission:
+      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to add db connection")
+    else:
+
+      return True
+  except Exception as e:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) 
+  
+async def check_add_user_access(db: Session, token_payload:dict,project_id:UUID):
+  try:
+    user_id = UUID(token_payload.get("sub"))
+    user_project_role = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id,UserProjectRoleModel.project_id == project_id).first()
+    if not user_project_role:
+      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to this project")
+    role_permission = db.query(RolePermissionModel).filter(RolePermissionModel.role_id == user_project_role.role_id, RolePermissionModel.permission_id == "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a5").first()
+    if not role_permission:
+      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to add user")
+    else:
+      return True
+  except Exception as e:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) 
+    
