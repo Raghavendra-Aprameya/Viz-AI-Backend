@@ -250,3 +250,4 @@ class UpdateRoleRequest(BaseModel):
 
 class DeleteRoleResponse(BaseModel):
     message: str
+

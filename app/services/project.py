@@ -86,13 +86,25 @@ async def get_projects(
             
         user_id = UUID(user_id_str)
 
-
-            
-        projects = db.query(ProjectModel).filter(ProjectModel.super_user_id == user_id).all()
+        # Get user's project roles
+        user_project_roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id).all()
+        
+        # Get the actual projects for these roles
+        projects = []
+        for role in user_project_roles:
+            project = db.query(ProjectModel).filter(ProjectModel.id == role.project_id).first()
+            if project:
+                projects.append({
+                    "id": project.id,
+                    "name": project.name,
+                    "description": project.description,
+                    "super_user_id": project.super_user_id,
+                    "created_at": project.created_at
+                })
 
         return {
             "message": "Projects retrieved successfully",
-            "projects": [project for project in projects]
+            "projects": projects
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
