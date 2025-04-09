@@ -193,4 +193,28 @@ async def add_user_to_dashboard(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         
+async def get_user_details(
+    db: Session,
+    token_payload: dict
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        return {
+            "message": "User details retrieved successfully",
+            "user": {
+                "id": str(user.id),
+                "username": user.username,
+                "email": user.email
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         
