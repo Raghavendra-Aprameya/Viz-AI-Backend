@@ -251,3 +251,8 @@ class UpdateRoleRequest(BaseModel):
 class DeleteRoleResponse(BaseModel):
     message: str
 
+class UpdateUserRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    role_id: Optional[UUID] = None
+    password: Optional[str] = None
