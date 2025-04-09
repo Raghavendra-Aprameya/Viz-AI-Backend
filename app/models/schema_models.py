@@ -18,10 +18,10 @@ class UserModel(Base):
 
     user_project_role = relationship("UserProjectRoleModel", back_populates="user", cascade="all, delete-orphan")
     api_key = relationship("ApiKeyModel", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    user_dashboard = relationship("UserDashboardModel", back_populates="user")
-    user_chart = relationship("UserChartModel", back_populates="user")
-    dashboards = relationship("DashboardModel", back_populates="user")
-    charts = relationship("ChartModel", back_populates="user")
+    user_dashboard = relationship("UserDashboardModel", back_populates="user", cascade="all, delete-orphan")
+    user_chart = relationship("UserChartModel", back_populates="user", cascade="all, delete-orphan")
+    dashboards = relationship("DashboardModel", back_populates="user", cascade="all, delete-orphan")
+    charts = relationship("ChartModel", back_populates="user", cascade="all, delete-orphan")
     projects = relationship("ProjectModel", back_populates="super_user", foreign_keys="ProjectModel.super_user_id")
     
 class RolePermissionModel(Base):
@@ -36,8 +36,8 @@ class RolePermissionModel(Base):
 
 class UserDashboardModel(Base):
     __tablename__ = 'user_dashboard'
-    user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
-    dashboard_id = Column(UUID, ForeignKey("dashboard.id"), primary_key=True)
+    user_id = Column(UUID, ForeignKey("user.id",ondelete="CASCADE"), primary_key=True)
+    dashboard_id = Column(UUID, ForeignKey("dashboard.id",ondelete="CASCADE"), primary_key=True)
     can_write = Column(Boolean, nullable=False, default=False)
     can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
@@ -47,8 +47,8 @@ class UserDashboardModel(Base):
 
 class UserChartModel(Base):
     __tablename__ = 'user_chart'
-    user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
-    chart_id = Column(UUID, ForeignKey("chart.id"), primary_key=True)
+    user_id = Column(UUID, ForeignKey("user.id",ondelete="CASCADE"), primary_key=True)
+    chart_id = Column(UUID, ForeignKey("chart.id",ondelete="CASCADE"), primary_key=True)
     can_write = Column(Boolean, nullable=False, default=False)
     can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
@@ -61,10 +61,10 @@ class UserChartModel(Base):
 # API Key Model (For Users)
 class ApiKeyModel(Base):
     __tablename__ = 'api_key'
-    user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
+    user_id = Column(UUID, ForeignKey("user.id",ondelete="CASCADE"), primary_key=True)
     api_key = Column(String, nullable=False)
     secret_key = Column(String, nullable=False)
-    project_id = Column(UUID, ForeignKey("project.id"), nullable=False)
+    project_id = Column(UUID, ForeignKey("project.id",ondelete="CASCADE"), nullable=False)
 
     user = relationship("UserModel", back_populates="api_key") 
     project = relationship("ProjectModel", back_populates="api_key")

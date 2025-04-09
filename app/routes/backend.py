@@ -9,7 +9,7 @@ from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access
 from app.services.db_connection import create_database_connection, get_connections
 
-from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details, update_user
+from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details, update_user, delete_user
 from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse, CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse, ListAllUsersDashboardResponse, DeleteDashboardResponse, CreateProjectResponse, UpdateProjectRequest, UpdateUserRequest
 
 
@@ -195,3 +195,12 @@ async def update(
     token_payload: dict = Depends(get_current_user)
 ):
     return await update_user(project_id, user_id, data, db, token_payload)
+
+@backend_router.delete("/users/{user_id}",status_code=status.HTTP_200_OK)
+async def delete(
+    
+    user_id: UUID = Path(..., description="User ID to delete"),
+    db: Session = Depends(get_db)
+
+):
+    return await delete_user( user_id, db)
