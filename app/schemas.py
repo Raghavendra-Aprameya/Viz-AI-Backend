@@ -227,3 +227,7 @@ class CreateProjectResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UpdateProjectRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
