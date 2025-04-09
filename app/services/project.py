@@ -302,8 +302,12 @@ async def update_project(
         if not project:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
         
-        project.name = data.name
-        project.description = data.description
+        # Only update fields that are provided in the request
+        if data.name is not None:
+            project.name = data.name
+        if data.description is not None:
+            project.description = data.description
+            
         db.commit()
         db.refresh(project)
 
