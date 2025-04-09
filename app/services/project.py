@@ -7,7 +7,7 @@ from uuid import UUID
 from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
-from app.utils.access import check_create_role_access, check_project_create_access
+from app.utils.access import check_create_role_access, check_project_create_access, check_dashboard_create_access
 from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel
 
 
@@ -134,6 +134,7 @@ async def create_dashboard(
     project_id: UUID = Path(..., description="Project ID to create dashboard for")
 ):
     try:
+        has_access = await check_dashboard_create_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
