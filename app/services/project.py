@@ -4,21 +4,24 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest
+from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
-
-from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel
+from app.utils.access import check_create_role_access, check_project_create_access
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel
 
 
 async def create_project(
     project: ProjectRequest, 
     request: Request, 
     response: Response, 
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    db: Session ,
+    token_payload: dict,
+    
 ):
     try:
+        has_access = await check_project_create_access(db,token_payload)
+        
         user_id_str = token_payload.get("sub")
 
         if not user_id_str:
@@ -52,7 +55,7 @@ async def create_project(
         db.add(user_project_role)
         db.commit()
         db.refresh(new_project)
-
+        db.refresh(user_project_role)
 
         # Return dictionary with project data that can be serialized
         return {
@@ -157,3 +160,129 @@ async def create_dashboard(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def list_all_permissions(
+    db: Session = Depends(get_db),
+    
+):
+    try:
+        permissions = db.query(PermissionModel).all()
+        return {
+            "message": "Permissions retrieved successfully",
+            "permissions": [permission for permission in permissions]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def create_role(
+    data: CreateRoleRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+    project_id: UUID = Path(..., description="Project ID to create role for")
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        has_access = await check_create_role_access(db, project_id,token_payload)
+
+        
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        # Create new role
+        new_role = RoleModel(
+            name=data.name,
+            description=data.description,
+            project_id=project_id,
+        )
+        db.add(new_role)
+        db.flush()
+        
+        # Process permissions
+        for permission_id in data.permissions:
+            permission_data = db.query(PermissionModel).filter(PermissionModel.id == permission_id).first()
+            if not permission_data:
+                db.rollback()
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Permission with ID {permission_id} not found")
+
+            role_permission = RolePermissionModel(
+                role_id=new_role.id,
+                permission_id=permission_id
+            )
+            db.add(role_permission)
+        
+        db.commit()
+        db.refresh(new_role)
+
+        return {
+            "message": "Role created successfully",
+            "role": {
+                "id": new_role.id,
+                "name": new_role.name,
+                "description": new_role.description,
+                "project_id": new_role.project_id,
+                "permissions": data.permissions
+            }
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def list_users_all_dashboard(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        dashboards = db.query(UserDashboardModel).filter(UserDashboardModel.user_id == user_id).all()
+        dashboard_details = []
+        for dashboard in dashboards:
+            dashboard_data = db.query(DashboardModel).filter(DashboardModel.id == dashboard.dashboard_id).first()
+            dashboard_details.append({
+                "id": dashboard_data.id,  # Using id from DashboardModel
+                "title": dashboard_data.title,
+                "description": dashboard_data.description,
+                "project_id": dashboard_data.project_id,
+                "created_by": dashboard_data.created_by
+            })
+        
+        return {
+            "message": "Dashboard retrieved successfully",
+            "dashboards": dashboard_details
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        
+async def delete_dashboard(
+    
+    project_id: UUID,
+    dashboard_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+        if not dashboard:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+        
+        db.delete(dashboard)
+        db.commit()
+
+        return {
+            "message": "Dashboard deleted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        
+        

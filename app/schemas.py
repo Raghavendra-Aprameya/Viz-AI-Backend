@@ -3,7 +3,7 @@ from typing import Optional, Any, List
 from uuid import UUID
 from datetime import datetime
 from dataclasses import dataclass, asdict
-from app.models.schema_models import UserProjectRoleModel, UserModel
+from app.models.schema_models import UserProjectRoleModel, UserModel, UserDashboardModel
 class DBConnectionRequest(BaseModel):
     connection_name: str  
     connection_string: Optional[str] = None
@@ -21,6 +21,14 @@ class DBConnectionRequest(BaseModel):
 
 class DBConnectionResponse(BaseModel):
     db_entry_id: UUID
+
+
+class DBConnectionListResponse(BaseModel):
+    message: str
+    connections: List[dict]
+
+    class Config:
+        from_attributes = True
 
 
 class UserRequest(BaseModel):
@@ -58,6 +66,7 @@ class ProjectResponse(BaseModel):
     description: Optional[str] = None
     super_user_id: UUID
     created_at: datetime
+    
     
     class Config:
         from_attributes = True  # For Pydantic v2, this replaces orm_mode
@@ -137,3 +146,84 @@ class DashboardResponse(BaseModel):
 class CreateDashboardResponse(BaseModel):
     message: str
     dashboard: DashboardResponse
+
+class PermissionResponse(BaseModel):
+    id: UUID
+    type: str
+
+class ListAllPermissionsResponse(BaseModel):
+    message: str
+    permissions: List[PermissionResponse]
+
+    class Config:
+        from_attributes = True
+
+class PermissionAssign(BaseModel):
+    permission_id: UUID
+
+
+class CreateRoleRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    permissions: List[UUID]
+
+
+class RolePermissionResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    project_id: UUID
+    permissions: List[UUID]
+
+class CreateRoleResponse(BaseModel):
+    message: str
+    role: RolePermissionResponse
+
+class AddUserDashboardRequest(BaseModel):
+    user_id: UUID
+    dashboard_id: UUID
+
+class UserDashboardResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    dashboard_id: UUID
+    can_read: bool
+    can_write: bool
+    can_delete: bool
+
+    class Config:
+        from_attributes = True
+
+class AddUserDashboardResponse(BaseModel):
+    message: str
+    user_dashboard: UserDashboardResponse
+
+class UserDashboardReponse(BaseModel):
+    id: UUID
+    title: str
+    description: Optional[str] = None
+    project_id: UUID
+    created_by: UUID
+
+    class Config:
+        from_attributes = True
+    
+
+class ListAllUsersDashboardResponse(BaseModel):
+    message: str
+    dashboards: List[UserDashboardReponse]
+
+    class Config:
+        from_attributes = True
+
+
+
+class DeleteDashboardResponse(BaseModel):
+    message: str
+
+class CreateProjectResponse(BaseModel):
+    message: str
+    project: dict
+
+    class Config:
+        from_attributes = True
