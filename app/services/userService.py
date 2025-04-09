@@ -290,4 +290,30 @@ async def update_user(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+async def delete_user(
+    
+    user_id: UUID,
+    db: Session,
+   
+):
+    try:
+        # Check if user exists
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            
+       
         
+    
+        db.delete(user)
+        db.commit()
+        
+        return {
+            "message": "User deleted successfully"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            
+            
