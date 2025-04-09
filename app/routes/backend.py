@@ -4,7 +4,7 @@ from uuid import UUID
 
 from app.core.db import get_db
 from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse, DBConnectionListResponse
-from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project
+from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project
 from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access
 from app.services.db_connection import create_database_connection, get_connections
@@ -150,3 +150,11 @@ async def update(
     token_payload: dict = Depends(get_current_user)
 ):
     return await update_project(project_id, data, db, token_payload)
+
+@backend_router.delete("/projects/{project_id}",status_code=status.HTTP_200_OK)
+async def delete(
+    project_id: UUID = Path(..., description="Project ID to delete"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await delete_project(project_id, db, token_payload)
