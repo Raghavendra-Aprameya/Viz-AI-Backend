@@ -109,7 +109,9 @@ async def get_connections(
                 "db_username": conn.db_username,
                 "db_password": conn.db_password,
                 "db_host_link": conn.db_host_link,
-                "db_name": conn.db_name
+                "db_name": conn.db_name,
+                "db_type":conn.db_type,
+                "name":conn.connection_name
             }
             connections_list.append(conn_dict)
 
