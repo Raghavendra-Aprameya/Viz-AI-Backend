@@ -9,7 +9,7 @@ from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access
 from app.services.db_connection import create_database_connection, get_connections
 
-from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard
+from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details
 from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse, CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse, ListAllUsersDashboardResponse, DeleteDashboardResponse, CreateProjectResponse
 
 

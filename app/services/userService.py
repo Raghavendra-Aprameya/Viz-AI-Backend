@@ -7,6 +7,7 @@ import bcrypt
 from app.core.db import get_db
 from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, AddUserDashboardRequest, AddUserDashboardResponse
 from app.utils.token_parser import get_current_user
+from app.utils.access import check_add_user_access
 from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, UserChartModel, DashboardModel, DashboardChartsModel, RolePermissionModel,PermissionModel
 
 
@@ -17,6 +18,7 @@ async def create_user_project(
     project_id: UUID
 ):
     try:
+        has_access = await check_add_user_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
