@@ -122,10 +122,17 @@ class RoleResponse(BaseModel):
     id: UUID
     name: str
     description: str
+    permissions: List[str]
+
+class PermissionResponse(BaseModel):
+    id: UUID
+    type: str
+    
 
 class ListAllRolesProjectResponse(BaseModel):
     message: str
     roles: List[RoleResponse]
+
 
     class Config:
         from_attributes = True
@@ -231,3 +238,15 @@ class CreateProjectResponse(BaseModel):
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
+class UpdateDashboardRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+class UpdateRoleRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permissions: List[UUID]
+
+class DeleteRoleResponse(BaseModel):
+    message: str
