@@ -7,7 +7,7 @@ from uuid import UUID
 from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
-from app.utils.access import check_create_role_access
+from app.utils.access import check_create_role_access, check_project_create_access
 from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel
 
 
@@ -20,6 +20,7 @@ async def create_project(
     
 ):
     try:
+        has_access = await check_project_create_access(db,token_payload)
         
         user_id_str = token_payload.get("sub")
 
@@ -106,8 +107,6 @@ async def list_all_roles_project(
 
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-    
-    has_access = check_create_role_access(db, project_id, token_payload)
     
     roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.project_id == project_id).all()
     roles_list = []

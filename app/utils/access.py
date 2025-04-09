@@ -61,19 +61,29 @@ def check_chart_access(db: Session, project_id:UUID, chart_id:UUID, action:str):
   except Exception as e:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
   
-# def check_project_create_access(db: Session):
-#   try:
-#     user_id = UUID(get_current_user(db).get("sub"))
-#     user_project_role = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id, UserProjectRoleModel.project_id == project_id).first()
-#     if not user_project_role:
-#       raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to this project")
-#     role_permission = db.query(RolePermissionModel).filter(RolePermissionModel.role_id == user_project_role.role_id, RolePermissionModel.permission_id == "8e1c6f1e-7c99-4f28-bd2e-c7b79d6122c1").first()
-#     if not role_permission:
-#       raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to create project")
-#     else:
-#       return True
-#   except Exception as e:
-#     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+async def check_project_create_access(db: Session, token_payload:dict):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        user_project_roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id).all()
+        
+        if not user_project_roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have any roles assigned")
+
+        # Check if any role has the required permission
+        for user_project_role in user_project_roles:
+            role_permission = db.query(RolePermissionModel).filter(
+                RolePermissionModel.role_id == user_project_role.role_id,
+                RolePermissionModel.permission_id == "8e1c6f1e-7c99-4f28-bd2e-c7b79d6122c1"
+            ).first()
+            
+            if role_permission:
+                return True
+                
+        # If we get here, no role had the required permission
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have permission to create projects")
+
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 # def check_project_delete_access(db: Session, project_id:UUID):
 #   try:
