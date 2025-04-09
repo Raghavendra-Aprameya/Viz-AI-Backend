@@ -5,7 +5,7 @@ from uuid import UUID
 import bcrypt
 
 from app.core.db import get_db
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, AddUserDashboardRequest, AddUserDashboardResponse
+from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, AddUserDashboardRequest, AddUserDashboardResponse, UpdateUserRequest
 from app.utils.token_parser import get_current_user
 from app.utils.access import check_add_user_access
 from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, UserChartModel, DashboardModel, DashboardChartsModel, RolePermissionModel,PermissionModel
@@ -218,5 +218,76 @@ async def get_user_details(
             }
         }
     except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        
+async def update_user(
+    project_id: UUID,
+    user_id: UUID,
+    data: UpdateUserRequest,
+    db: Session,
+    token_payload: dict
+):
+    try:
+        # Get the user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        # Update user fields if provided
+        if data.username is not None:
+            user.username = data.username
+        if data.email is not None:
+            user.email = data.email
+        if data.password is not None:
+            # Hash the password using bcrypt - using the same implementation as create_user_project
+            password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            user.password = password
+
+        # Update role if provided
+        if data.role_id is not None:
+            # Check if the role exists
+            role = db.query(RoleModel).filter(RoleModel.id == data.role_id).first()
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Role with ID {data.role_id} does not exist"
+                )
+
+            # Get the user's project role
+            user_project_role = db.query(UserProjectRoleModel).filter(
+                UserProjectRoleModel.user_id == user_id,
+                UserProjectRoleModel.project_id == project_id
+            ).first()
+
+            if not user_project_role:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User project role not found")
+
+            # Update the role
+            user_project_role.role_id = data.role_id
+
+        db.commit()
+
+        # Get updated user details
+        updated_user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        user_project_role = db.query(UserProjectRoleModel).filter(
+            UserProjectRoleModel.user_id == user_id,
+            UserProjectRoleModel.project_id == project_id
+        ).first()
+
+        return {
+            "message": "User updated successfully",
+            "user": {
+                "id": updated_user.id,
+                "username": updated_user.username,
+                "email": updated_user.email
+            },
+            "user_project_role": {
+                "user_id": user_project_role.user_id,
+                "project_id": user_project_role.project_id,
+                "role_id": user_project_role.role_id
+            } if user_project_role else None
+        }
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         
