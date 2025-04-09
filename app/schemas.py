@@ -247,3 +247,6 @@ class UpdateRoleRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     permissions: List[UUID]
+
+class DeleteRoleResponse(BaseModel):
+    message: str

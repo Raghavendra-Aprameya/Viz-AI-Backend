@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest
+from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest, DeleteRoleResponse
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access, check_project_create_access, check_dashboard_create_access
@@ -435,4 +435,31 @@ async def update_role(
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))        
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))      
+  
+async def delete_role(
+    role_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        role = db.query(RoleModel).filter(RoleModel.id == role_id).first()
+        if not role:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+        
+        # Delete the role - role permissions will be deleted automatically due to cascade
+        db.delete(role)
+        db.commit()
+
+        return {
+            "message": "Role deleted successfully"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        
