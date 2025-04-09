@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest
+from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access, check_project_create_access, check_dashboard_create_access
@@ -343,4 +343,35 @@ async def delete_project(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+async def update_dashboard(
+    dashboard_id: UUID,
+    data: UpdateDashboardRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+        if not dashboard:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+        
+        if data.title is not None:
+            dashboard.title = data.title
+        if data.description is not None:
+            dashboard.description = data.description
+        
+        db.commit()
+        db.refresh(dashboard)
+        
+        return {
+            "message": "Dashboard updated successfully",
+            "dashboard": dashboard
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            
         

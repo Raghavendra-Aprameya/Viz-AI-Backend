@@ -231,3 +231,7 @@ class CreateProjectResponse(BaseModel):
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
+class UpdateDashboardRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None

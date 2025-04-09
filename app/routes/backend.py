@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from app.core.db import get_db
-from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse, DBConnectionListResponse
-from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project
+from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse, DBConnectionListResponse, UpdateDashboardRequest
+from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard
 from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access
 from app.services.db_connection import create_database_connection, get_connections
@@ -158,3 +158,12 @@ async def delete(
     token_payload: dict = Depends(get_current_user)
 ):
     return await delete_project(project_id, db, token_payload)
+
+@backend_router.patch("/dashboard/{dashboard_id}",status_code=status.HTTP_200_OK)
+async def upadte(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to update"),
+    data: UpdateDashboardRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await update_dashboard(dashboard_id, data, db, token_payload)
