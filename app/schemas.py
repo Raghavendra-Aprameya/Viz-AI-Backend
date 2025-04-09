@@ -23,6 +23,14 @@ class DBConnectionResponse(BaseModel):
     db_entry_id: UUID
 
 
+class DBConnectionListResponse(BaseModel):
+    message: str
+    connections: List[dict]
+
+    class Config:
+        from_attributes = True
+
+
 class UserRequest(BaseModel):
     username: str
     password: str
@@ -190,3 +198,32 @@ class AddUserDashboardResponse(BaseModel):
     message: str
     user_dashboard: UserDashboardResponse
 
+class UserDashboardReponse(BaseModel):
+    id: UUID
+    title: str
+    description: Optional[str] = None
+    project_id: UUID
+    created_by: UUID
+
+    class Config:
+        from_attributes = True
+    
+
+class ListAllUsersDashboardResponse(BaseModel):
+    message: str
+    dashboards: List[UserDashboardReponse]
+
+    class Config:
+        from_attributes = True
+
+
+
+class DeleteDashboardResponse(BaseModel):
+    message: str
+
+class CreateProjectResponse(BaseModel):
+    message: str
+    project: dict
+
+    class Config:
+        from_attributes = True
