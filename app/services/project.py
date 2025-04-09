@@ -96,35 +96,50 @@ async def get_projects(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
 async def list_all_roles_project(
     project_id: UUID,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
-   try:
-    user_id = UUID(token_payload.get("sub"))
+    try:
+        user_id = UUID(token_payload.get("sub"))
 
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-    
-    roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.project_id == project_id).all()
-    roles_list = []
-    for role in roles:
-        role_data = db.query(RoleModel).filter(RoleModel.id == role.role_id).first()
-        roles_list.append({
-            "id": role.role_id,
-            "name": role_data.name,
-            "description": role_data.description or ""
-        })
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
+        # Get all roles for this project
+        roles = db.query(RoleModel).join(
+            UserProjectRoleModel, 
+            RoleModel.id == UserProjectRoleModel.role_id
+        ).filter(
+            UserProjectRoleModel.project_id == project_id
+        ).distinct().all()
 
+        roles_list = []
+        for role in roles:
+            # Get permissions for each role
+            permissions = db.query(PermissionModel).join(
+                RolePermissionModel,
+                PermissionModel.id == RolePermissionModel.permission_id
+            ).filter(
+                RolePermissionModel.role_id == role.id
+            ).all()
 
-    return {
-        "message": "Roles retrieved successfully",
-        "roles": roles_list
-    }
-   except Exception as e:
+            # Get permission IDs for this role
+            permission_type = [permission.type for permission in permissions]
+
+            roles_list.append({
+                "id": role.id,
+                "name": role.name,
+                "description": role.description or "",
+                "permissions": permission_type  # Include permission IDs
+            })
+        
+        return {
+            "message": "Roles retrieved successfully",
+            "roles": roles_list
+        }
+    except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
    
 async def create_dashboard(

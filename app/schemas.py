@@ -122,10 +122,17 @@ class RoleResponse(BaseModel):
     id: UUID
     name: str
     description: str
+    permissions: List[str]
+
+class PermissionResponse(BaseModel):
+    id: UUID
+    type: str
+    
 
 class ListAllRolesProjectResponse(BaseModel):
     message: str
     roles: List[RoleResponse]
+
 
     class Config:
         from_attributes = True
