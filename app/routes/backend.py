@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from app.core.db import get_db
-from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse, DBConnectionListResponse, UpdateDashboardRequest
-from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard
+from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, ConnectionRequest, ProjectsResponse, DBConnectionListResponse, UpdateDashboardRequest, UpdateRoleRequest
+from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard,update_role
 from app.utils.token_parser import get_current_user
 from app.utils.access import check_create_role_access
 from app.services.db_connection import create_database_connection, get_connections
@@ -167,3 +167,13 @@ async def upadte(
     token_payload: dict = Depends(get_current_user)
 ):
     return await update_dashboard(dashboard_id, data, db, token_payload)
+
+
+@backend_router.patch("/role/{role_id}",status_code=status.HTTP_200_OK)
+async def update(
+    role_id: UUID = Path(..., description="Role ID to update"),
+    data: UpdateRoleRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await update_role(role_id, data, db, token_payload)

@@ -242,3 +242,8 @@ class UpdateProjectRequest(BaseModel):
 class UpdateDashboardRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+
+class UpdateRoleRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permissions: List[UUID]
