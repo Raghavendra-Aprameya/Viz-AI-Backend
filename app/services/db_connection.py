@@ -8,7 +8,7 @@ from urllib.parse import urlparse, quote_plus
 from app.core.db import get_db
 from app.models.schema_models import DatabaseConnectionModel, UserProjectRoleModel
 from app.schemas import DBConnectionRequest, DBConnectionResponse, UpdateDBConnectionRequest
-from app.utils.crypt import encrypt_string
+from app.utils.crypt import encrypt_string, decrypt_string
 from app.utils.schema_structure import get_schema_structure
 from app.utils.token_parser import parse_token, get_current_user
 
@@ -100,19 +100,26 @@ async def get_connections(
         # Convert SQLAlchemy models to dictionaries
         connections_list = []
         for conn in connections:
+
+            # Decrypt the password
+            decrypted_password = decrypt_string(conn.db_password)
+            # Decrypt the connection string
+            decrypted_connection_string = decrypt_string(conn.db_connection_string)
+            # Create a new dictionary with the decrypted password and connection string 
             conn_dict = {
                 "id": str(conn.id),
                 "project_id": str(conn.project_id),
-                "db_connection_string": conn.db_connection_string,
+                "db_connection_string": decrypted_connection_string,
                 "db_schema": conn.db_schema,
                 "db_username": conn.db_username,
-                "db_password": conn.db_password,
+                "db_password": decrypted_password,
                 "db_host_link": conn.db_host_link,
                 "db_name": conn.db_name,
                 "db_type":conn.db_type,
                 "name":conn.connection_name
             }
             connections_list.append(conn_dict)
+
 
         return {
             "message": "Connections retrieved successfully",

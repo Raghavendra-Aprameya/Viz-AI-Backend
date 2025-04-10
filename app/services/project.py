@@ -182,7 +182,7 @@ async def create_dashboard(
 
         db.add(new_dashboard)
         db.flush()
-        
+
         user_dashboard = UserDashboardModel(
             user_id=user_id,
             dashboard_id=new_dashboard.id
@@ -278,10 +278,11 @@ async def list_users_all_dashboard(
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
+
         dashboards = db.query(UserDashboardModel).filter(UserDashboardModel.user_id == user_id).all()
         dashboard_details = []
         for dashboard in dashboards:
-            dashboard_data = db.query(DashboardModel).filter(DashboardModel.id == dashboard.dashboard_id).first()
+            dashboard_data = db.query(DashboardModel).filter(DashboardModel.id == dashboard.dashboard_id,DashboardModel.project_id== project_id).first()
             dashboard_details.append({
                 "id": dashboard_data.id,  # Using id from DashboardModel
                 "title": dashboard_data.title,
@@ -305,6 +306,8 @@ async def delete_dashboard(
     token_payload: dict = Depends(get_current_user)
 ):
     try:
+        has_access = await check_dashboard_create_access(db, token_payload, project_id)
+
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
