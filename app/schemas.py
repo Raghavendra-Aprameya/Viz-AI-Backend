@@ -13,9 +13,6 @@ class DBConnectionRequest(BaseModel):
     password: Optional[str] = None
     host: Optional[str] = None
     db_name: Optional[str] = None 
-    user_id: UUID
-    project_id: UUID
-    role: UUID
     name: Optional[str] = None         # 👈 Needed
 
 
