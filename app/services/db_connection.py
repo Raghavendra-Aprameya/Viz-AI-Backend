@@ -12,20 +12,18 @@ from app.utils.crypt import encrypt_string
 from app.utils.schema_structure import get_schema_structure
 from app.utils.token_parser import parse_token, get_current_user
 
-async def create_database_connection(data: DBConnectionRequest, db: Session):
-    user_id = data.user_id
+async def create_database_connection(project_id: UUID, user_id: UUID, data: DBConnectionRequest, db: Session):
+    # Validate user role in the project
+    # user_project_role = db.query(UserProjectRoleModel).filter_by(
+    #     user_id=user_id,
+    #     project_id=project_id
+    # ).first()
 
-    user_project_role = db.query(UserProjectRoleModel).filter_by(
-        user_id=user_id,
-        project_id=data.project_id,
-        role_id=data.role
-    ).first()
-
-    if not user_project_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User does not have the required role in this project."
-        )
+    # if not user_project_role:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="User does not have access to this project."
+    #     )
 
     if data.connection_string:
         parsed_url = urlparse(data.connection_string)
@@ -59,14 +57,14 @@ async def create_database_connection(data: DBConnectionRequest, db: Session):
 
     db_entry = DatabaseConnectionModel(
         id=uuid4(),
-        connection_name=data.connection_name,  # 👈 New field
+        connection_name=data.connection_name,
         db_connection_string=encrypt_string(connection_string),
         db_schema=json.dumps(schema_structure),
         db_username=username,
         db_password=encrypt_string(password),
         db_host_link=host,
         db_name=db_name,
-        project_id=data.project_id
+        project_id=project_id
     )
 
     db.add(db_entry)
@@ -74,6 +72,7 @@ async def create_database_connection(data: DBConnectionRequest, db: Session):
     db.refresh(db_entry)
 
     return DBConnectionResponse(db_entry_id=db_entry.id)
+
 
 async def get_connections(
     project_id: UUID, 

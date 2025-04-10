@@ -29,13 +29,14 @@ async def create_project_route(
 ):
     return await create_project(project, request, response, db, token_payload)
 
-@backend_router.post("/database/", response_model=DBConnectionResponse)
+@backend_router.post("/database/{project_id}", response_model=DBConnectionResponse)
 async def add_database_connection(
+    project_id: UUID,
     data: DBConnectionRequest,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
-    return await create_database_connection(data, db, token_payload)
+    return await create_database_connection(project_id, token_payload, data, db)
 
 
 @backend_router.get("/connections/{project_id}", status_code=status.HTTP_200_OK, response_model=dict)
