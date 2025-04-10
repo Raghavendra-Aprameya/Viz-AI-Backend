@@ -187,7 +187,7 @@ class CreateRoleResponse(BaseModel):
     role: RolePermissionResponse
 
 class AddUserDashboardRequest(BaseModel):
-    user_id: UUID
+    user_ids: List[UUID]
     dashboard_id: UUID
 
 class UserDashboardResponse(BaseModel):
@@ -203,7 +203,7 @@ class UserDashboardResponse(BaseModel):
 
 class AddUserDashboardResponse(BaseModel):
     message: str
-    user_dashboard: UserDashboardResponse
+    user_dashboard: List[UserDashboardResponse]
 
 class UserDashboardReponse(BaseModel):
     id: UUID
@@ -256,3 +256,13 @@ class UpdateUserRequest(BaseModel):
     email: Optional[str] = None
     role_id: Optional[UUID] = None
     password: Optional[str] = None
+
+class UpdateDBConnectionRequest(BaseModel):
+    connection_name: Optional[str] = None
+    db_connection_string: Optional[str] = None
+    db_schema: Optional[str] = None
+    db_username: Optional[str] = None
+    db_password: Optional[str] = None
+    db_host_link: Optional[str] = None
+    db_name: Optional[str] = None
+    db_type: Optional[str] = None
