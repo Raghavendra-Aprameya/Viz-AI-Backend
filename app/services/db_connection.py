@@ -7,7 +7,7 @@ from urllib.parse import urlparse, quote_plus
 
 from app.core.db import get_db
 from app.models.schema_models import DatabaseConnectionModel, UserProjectRoleModel
-from app.schemas import DBConnectionRequest, DBConnectionResponse
+from app.schemas import DBConnectionRequest, DBConnectionResponse, UpdateDBConnectionRequest
 from app.utils.crypt import encrypt_string
 from app.utils.schema_structure import get_schema_structure
 from app.utils.token_parser import parse_token, get_current_user
@@ -121,3 +121,37 @@ async def get_connections(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequest, db: Session):
+    db_connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
+    if not db_connection:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
+    
+    if data.connection_name:
+        db_connection.connection_name = data.connection_name
+    if data.db_connection_string:
+        db_connection.db_connection_string = data.db_connection_string
+    if data.db_schema:
+        db_connection.db_schema = data.db_schema
+    if data.db_username:
+        db_connection.db_username = data.db_username
+    if data.db_password:
+        db_connection.db_password = data.db_password
+    if data.db_host_link:
+        db_connection.db_host_link = data.db_host_link
+    if data.db_name:
+        db_connection.db_name = data.db_name
+    if data.db_type:
+        db_connection.db_type = data.db_type
+       
+    db.commit()
+    db.refresh(db_connection)
+    return {"message": "Database connection updated successfully"}
+
+async def delete_db_connection(connection_id: UUID, db: Session):
+    db_connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
+    if not db_connection:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
+    db.delete(db_connection)
+    db.commit()
+    return {"message": "Database connection deleted successfully"}

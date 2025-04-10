@@ -22,11 +22,13 @@ async def create_user_project(
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
+            db.rollback()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
         # Check if role exists, if not create it
         role = db.query(RoleModel).filter(RoleModel.id == data.role_id).first()
         if not role:
+            db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Role with ID {data.role_id} does not exist"
@@ -35,6 +37,7 @@ async def create_user_project(
         # Check if username already exists
         existing_user = db.query(UserModel).filter(UserModel.username == data.username).first()
         if existing_user:
+            db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already exists"
@@ -43,48 +46,52 @@ async def create_user_project(
         # Check if email already exists
         existing_email = db.query(UserModel).filter(UserModel.email == data.email).first()
         if existing_email:
+            db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already exists"
             )
         
-        password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        
-        new_user = UserModel(
-            username=data.username,
-            email=data.email,
-            password=password
-        )
-        db.add(new_user)
-        db.flush()  # Flush to get the new_user.id before creating user_project
-        
-        user_project = UserProjectRoleModel(
-            user_id=new_user.id,  
-            project_id=project_id,
-            role_id=data.role_id
-        )
+        try:
+            password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            new_user = UserModel(
+                username=data.username,
+                email=data.email,
+                password=password
+            )
+            db.add(new_user)
+            db.flush()  # Flush to get the new_user.id before creating user_project
+            
+            user_project = UserProjectRoleModel(
+                user_id=new_user.id,  
+                project_id=project_id,
+                role_id=data.role_id
+            )
 
-        db.add(user_project)
-        db.commit()
-        db.refresh(user_project)
-        db.refresh(new_user)
+            db.add(user_project)
+            db.commit()
+            db.refresh(user_project)
+            db.refresh(new_user)
 
-        
-        user_project_role = {
-            "id": user_project.user_id,  
-            "user_id": user_project.user_id,
-            "project_id": user_project.project_id,
-            "role_id": user_project.role_id
-        }
-        
+            user_project_role = {
+                "id": user_project.user_id,  
+                "user_id": user_project.user_id,
+                "project_id": user_project.project_id,
+                "role_id": user_project.role_id
+            }
 
-        return {
-            "message": "User project created successfully",
-            "user_project": user_project_role,
-            "user": new_user
-        }
+            return {
+                "message": "User project created successfully",
+                "user_project": user_project_role,
+                "user": new_user
+            }
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user project")
+            
     except Exception as e:
-        db.rollback()  # Added rollback on error
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
 async def list_all_users_project(
@@ -134,63 +141,69 @@ async def add_user_to_dashboard(
 ):
     try:
         user_id = UUID(token_payload.get("sub"))
-
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-        # Check if user exists
-        isUserExists = db.query(UserModel).filter(UserModel.id == data.user_id).first()
-        if not isUserExists:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User does not exist")
-        
-        # Check if user has a role in the project
-        user_project_role = db.query(UserProjectRoleModel).filter(
-            UserProjectRoleModel.user_id == data.user_id,
-            UserProjectRoleModel.project_id == project_id
-        ).first()
-        
-        if not user_project_role:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User does not have a role in this project"
+        user_dashboards = []
+        for user_id in data.user_ids:
+            # Check if user exists
+            isUserExists = db.query(UserModel).filter(UserModel.id == user_id).first()
+            if not isUserExists:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
+                                  detail=f"User with ID {user_id} does not exist")
+            
+            # Check if user has a role in the project
+            user_project_role = db.query(UserProjectRoleModel).filter(
+                UserProjectRoleModel.user_id == user_id,
+                UserProjectRoleModel.project_id == project_id
+            ).first()
+            
+            if not user_project_role:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"User with ID {user_id} does not have a role in this project"
+                )
+            
+            # Get role permissions
+            role_permissions = db.query(RolePermissionModel).filter(
+                RolePermissionModel.role_id == user_project_role.role_id
+            ).all()
+            
+            permission_types = [role_perm.permission.type for role_perm in role_permissions]
+                
+            # Determine access levels based on role permissions
+            can_read = "view_dashboard" in permission_types
+            can_write = "create_dashboard" in permission_types
+            can_delete = "delete_dashboard" in permission_types
+                
+            user_dashboard = UserDashboardModel(
+                user_id=user_id,
+                dashboard_id=data.dashboard_id,
+                can_read=True,
+                can_write=can_write,
+                can_delete=can_delete
             )
+            db.add(user_dashboard)
+            user_dashboards.append(user_dashboard)
         
-        # Get role permissions
-        role_permissions = db.query(RolePermissionModel).filter(
-            RolePermissionModel.role_id == user_project_role.role_id
-        ).all()
-        
-        permission_types = []
-        for role_perm in role_permissions:
-            permission_types.append(role_perm.permission.type)
-            
-        # Determine access levels based on role permissions
-        can_read = "view_dashboard" in permission_types
-        can_write = "create_dashboard" in permission_types
-        can_delete = "delete_dashboard" in permission_types
-            
-        user_dashboard = UserDashboardModel(
-            user_id=data.user_id,
-            dashboard_id=data.dashboard_id,
-            can_read=True,
-            can_write=can_write,
-            can_delete=can_delete
-        )
-        db.add(user_dashboard)
         db.commit()
-        db.refresh(user_dashboard)
+        for user_dashboard in user_dashboards:
+            db.refresh(user_dashboard)
         
         return {
-            "message": "User added to dashboard successfully",
-            "user_dashboard": {
-                "id": user_dashboard.user_id,  
-                "user_id": user_dashboard.user_id,
-                "dashboard_id": user_dashboard.dashboard_id,
-                "can_read": user_dashboard.can_read,
-                "can_write": user_dashboard.can_write,
-                "can_delete": user_dashboard.can_delete
-            }
+            "message": "Users added to dashboard successfully",
+            "user_dashboard": [  # Changed from user_dashboards to user_dashboard
+                {
+                    "id": ud.user_id,
+                    "user_id": ud.user_id,
+                    "dashboard_id": ud.dashboard_id,
+                    "can_read": ud.can_read,
+                    "can_write": ud.can_write,
+                    "can_delete": ud.can_delete
+                } for ud in user_dashboards
+            ]
         }
+        
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -305,7 +318,7 @@ async def delete_user(
             
        
         
-    
+        
         db.delete(user)
         db.commit()
         

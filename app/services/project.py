@@ -170,6 +170,8 @@ async def create_dashboard(
         dashboard_title=db.query(DashboardModel).filter(DashboardModel.title == data.title).first()
         if dashboard_title:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dashboard title already exists")
+
+
         
         new_dashboard = DashboardModel(
             title=data.title,
@@ -179,6 +181,14 @@ async def create_dashboard(
         )
 
         db.add(new_dashboard)
+        db.flush()
+        
+        user_dashboard = UserDashboardModel(
+            user_id=user_id,
+            dashboard_id=new_dashboard.id
+        )
+        db.add(user_dashboard)
+
         db.commit()
         db.refresh(new_dashboard)
 
