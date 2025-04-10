@@ -149,3 +149,19 @@ async def check_dashboard_create_access(db: Session, token_payload:dict,project_
       return True
   except Exception as e:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) 
+  
+async def check_dashboard_delete_access(db: Session, token_payload:dict,project_id:UUID):
+  try:
+    user_id = UUID(token_payload.get("sub"))
+    user_project_role = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id,UserProjectRoleModel.project_id == project_id).first()
+    if not user_project_role:
+      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to this project")
+    role_permission = db.query(RolePermissionModel).filter(RolePermissionModel.role_id == user_project_role.role_id, RolePermissionModel.permission_id == "6e073b1d-f56c-4a6e-8a9d-2cb37a4702b4").first()
+    if not role_permission:
+      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User does not have access to delete dashboard")
+    else:
+      return True
+  except Exception as e:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    
