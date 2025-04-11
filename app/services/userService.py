@@ -5,12 +5,13 @@ from uuid import UUID
 import bcrypt
 
 from app.core.db import get_db
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, AddUserDashboardRequest, AddUserDashboardResponse, UpdateUserRequest
+from app.schemas import CreateUserProjectRequest, AddUserDashboardRequest, AddUserDashboardResponse, UpdateUserRequest
 from app.utils.token_parser import get_current_user
-from app.utils.access import check_add_user_access
+from app.utils.access import require_permission
 from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, UserChartModel, DashboardModel, DashboardChartsModel, RolePermissionModel,PermissionModel
+from app.models.permissions import Permissions as Permission
 
-
+@require_permission(Permission.CREATE_USER)
 async def create_user_project(
     data: CreateUserProjectRequest, 
     db: Session, 
@@ -18,7 +19,7 @@ async def create_user_project(
     project_id: UUID
 ):
     try:
-        has_access = await check_add_user_access(db, token_payload, project_id)
+        # has_access = await check_add_user_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
@@ -132,7 +133,7 @@ async def list_all_users_project(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-      
+@require_permission(Permission.ADD_USER_DASHBOARD)     
 async def add_user_to_dashboard(
     project_id: UUID,
     data: AddUserDashboardRequest,
@@ -305,7 +306,7 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 async def delete_user(
-    
+    project_id: UUID,
     user_id: UUID,
     db: Session,
    

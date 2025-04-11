@@ -7,8 +7,8 @@ from uuid import UUID
 from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest, DeleteRoleResponse
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
-from app.utils.access import check_create_role_access, check_project_create_access, check_dashboard_create_access, require_permission
-from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel
+from app.utils.access import require_permission
+from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel,UserModel
 from app.models.permissions import Permissions as Permission
 
 @require_permission(Permission.CREATE_PROJECT)
@@ -43,7 +43,7 @@ async def create_project(
         db.add(new_project)
         db.flush()
         role_id = db.query(RoleModel).filter(RoleModel.name == "ALL role").first().id
-        
+
 
 
         # Add user to user project role table
@@ -86,22 +86,28 @@ async def get_projects(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
             
         user_id = UUID(user_id_str)
+        user=db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        if user.is_super :
+            projects = db.query(ProjectModel).all()
+        else:
 
         # Get user's project roles
-        user_project_roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id).all()
-        
-        # Get the actual projects for these roles
-        projects = []
-        for role in user_project_roles:
-            project = db.query(ProjectModel).filter(ProjectModel.id == role.project_id).first()
-            if project:
-                projects.append({
-                    "id": project.id,
-                    "name": project.name,
-                    "description": project.description,
-                    "super_user_id": project.super_user_id,
-                    "created_at": project.created_at
-                })
+            user_project_roles = db.query(UserProjectRoleModel).filter(UserProjectRoleModel.user_id == user_id).all()
+            
+            # Get the actual projects for these roles
+            projects = []
+            for role in user_project_roles:
+                project = db.query(ProjectModel).filter(ProjectModel.id == role.project_id).first()
+                if project:
+                    projects.append({
+                        "id": project.id,
+                        "name": project.name,
+                        "description": project.description,
+                        "super_user_id": project.super_user_id,
+                        "created_at": project.created_at
+                    })
 
         return {
             "message": "Projects retrieved successfully",
@@ -120,13 +126,16 @@ async def list_all_roles_project(
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-        # Get all roles for this project
+        # Get all roles for this project and global roles
         roles = db.query(RoleModel).join(
             UserProjectRoleModel, 
             RoleModel.id == UserProjectRoleModel.role_id
         ).filter(
-            UserProjectRoleModel.project_id == project_id
+            (UserProjectRoleModel.project_id == project_id) | (RoleModel.is_global == True) 
         ).distinct().all()
+
+        
+
 
         roles_list = []
         for role in roles:
@@ -154,7 +163,7 @@ async def list_all_roles_project(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-   
+@require_permission(Permission.CREATE_DASHBOARD)
 async def create_dashboard(
     data: CreateDashboardRequest,
     db: Session = Depends(get_db),
@@ -162,7 +171,7 @@ async def create_dashboard(
     project_id: UUID = Path(..., description="Project ID to create dashboard for")
 ):
     try:
-        has_access = await check_dashboard_create_access(db, token_payload, project_id)
+        # has_access = await check_dashboard_create_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
@@ -212,7 +221,8 @@ async def list_all_permissions(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
+
+@require_permission(Permission.CREATE_ROLE)    
 async def create_role(
     data: CreateRoleRequest,
     db: Session = Depends(get_db),
@@ -222,7 +232,7 @@ async def create_role(
     try:
         user_id = UUID(token_payload.get("sub"))
 
-        has_access = await check_create_role_access(db, project_id,token_payload)
+        # has_access = await check_create_role_access(db, project_id,token_payload)
 
         
 
@@ -279,36 +289,38 @@ async def list_users_all_dashboard(
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-
-        dashboards = db.query(UserDashboardModel).filter(UserDashboardModel.user_id == user_id).all()
+        # Join the tables to get only dashboards that belong to this user AND project
+        dashboard_query = (
+            db.query(DashboardModel)
+            .join(UserDashboardModel, UserDashboardModel.dashboard_id == DashboardModel.id)
+            .filter(
+                UserDashboardModel.user_id == user_id,
+                DashboardModel.project_id == project_id
+            )
+            .all()
+        )
+        
         dashboard_details = []
-        for dashboard in dashboards:
-            dashboard_data = db.query(DashboardModel).filter(DashboardModel.id == dashboard.dashboard_id,DashboardModel.project_id== project_id).first()
+        for dashboard in dashboard_query:
             dashboard_details.append({
-                "id": dashboard_data.id,  # Using id from DashboardModel
-                "title": dashboard_data.title,
-                "description": dashboard_data.description,
-                "project_id": dashboard_data.project_id,
-                "created_by": dashboard_data.created_by
+                "id": dashboard.id,
+                "title": dashboard.title,
+                "description": dashboard.description,
+                "project_id": dashboard.project_id,
+                "created_by": dashboard.created_by
             })
-        
-        return {
-            "message": "Dashboard retrieved successfully",
-            "dashboards": dashboard_details
-        }
+            
+        return dashboard_details
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@require_permission(Permission.DELETE_DASHBOARD)
 async def delete_dashboard(
-    
     project_id: UUID,
     dashboard_id: UUID,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
     try:
-        has_access = await check_dashboard_create_access(db, token_payload, project_id)
-
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
@@ -318,6 +330,10 @@ async def delete_dashboard(
         if not dashboard:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
         
+        # First delete all user_dashboard associations
+        db.query(UserDashboardModel).filter(UserDashboardModel.dashboard_id == dashboard_id).delete()
+        
+        # Then delete the dashboard
         db.delete(dashboard)
         db.commit()
 
@@ -325,8 +341,9 @@ async def delete_dashboard(
             "message": "Dashboard deleted successfully"
         }
     except Exception as e:
+        db.rollback()  # Add rollback on error
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        
+@require_permission(Permission.EDIT_PROJECT)        
 async def update_project(
     project_id: UUID,
     data: UpdateProjectRequest,
@@ -358,7 +375,7 @@ async def update_project(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
+@require_permission(Permission.DELETE_PROJECT)
 async def delete_project(
     project_id: UUID,
     db: Session = Depends(get_db),
@@ -383,12 +400,14 @@ async def delete_project(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-
+@require_permission(Permission.EDIT_DASHBOARD) 
 async def update_dashboard(
+    project_id: UUID,
     dashboard_id: UUID,
     data: UpdateDashboardRequest,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
+    
 ):
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -396,7 +415,7 @@ async def update_dashboard(
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-        dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+        dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id,DashboardModel.project_id==project_id).first()
         if not dashboard:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
         
@@ -415,7 +434,9 @@ async def update_dashboard(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
             
+@require_permission(Permission.EDIT_ROLE)
 async def update_role(
+    project_id: UUID,
     role_id: UUID,
     data: UpdateRoleRequest,
     db: Session = Depends(get_db),
@@ -437,20 +458,21 @@ async def update_role(
             role.description = data.description
         
         # Delete existing role permissions
-        db.query(RolePermissionModel).filter(RolePermissionModel.role_id == role_id).delete()
-        
-        # Add new role permissions
-        for permission_id in data.permissions:
-            permission = db.query(PermissionModel).filter(PermissionModel.id == permission_id).first()
-            if not permission:
-                db.rollback()
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Permission with ID {permission_id} not found")
+        if data.permissions:
+            db.query(RolePermissionModel).filter(RolePermissionModel.role_id == role_id).delete()
             
-            role_permission = RolePermissionModel(
-                role_id=role.id,
-                permission_id=permission_id
-            )
-            db.add(role_permission)
+            # Add new role permissions
+            for permission_id in data.permissions:
+                permission = db.query(PermissionModel).filter(PermissionModel.id == permission_id).first()
+                if not permission:
+                    db.rollback()
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Permission with ID {permission_id} not found")
+                
+                role_permission = RolePermissionModel(
+                    role_id=role.id,
+                    permission_id=permission_id
+                )
+                db.add(role_permission)
 
         db.commit()
         db.refresh(role)
@@ -462,8 +484,9 @@ async def update_role(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))      
-  
+@require_permission(Permission.DELETE_ROLE)  
 async def delete_role(
+    project_id: UUID,
     role_id: UUID,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)

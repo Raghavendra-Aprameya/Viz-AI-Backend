@@ -243,7 +243,7 @@ class UpdateDashboardRequest(BaseModel):
 class UpdateRoleRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    permissions: List[UUID]
+    permissions: Optional[List[UUID]] = None
 
 class DeleteRoleResponse(BaseModel):
     message: str
