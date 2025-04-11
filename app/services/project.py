@@ -18,6 +18,9 @@ async def create_project(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Create a new project.
+    """
     try:
         user_id_str = token_payload.get("sub")
 
@@ -78,6 +81,9 @@ async def get_projects(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Get all projects.
+    """
     try:
         user_id_str = token_payload.get("sub")
 
@@ -119,6 +125,9 @@ async def list_all_roles_project(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    List all roles for a given project.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -169,6 +178,9 @@ async def create_dashboard(
     token_payload: dict = Depends(get_current_user),
     project_id: UUID = Path(..., description="Project ID to create dashboard for")
 ):
+    """
+    Create a new dashboard.
+    """
     try:
         # has_access = await check_dashboard_create_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
@@ -212,6 +224,9 @@ async def list_all_permissions(
     db: Session = Depends(get_db),
     
 ):
+    """
+    List all permissions.
+    """
     try:
         permissions = db.query(PermissionModel).all()
         return {
@@ -228,6 +243,9 @@ async def create_role(
     token_payload: dict = Depends(get_current_user),
     project_id: UUID = Path(..., description="Project ID to create role for")
 ):
+    """
+    Create a new role.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -282,6 +300,9 @@ async def list_users_all_dashboard(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    List all dashboards for a given users.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -319,6 +340,9 @@ async def delete_dashboard(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a dashboard. 
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -349,6 +373,9 @@ async def update_project(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Update a project.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -380,6 +407,9 @@ async def delete_project(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a project.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -408,6 +438,9 @@ async def update_dashboard(
     token_payload: dict = Depends(get_current_user)
     
 ):
+    """
+    Update a dashboard.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -441,6 +474,9 @@ async def update_role(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Update a role.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -490,6 +526,9 @@ async def delete_role(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a role.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 

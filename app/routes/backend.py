@@ -18,6 +18,7 @@ from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, Lis
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
 
 @backend_router.post("/create-project", status_code=status.HTTP_201_CREATED)
+
 async def create_project_route(
     project: ProjectRequest, 
     
@@ -26,6 +27,15 @@ async def create_project_route(
   
 
 ):
+    """
+Create a new project.
+Args:
+    project (ProjectRequest): The project data.
+    db (Session): The database session.
+    token_payload (dict): The token payload.
+Returns:
+    dict: The created project.
+"""
     return await create_project(project,  db, token_payload)
 
 @backend_router.post("/database/{project_id}", response_model=DBConnectionResponse)
@@ -35,6 +45,16 @@ async def add_database_connection(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Create a new database connection.
+    Args:
+        project_id (UUID): The project ID.
+        data (DBConnectionRequest): The database connection data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The created database connection.
+    """
     return await create_database_connection(project_id, token_payload, data, db)
 
 
@@ -46,6 +66,17 @@ async def get_connections_route(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Get all connections for a project.
+    Args:
+        project_id (UUID): The project ID.
+        request (Request): The request object.
+        response (Response): The response object.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The connections for the project.
+    """
     return await get_connections(project_id, request, response, db, token_payload)
 
 @backend_router.get("/projects", status_code=status.HTTP_200_OK)
@@ -55,6 +86,16 @@ async def get_projects_route(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Get all projects.
+    Args:
+        request (Request): The request object.
+        response (Response): The response object.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The projects.
+    """
     return await get_projects(request, response, db, token_payload)
 
 
@@ -65,6 +106,16 @@ async def add_user_project(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Add a user to a project.
+    Args:
+        project_id (UUID): The project ID.
+        data (CreateUserProjectRequest): The user data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The created user.
+    """
     return await create_user_project(data, db, token_payload, project_id)
 
 @backend_router.get("/projects/{project_id}/users", status_code=status.HTTP_200_OK, response_model=ListAllUsersProjectResponse)
@@ -73,6 +124,15 @@ async def list_all_users(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    List all users for a project.
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The users for the project.
+    """
     return await list_all_users_project(project_id, db, token_payload)
 
 @backend_router.get("/projects/{project_id}/roles", status_code=status.HTTP_200_OK, response_model=ListAllRolesProjectResponse)
@@ -81,6 +141,15 @@ async def list_all_roles(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    List all roles for a project.
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The roles for the project.
+    """
     return await list_all_roles_project(project_id, db, token_payload)
 
 @backend_router.post("/projects/{project_id}/dashboard", status_code=status.HTTP_201_CREATED, response_model=CreateDashboardResponse)
@@ -90,6 +159,16 @@ async def dashboard(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Create a new dashboard.
+    Args:
+        project_id (UUID): The project ID.
+        data (CreateDashboardRequest): The dashboard data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The created dashboard.
+    """
     return await create_dashboard(data, db, token_payload, project_id)
 
 @backend_router.get("/permissions",status_code=status.HTTP_200_OK,response_model=ListAllPermissionsResponse)
@@ -97,6 +176,13 @@ async def list_permissions(
     db: Session = Depends(get_db),
     
 ):
+    """
+    List all permissions.
+    Args:
+        db (Session): The database session.
+    Returns:
+        dict: The permissions.
+    """
     return await list_all_permissions(db)
 
 
@@ -108,6 +194,16 @@ async def create_roles(
     token_payload: dict = Depends(get_current_user),
     
 ):
+    """
+    Create a new role.
+    Args:
+        project_id (UUID): The project ID.
+        data (CreateRoleRequest): The role data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The created role.
+    """
     return await create_role(data, db, token_payload, project_id)
 
 @backend_router.post("/projects/{project_id}/dashboard/user", status_code=status.HTTP_201_CREATED, response_model=AddUserDashboardResponse)
@@ -117,6 +213,17 @@ async def add_user_dashboard(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+
+    """
+    Add a user to a dashboard.
+    Args:
+        project_id (UUID): The project ID.
+        data (AddUserDashboardRequest): The user data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The created user. 
+    """
     return await add_user_to_dashboard(project_id, data, db, token_payload)
 
 
@@ -126,6 +233,15 @@ async def list_all_users_dashboard(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    List all users for a dashboard.
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The users for the dashboard.
+    """
     return await list_users_all_dashboard(project_id, db, token_payload)
 
 @backend_router.delete("/projects/{project_id}/dashboard/{dashboard_id}", status_code=status.HTTP_200_OK)
@@ -135,6 +251,16 @@ async def delete_dashboards(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a user from a dashboard.
+    Args:
+        project_id (UUID): The project ID.
+        dashboard_id (UUID): The dashboard ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The deleted user.
+    """
     return await delete_dashboard(project_id,dashboard_id, db, token_payload)
 
 @backend_router.get("/user_profile", status_code=status.HTTP_200_OK)
@@ -142,6 +268,14 @@ async def get_current_user_details(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Get the current user's details.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The current user's details.
+    """ 
     return await get_user_details(db, token_payload)
 
 @backend_router.patch("/projects/{project_id}",status_code=status.HTTP_200_OK)
@@ -151,6 +285,16 @@ async def update(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Update a project.
+    Args:
+        project_id (UUID): The project ID.
+        data (UpdateProjectRequest): The project data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated project.
+    """
     return await update_project(project_id, data, db, token_payload)
 
 @backend_router.delete("/projects/{project_id}",status_code=status.HTTP_200_OK)
@@ -159,6 +303,15 @@ async def delete(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a project.
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The deleted project.
+    """
     return await delete_project(project_id, db, token_payload)
 
 @backend_router.patch("/projects/{project_id}/dashboard/{dashboard_id}",status_code=status.HTTP_200_OK)
@@ -170,6 +323,17 @@ async def update(
     token_payload: dict = Depends(get_current_user)
 
 ):
+    """
+    Update a dashboard.
+    Args:
+        project_id (UUID): The project ID.
+        dashboard_id (UUID): The dashboard ID.
+        data (UpdateDashboardRequest): The dashboard data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated dashboard.
+    """
     return await update_dashboard(project_id,dashboard_id, data, db, token_payload)
 
 
@@ -181,6 +345,17 @@ async def update(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Update a role.
+    Args:
+        project_id (UUID): The project ID.
+        role_id (UUID): The role ID.
+        data (UpdateRoleRequest): The role data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated role.
+    """
     return await update_role(project_id,role_id, data, db, token_payload)
 
 @backend_router.delete("/projects/{project_id}/role/{role_id}",status_code=status.HTTP_200_OK)
@@ -190,6 +365,16 @@ async def delete(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a role.
+    Args:
+        project_id (UUID): The project ID.
+        role_id (UUID): The role ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The deleted role.
+    """
     return await delete_role(project_id,role_id, db, token_payload)
 
 @backend_router.patch("/projects/{project_id}/users/{user_id}",status_code=status.HTTP_200_OK)
@@ -200,6 +385,17 @@ async def update(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Update a user.
+    Args:
+        project_id (UUID): The project ID.
+        user_id (UUID): The user ID.
+        data (UpdateUserRequest): The user data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated user.
+    """
     return await update_user(project_id, user_id, data, db, token_payload)
 
 @backend_router.delete("/projects/{project_id}/users/{user_id}",status_code=status.HTTP_200_OK)
@@ -209,6 +405,15 @@ async def delete(
     db: Session = Depends(get_db)
 
 ):
+    """
+    Delete a user.
+    Args:
+        project_id (UUID): The project ID.
+        user_id (UUID): The user ID.
+        db (Session): The database session.
+    Returns:
+        dict: The deleted user.
+    """
     return await delete_user(project_id,user_id, db)
 
 backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
@@ -218,6 +423,16 @@ async def update(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Update a database connection.
+    Args:
+        connection_id (UUID): The connection ID.
+        data (UpdateDBConnectionRequest): The connection data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated connection.
+    """
     return await update_db_connection(connection_id, data, db, token_payload)
 
 backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
@@ -226,5 +441,14 @@ async def delete(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Delete a database connection.
+    Args:
+        connection_id (UUID): The connection ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The deleted connection.
+    """
     return await delete_db_connection(connection_id, db, token_payload)
 
