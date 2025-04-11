@@ -4,11 +4,11 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 import bcrypt
 
-from app.core.db import get_db
-from app.schemas import CreateUserProjectRequest, AddUserDashboardRequest, AddUserDashboardResponse, UpdateUserRequest
-from app.utils.token_parser import get_current_user
+
+from app.schemas import CreateUserProjectRequest, AddUserDashboardRequest, UpdateUserRequest
+
 from app.utils.access import require_permission
-from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, UserChartModel, DashboardModel, DashboardChartsModel, RolePermissionModel,PermissionModel
+from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, RolePermissionModel
 from app.models.permissions import Permissions as Permission
 
 @require_permission(Permission.CREATE_USER)
@@ -18,6 +18,9 @@ async def create_user_project(
     token_payload: dict,
     project_id: UUID
 ):
+    """
+    Creates a new user project.
+    """
     try:
         # has_access = await check_add_user_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
@@ -100,6 +103,9 @@ async def list_all_users_project(
     db: Session,
     token_payload: dict
 ):
+    """
+    Lists all users in a project.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
 
@@ -140,6 +146,9 @@ async def add_user_to_dashboard(
     db: Session,
     token_payload: dict,
 ):
+    """
+    Adds users to a dashboard.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
         if not user_id:
@@ -213,6 +222,9 @@ async def get_user_details(
     db: Session,
     token_payload: dict
 ):
+    """
+    Gets the details of the current user.
+    """
     try:
         user_id = UUID(token_payload.get("sub"))
         if not user_id:
@@ -241,6 +253,9 @@ async def update_user(
     db: Session,
     token_payload: dict
 ):
+    """
+    Updates the details of a user.
+    """
     try:
         # Get the user
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
@@ -311,6 +326,9 @@ async def delete_user(
     db: Session,
    
 ):
+    """
+    Deletes a user.
+    """
     try:
         # Check if user exists
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
