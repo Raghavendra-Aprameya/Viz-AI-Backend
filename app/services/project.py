@@ -7,21 +7,19 @@ from uuid import UUID
 from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest, DeleteRoleResponse
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
-from app.utils.access import check_create_role_access, check_project_create_access, check_dashboard_create_access
+from app.utils.access import check_create_role_access, check_project_create_access, check_dashboard_create_access, require_permission
 from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel
+from app.models.permissions import Permissions as Permission
 
-
+@require_permission(Permission.CREATE_PROJECT)
 async def create_project(
     project: ProjectRequest, 
     request: Request, 
     response: Response, 
-    db: Session ,
-    token_payload: dict,
-    
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
 ):
     try:
-        has_access = await check_project_create_access(db,token_payload)
-        
         user_id_str = token_payload.get("sub")
 
         if not user_id_str:
@@ -32,7 +30,7 @@ async def create_project(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
         
-        project_name=db.query(ProjectModel).filter(ProjectModel.name == project.name).first()
+        project_name = db.query(ProjectModel).filter(ProjectModel.name == project.name).first()
         if project_name:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project name already exists")
         
@@ -44,7 +42,9 @@ async def create_project(
 
         db.add(new_project)
         db.flush()
-        role_id = db.query(RoleModel).filter(RoleModel.name == "Project Owner").first().id
+        role_id = db.query(RoleModel).filter(RoleModel.name == "ALL role").first().id
+        
+
 
         # Add user to user project role table
         user_project_role = UserProjectRoleModel(
@@ -70,6 +70,7 @@ async def create_project(
         }
 
     except Exception as e:
+        db.rollback()  # Add rollback on error
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
 async def get_projects(
@@ -487,4 +488,5 @@ async def delete_role(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        test
         

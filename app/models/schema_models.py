@@ -1,3 +1,4 @@
+from operator import is_
 from sqlalchemy import Column, String, ForeignKey, DateTime, func, Text, Boolean, Double, BigInteger
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import UUID
@@ -15,6 +16,7 @@ class UserModel(Base):
     email = Column(String, unique=True, nullable=False)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+    is_super=Column(Boolean, nullable=True, default=False)
 
     user_project_role = relationship("UserProjectRoleModel", back_populates="user", cascade="all, delete-orphan")
     api_key = relationship("ApiKeyModel", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -41,6 +43,7 @@ class UserDashboardModel(Base):
     can_write = Column(Boolean, nullable=False, default=False)
     can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
+    is_owner = Column(Boolean, nullable=True, default=False)
 
     user = relationship("UserModel", back_populates="user_dashboard")
     dashboard = relationship("DashboardModel", back_populates="user_dashboard")
@@ -93,6 +96,8 @@ class RoleModel(Base):
     name = Column(String, unique=True, nullable=False)
     description = Column(Text, nullable=True)
     project_id = Column(UUID, ForeignKey("project.id"), nullable=True)
+    is_global = Column(Boolean, nullable=True, default=False)
+
 
     user_project_role = relationship("UserProjectRoleModel", back_populates="role", cascade="all, delete-orphan")
     role_permission = relationship("RolePermissionModel", back_populates="role", cascade="all, delete-orphan")
@@ -104,6 +109,7 @@ class UserProjectRoleModel(Base):
     user_id = Column(UUID, ForeignKey("user.id"), primary_key=True)
     project_id = Column(UUID, ForeignKey("project.id"), primary_key=True)
     role_id = Column(UUID, ForeignKey("role.id"), primary_key=True)
+    is_owner = Column(Boolean, nullable=True, default=False)
 
     user = relationship("UserModel", back_populates="user_project_role")
     project = relationship("ProjectModel", back_populates="user_project_role")
