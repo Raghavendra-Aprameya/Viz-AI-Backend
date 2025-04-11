@@ -6,24 +6,16 @@ import json
 from urllib.parse import urlparse, quote_plus
 
 from app.core.db import get_db
-from app.models.schema_models import DatabaseConnectionModel, UserProjectRoleModel
+from app.models.schema_models import DatabaseConnectionModel
 from app.schemas import DBConnectionRequest, DBConnectionResponse, UpdateDBConnectionRequest
-from app.utils.crypt import encrypt_string
+from app.utils.crypt import encrypt_string, decrypt_string
 from app.utils.schema_structure import get_schema_structure
 from app.utils.token_parser import parse_token, get_current_user
-
-async def create_database_connection(project_id: UUID, user_id: UUID, data: DBConnectionRequest, db: Session):
-    # Validate user role in the project
-    # user_project_role = db.query(UserProjectRoleModel).filter_by(
-    #     user_id=user_id,
-    #     project_id=project_id
-    # ).first()
-
-    # if not user_project_role:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="User does not have access to this project."
-    #     )
+from app.models.permissions import Permissions as Permission
+from app.utils.access import require_permission
+@require_permission(Permission.ADD_DATASOURCE)
+async def create_database_connection(project_id: UUID, token_payload: dict, data: DBConnectionRequest, db: Session):
+    
 
     if data.connection_string:
         parsed_url = urlparse(data.connection_string)
@@ -73,7 +65,7 @@ async def create_database_connection(project_id: UUID, user_id: UUID, data: DBCo
 
     return DBConnectionResponse(db_entry_id=db_entry.id)
 
-
+@require_permission(Permission.VIEW_DATASOURCE)
 async def get_connections(
     project_id: UUID, 
     request: Request, 
@@ -100,19 +92,26 @@ async def get_connections(
         # Convert SQLAlchemy models to dictionaries
         connections_list = []
         for conn in connections:
+
+            # Decrypt the password
+            decrypted_password = decrypt_string(conn.db_password)
+            # Decrypt the connection string
+            decrypted_connection_string = decrypt_string(conn.db_connection_string)
+            # Create a new dictionary with the decrypted password and connection string 
             conn_dict = {
                 "id": str(conn.id),
                 "project_id": str(conn.project_id),
-                "db_connection_string": conn.db_connection_string,
+                "db_connection_string": decrypted_connection_string,
                 "db_schema": conn.db_schema,
                 "db_username": conn.db_username,
-                "db_password": conn.db_password,
+                "db_password": decrypted_password,
                 "db_host_link": conn.db_host_link,
                 "db_name": conn.db_name,
                 "db_type":conn.db_type,
                 "name":conn.connection_name
             }
             connections_list.append(conn_dict)
+
 
         return {
             "message": "Connections retrieved successfully",
