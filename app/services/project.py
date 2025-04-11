@@ -1,21 +1,20 @@
 from fastapi import Response, Depends, HTTPException, status, Request, Path
 from sqlalchemy.orm import Session
 
-from datetime import datetime
+
 from uuid import UUID
 
-from app.schemas import ProjectRequest, ConnectionRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest, DeleteRoleResponse
+from app.schemas import ProjectRequest, CreateDashboardRequest, CreateRoleRequest, UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.utils.access import require_permission
-from app.models.schema_models import ProjectModel, DatabaseConnectionModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel,UserModel
+from app.models.schema_models import ProjectModel, UserProjectRoleModel, RoleModel, DashboardModel, PermissionModel, RolePermissionModel, UserDashboardModel,UserModel
 from app.models.permissions import Permissions as Permission
 
 @require_permission(Permission.CREATE_PROJECT)
 async def create_project(
     project: ProjectRequest, 
-    request: Request, 
-    response: Response, 
+     
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):

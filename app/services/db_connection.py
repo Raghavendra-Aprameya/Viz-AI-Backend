@@ -6,7 +6,7 @@ import json
 from urllib.parse import urlparse, quote_plus
 
 from app.core.db import get_db
-from app.models.schema_models import DatabaseConnectionModel, UserProjectRoleModel
+from app.models.schema_models import DatabaseConnectionModel
 from app.schemas import DBConnectionRequest, DBConnectionResponse, UpdateDBConnectionRequest
 from app.utils.crypt import encrypt_string, decrypt_string
 from app.utils.schema_structure import get_schema_structure
