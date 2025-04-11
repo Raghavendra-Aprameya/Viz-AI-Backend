@@ -281,7 +281,7 @@ async def list_users_all_dashboard(
         dashboards = db.query(UserDashboardModel).filter(UserDashboardModel.user_id == user_id).all()
         dashboard_details = []
         for dashboard in dashboards:
-            dashboard_data = db.query(DashboardModel).filter(DashboardModel.id == dashboard.dashboard_id).first()
+            dashboard_data = db.query(DashboardModel).filter(DashboardModel.id == dashboard.dashboard_id,DashboardModel.project_id == project_id).first()
             dashboard_details.append({
                 "id": dashboard_data.id,  # Using id from DashboardModel
                 "title": dashboard_data.title,
