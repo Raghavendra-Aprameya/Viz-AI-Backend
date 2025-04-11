@@ -15,6 +15,10 @@ from app.models.permissions import Permissions as Permission
 from app.utils.access import require_permission
 @require_permission(Permission.ADD_DATASOURCE)
 async def create_database_connection(project_id: UUID, token_payload: dict, data: DBConnectionRequest, db: Session):
+    """
+    Creates a new database connection.
+  
+    """
     
 
     if data.connection_string:
@@ -73,6 +77,9 @@ async def get_connections(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Retrieves all database connections for a given project.
+    """ 
     try:
         user_id_str = token_payload.get("sub")
 
@@ -121,6 +128,9 @@ async def get_connections(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
 async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequest, db: Session):
+    """
+    Updates a database connection.
+    """
     db_connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
     if not db_connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
@@ -147,6 +157,9 @@ async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequ
     return {"message": "Database connection updated successfully"}
 
 async def delete_db_connection(connection_id: UUID, db: Session):
+    """
+    Deletes a database connection.
+    """
     db_connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
     if not db_connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
