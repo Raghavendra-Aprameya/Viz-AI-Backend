@@ -5,10 +5,10 @@ from uuid import UUID
 import bcrypt
 
 
-from app.schemas import CreateUserProjectRequest, AddUserDashboardRequest, UpdateUserRequest
+from app.schemas import CreateUserProjectRequest, AddUserDashboardRequest, UpdateUserRequest, CreateSuperUserRequest
 
 from app.utils.access import require_permission
-from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, RolePermissionModel
+from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, RolePermissionModel,DashboardModel
 from app.models.permissions import Permissions as Permission
 
 @require_permission(Permission.CREATE_USER)
@@ -19,7 +19,7 @@ async def create_user_project(
     project_id: UUID
 ):
     """
-    Creates a new user project.
+    Creates a new user for a project.
     """
     try:
         # has_access = await check_add_user_access(db, token_payload, project_id)
@@ -348,3 +348,109 @@ async def delete_user(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
             
+async def create_super_user_service(data: CreateSuperUserRequest, db: Session, token_payload: dict):
+    """
+    Creates a super user.
+    """
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        check_is_super = db.query(UserModel).filter(UserModel.id == user_id).first().is_super
+        if not check_is_super:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You are not authorized to create a super user")
+        
+        # Check if username exists
+        if db.query(UserModel).filter(UserModel.username == data.username).first():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Username already exists")
+
+        # Check if email exists
+        if db.query(UserModel).filter(UserModel.email == data.email).first():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email already exists")
+
+        # Hash the password using bcrypt
+        password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        new_user = UserModel(
+            username=data.username,
+            email=data.email,
+            password=password,
+            is_super=True
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        return {
+            "message": "Super user created successfully",
+            "user": new_user
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+async def get_super_user_service(
+    db: Session,
+    token_payload: dict 
+):
+    """
+    Gets all users.
+    """
+    try:
+
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        user_is_super = db.query(UserModel).filter(UserModel.id == user_id).first().is_super
+        if not user_is_super:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You are not authorized to get super users")
+        users = db.query(UserModel).filter(UserModel.is_super == True).all()
+
+        return {
+            "message": "Users retrieved successfully",
+            "users": users
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+async def get_users_dashboard_service(
+    dashboard_id: UUID,
+    db: Session,
+    token_payload: dict
+):
+    """
+    Gets all users for a dashboard.
+    """
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+            
+        # Check if dashboard exists
+        dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+        if not dashboard:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")    
+        
+        # Get all users associated with the dashboard
+        user_dashboards = db.query(UserDashboardModel).filter(
+            UserDashboardModel.dashboard_id == dashboard_id
+        ).all()
+
+        # Format response with user details
+        users_list = []
+        for user_dashboard in user_dashboards:
+            user = db.query(UserModel).filter(UserModel.id == user_dashboard.user_id).first()
+            if user:
+                users_list.append({
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "can_read": user_dashboard.can_read,
+                    "can_write": user_dashboard.can_write,
+                    "can_delete": user_dashboard.can_delete
+                })
+
+        return {
+            "message": "Users retrieved successfully",
+            "users": users_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

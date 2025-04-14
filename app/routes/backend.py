@@ -1,16 +1,16 @@
 from fastapi import APIRouter, status, Response, Depends, Request, Path
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, backref
 from uuid import UUID
 
 from app.core.db import get_db
 from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, UpdateDashboardRequest, UpdateRoleRequest, UpdateDBConnectionRequest
-from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard,update_role,delete_role
+from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard,update_role,delete_role,get_project_owner_service,get_dashboard_owner_service
 from app.utils.token_parser import get_current_user
 
 from app.services.db_connection import create_database_connection, get_connections, update_db_connection, delete_db_connection
 
-from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details, update_user, delete_user
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse, CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,UpdateProjectRequest, UpdateUserRequest
+from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details, update_user, delete_user,create_super_user_service,get_super_user_service,get_users_dashboard_service
+from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse, CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,UpdateProjectRequest, UpdateUserRequest,CreateSuperUserRequest
 
 
 
@@ -452,3 +452,80 @@ async def delete(
     """
     return await delete_db_connection(connection_id, db, token_payload)
 
+@backend_router.post("/super-user",status_code=status.HTTP_201_CREATED)
+async def create_super_user(
+    data: CreateSuperUserRequest ,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Create a new super user.
+    Args:
+        data (CreateSuperUserRequest): The super user data.
+        db (Session): The database session.
+    Returns:
+        dict: The created super user.
+    """
+    return await create_super_user_service(data, db,token_payload)
+
+@backend_router.get("/super-user",status_code=status.HTTP_200_OK)
+async def get_super_user(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)     
+):
+    """
+    Get the super user.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The super user.
+    """
+    return await get_super_user_service(db,token_payload)
+
+@backend_router.get("/dashboard/{dashboard_id}/users",status_code=status.HTTP_200_OK)
+async def get_users_dashboard(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to get users for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Get the users for a dashboard.
+    Args:
+        dashboard_id (UUID): The dashboard ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The users for the dashboard.
+    """
+    return await get_users_dashboard_service(dashboard_id, db, token_payload) 
+
+@backend_router.get("/projects/{project_id}/owners",status_code=status.HTTP_200_OK)
+async def get_project_owner(
+    project_id: UUID = Path(..., description="Project ID to get owner for"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the owner for a project.
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+    Returns:
+        dict: The owner for the project.
+    """
+    return await get_project_owner_service(project_id, db)
+
+@backend_router.get("/dashboards/{dashboard_id}/owners",status_code=status.HTTP_200_OK)
+async def get_dashboard_owner(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to get owner for"),
+    db: Session = Depends(get_db),  
+):
+    """
+    Get the owner for a dashboard.
+    Args:
+        dashboard_id (UUID): The dashboard ID.
+        db (Session): The database session.
+    Returns:
+        dict: The owner for the dashboard.
+    """
+    return await get_dashboard_owner_service(dashboard_id, db)
