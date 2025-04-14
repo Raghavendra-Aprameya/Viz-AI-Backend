@@ -1,3 +1,4 @@
+from multiprocessing import connection
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status, Depends, Request, Response
 from uuid import uuid4, UUID
@@ -10,17 +11,28 @@ from app.models.schema_models import DatabaseConnectionModel
 from app.schemas import DBConnectionRequest, DBConnectionResponse, UpdateDBConnectionRequest
 from app.utils.crypt import encrypt_string, decrypt_string
 from app.utils.schema_structure import get_schema_structure
-from app.utils.token_parser import parse_token, get_current_user
-from app.models.permissions import Permissions as Permission
+from app.utils.token_parser import  get_current_user
+from app.utils.constants import Permissions as Permission
 from app.utils.access import require_permission
+
 @require_permission(Permission.ADD_DATASOURCE)
 async def create_database_connection(project_id: UUID, token_payload: dict, data: DBConnectionRequest, db: Session):
     """
-    Creates a new database connection.
-  
-    """
-    
+    Creates and stores a new database connection for a given project.
 
+    Args:
+        project_id (UUID): The project to which this DB connection belongs.
+        token_payload (dict): Decoded token payload for permission checks.
+        data (DBConnectionRequest): Input data for creating the DB connection.
+        db (Session): SQLAlchemy DB session.
+
+    Returns:
+        DBConnectionResponse: Response containing the created DB connection ID.
+
+    Raises:
+        HTTPException: On invalid DB type or parsing errors.
+    """
+    # If a raw connection string is provided, parse and extract details
     if data.connection_string:
         parsed_url = urlparse(data.connection_string)
         encoded_password = quote_plus(parsed_url.password) if parsed_url.password else ""
@@ -29,13 +41,18 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
             f"{parsed_url.hostname}{':' + str(parsed_url.port) if parsed_url.port else ''}"
             f"{parsed_url.path}?{parsed_url.query}"
         )
+
         db_type = data.db_type
         schema_structure = get_schema_structure(connection_string, db_type)
+
+        # Extract individual components
         username = parsed_url.username
         password = parsed_url.password
         host = parsed_url.hostname
         db_name = parsed_url.path.lstrip("/")
+
     else:
+        # Manually build the connection string based on DB type
         db_type = data.db_type.lower()
         username = data.name
         password = data.password
@@ -51,6 +68,15 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
 
         schema_structure = get_schema_structure(connection_string, db_type)
 
+       
+        
+            
+    
+    connections = db.query(DatabaseConnectionModel).filter(
+            DatabaseConnectionModel.connection_name == data.connection_name).first()
+    if connections:
+            raise HTTPException(status_code=400, detail="Connection already exists")
+    # Save encrypted connection and password to the database
     db_entry = DatabaseConnectionModel(
         id=uuid4(),
         connection_name=data.connection_name,
@@ -69,6 +95,7 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
 
     return DBConnectionResponse(db_entry_id=db_entry.id)
 
+
 @require_permission(Permission.VIEW_DATASOURCE)
 async def get_connections(
     project_id: UUID, 
@@ -78,11 +105,20 @@ async def get_connections(
     token_payload: dict = Depends(get_current_user)
 ):
     """
-    Retrieves all database connections for a given project.
-    """ 
+    Retrieves all database connections for the specified project.
+
+    Args:
+        project_id (UUID): Project whose DB connections are to be fetched.
+        request (Request): FastAPI request object.
+        response (Response): FastAPI response object.
+        db (Session): SQLAlchemy DB session.
+        token_payload (dict): Parsed token payload.
+
+    Returns:
+        dict: A list of decrypted and structured DB connections.
+    """
     try:
         user_id_str = token_payload.get("sub")
-
         if not user_id_str:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
@@ -90,21 +126,18 @@ async def get_connections(
             user_id = UUID(user_id_str)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
-        
-        # Query all connections for the project
+
+        # Query database connections for the project
         connections = db.query(DatabaseConnectionModel).filter(
             DatabaseConnectionModel.project_id == project_id
         ).all()
-        
-        # Convert SQLAlchemy models to dictionaries
+
+        # Format and decrypt connections
         connections_list = []
         for conn in connections:
-
-            # Decrypt the password
             decrypted_password = decrypt_string(conn.db_password)
-            # Decrypt the connection string
             decrypted_connection_string = decrypt_string(conn.db_connection_string)
-            # Create a new dictionary with the decrypted password and connection string 
+
             conn_dict = {
                 "id": str(conn.id),
                 "project_id": str(conn.project_id),
@@ -114,27 +147,40 @@ async def get_connections(
                 "db_password": decrypted_password,
                 "db_host_link": conn.db_host_link,
                 "db_name": conn.db_name,
-                "db_type":conn.db_type,
-                "name":conn.connection_name
+                "db_type": conn.db_type,
+                "name": conn.connection_name
             }
             connections_list.append(conn_dict)
-
 
         return {
             "message": "Connections retrieved successfully",
             "connections": connections_list
         }
+
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
+
+
 async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequest, db: Session):
     """
-    Updates a database connection.
+    Updates an existing database connection with new information.
+
+    Args:
+        connection_id (UUID): ID of the DB connection to update.
+        data (UpdateDBConnectionRequest): Updated connection details.
+        db (Session): SQLAlchemy DB session.
+
+    Returns:
+        dict: Success message on update.
+
+    Raises:
+        HTTPException: If connection is not found.
     """
     db_connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
     if not db_connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
-    
+
+    # Update only the provided fields
     if data.connection_name:
         db_connection.connection_name = data.connection_name
     if data.db_connection_string:
@@ -151,18 +197,32 @@ async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequ
         db_connection.db_name = data.db_name
     if data.db_type:
         db_connection.db_type = data.db_type
-       
+
     db.commit()
     db.refresh(db_connection)
+
     return {"message": "Database connection updated successfully"}
+
 
 async def delete_db_connection(connection_id: UUID, db: Session):
     """
-    Deletes a database connection.
+    Deletes a database connection by ID.
+
+    Args:
+        connection_id (UUID): ID of the DB connection to delete.
+        db (Session): SQLAlchemy DB session.
+
+    Returns:
+        dict: Success message on deletion.
+
+    Raises:
+        HTTPException: If the connection is not found.
     """
     db_connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
     if not db_connection:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
+
     db.delete(db_connection)
     db.commit()
+
     return {"message": "Database connection deleted successfully"}

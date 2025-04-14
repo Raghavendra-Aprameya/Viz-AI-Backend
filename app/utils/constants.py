@@ -1,6 +1,12 @@
+"""
+    This module contains the constants for the application.
+"""
 from enum import Enum
 
 class Permissions(str, Enum):
+    """
+    Enum class for all permissions.
+    """
     VIEW_CHART = "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a2"
     CREATE_CHART = "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a3"
     CREATE_ROLE = "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a4"
@@ -22,3 +28,12 @@ class Permissions(str, Enum):
     DELETE_USER ="0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb51"
     EDIT_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb52"
     DELETE_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb53"
+
+POOL_RECYCLE = 300
+POOL_SIZE = 5
+MAX_OVERFLOW = 0
+
+ALLOWED_ORIGINS=["http://localhost:3000"]
+ALLOWED_CREDENTIALS = True
+ALLOWED_METHODS = ["*"]
+ALLOWED_HEADERS = ["*"]

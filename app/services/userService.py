@@ -1,15 +1,33 @@
-from fastapi import HTTPException, status, Depends, Path
-from sqlalchemy.orm import Session
-
+# Standard library imports
 from uuid import UUID
+
+# Third-party imports
+from fastapi import (
+    HTTPException,
+    status,
+    Depends,
+    Path
+)
+from sqlalchemy.orm import Session
 import bcrypt
 
-
-from app.schemas import CreateUserProjectRequest, AddUserDashboardRequest, UpdateUserRequest, CreateSuperUserRequest
-
+# Local application imports
+from app.schemas import (
+    CreateUserProjectRequest,
+    AddUserDashboardRequest,
+    UpdateUserRequest,
+    CreateSuperUserRequest
+)
 from app.utils.access import require_permission
-from app.models.schema_models import UserProjectRoleModel, UserModel, RoleModel, UserDashboardModel, RolePermissionModel,DashboardModel
-from app.models.permissions import Permissions as Permission
+from app.models.schema_models import (
+    UserProjectRoleModel,
+    UserModel,
+    RoleModel,
+    UserDashboardModel,
+    RolePermissionModel,
+    DashboardModel
+)
+from app.utils.constants import Permissions as Permission
 
 @require_permission(Permission.CREATE_USER)
 async def create_user_project(
@@ -19,17 +37,29 @@ async def create_user_project(
     project_id: UUID
 ):
     """
-    Creates a new user for a project.
+    Creates a new user for a project by validating the provided data, checking for existing users,
+    and assigning the user a role in the project. Returns the created user and user-project association.
+    
+    Args:
+        data (CreateUserProjectRequest): The data to create the user.
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        project_id (UUID): The project ID to associate the user with.
+        
+    Returns:
+        dict: The response containing a success message, created user, and user-project role.
+        
+    Raises:
+        HTTPException: If any validation fails or an error occurs during creation.
     """
     try:
-        # has_access = await check_add_user_access(db, token_payload, project_id)
         user_id = UUID(token_payload.get("sub"))
 
         if not user_id:
             db.rollback()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-        # Check if role exists, if not create it
+        # Check if the specified role exists
         role = db.query(RoleModel).filter(RoleModel.id == data.role_id).first()
         if not role:
             db.rollback()
@@ -57,8 +87,10 @@ async def create_user_project(
             )
         
         try:
+            # Hash password before saving
             password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             
+            # Create the new user
             new_user = UserModel(
                 username=data.username,
                 email=data.email,
@@ -67,6 +99,7 @@ async def create_user_project(
             db.add(new_user)
             db.flush()  # Flush to get the new_user.id before creating user_project
             
+            # Create the user-project role mapping
             user_project = UserProjectRoleModel(
                 user_id=new_user.id,  
                 project_id=project_id,
@@ -104,7 +137,19 @@ async def list_all_users_project(
     token_payload: dict
 ):
     """
-    Lists all users in a project.
+    Lists all users associated with a project by querying the user-project roles and returning
+    the users' details.
+    
+    Args:
+        project_id (UUID): The project ID to list users for.
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing a success message and a list of users in the project.
+        
+    Raises:
+        HTTPException: If an error occurs while querying the database.
     """
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -139,6 +184,7 @@ async def list_all_users_project(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
 @require_permission(Permission.ADD_USER_DASHBOARD)     
 async def add_user_to_dashboard(
     project_id: UUID,
@@ -147,7 +193,19 @@ async def add_user_to_dashboard(
     token_payload: dict,
 ):
     """
-    Adds users to a dashboard.
+    Adds users to a dashboard, ensuring the users have valid project roles and appropriate permissions.
+    
+    Args:
+        project_id (UUID): The project ID.
+        data (AddUserDashboardRequest): The data containing user IDs to add to the dashboard.
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response with a success message and the list of user dashboard assignments.
+        
+    Raises:
+        HTTPException: If any validation fails or an error occurs during the process.
     """
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -217,13 +275,23 @@ async def add_user_to_dashboard(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        
+
 async def get_user_details(
     db: Session,
     token_payload: dict
 ):
     """
-    Gets the details of the current user.
+    Retrieves the details of the current user based on the token payload.
+    
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing the user details.
+        
+    Raises:
+        HTTPException: If an error occurs during the retrieval process.
     """
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -245,7 +313,7 @@ async def get_user_details(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        
+@require_permission(Permission.EDIT_USER)
 async def update_user(
     project_id: UUID,
     user_id: UUID,
@@ -254,7 +322,20 @@ async def update_user(
     token_payload: dict
 ):
     """
-    Updates the details of a user.
+    Updates the details of a user, including their username, email, password, and role within a project.
+    
+    Args:
+        project_id (UUID): The project ID to update the user for.
+        user_id (UUID): The user ID to update.
+        data (UpdateUserRequest): The new data to update the user with.
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing the updated user and their project role.
+        
+    Raises:
+        HTTPException: If an error occurs during the update process.
     """
     try:
         # Get the user
@@ -320,23 +401,31 @@ async def update_user(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+@require_permission(Permission.DELETE_USER)
 async def delete_user(
     project_id: UUID,
     user_id: UUID,
     db: Session,
-   
 ):
     """
-    Deletes a user.
+    Deletes a user from the database. Ensures that the user exists before deleting.
+    
+    Args:
+        project_id (UUID): The project ID.
+        user_id (UUID): The user ID to delete.
+        db (Session): The database session.
+        
+    Returns:
+        dict: The response containing a success message.
+        
+    Raises:
+        HTTPException: If an error occurs during the deletion process.
     """
     try:
         # Check if user exists
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-            
-       
-        
         
         db.delete(user)
         db.commit()
@@ -347,10 +436,21 @@ async def delete_user(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-            
+
 async def create_super_user_service(data: CreateSuperUserRequest, db: Session, token_payload: dict):
     """
-    Creates a super user.
+    Creates a super user, allowing for elevated permissions based on the user's role.
+    
+    Args:
+        data (CreateSuperUserRequest): The data to create the super user.
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing the created super user.
+        
+    Raises:
+        HTTPException: If any validation fails or an error occurs during creation.
     """
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -392,7 +492,17 @@ async def get_super_user_service(
     token_payload: dict 
 ):
     """
-    Gets all users.
+    Retrieves all super users from the database, provided the requester has the necessary permissions.
+    
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing the list of super users.
+        
+    Raises:
+        HTTPException: If an error occurs during retrieval or if the user lacks permission.
     """
     try:
 
@@ -417,7 +527,18 @@ async def get_users_dashboard_service(
     token_payload: dict
 ):
     """
-    Gets all users for a dashboard.
+    Retrieves all users associated with a specific dashboard.
+    
+    Args:
+        dashboard_id (UUID): The dashboard ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing the list of users associated with the dashboard.
+        
+    Raises:
+        HTTPException: If an error occurs during retrieval or if the dashboard does not exist.
     """
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -434,23 +555,20 @@ async def get_users_dashboard_service(
             UserDashboardModel.dashboard_id == dashboard_id
         ).all()
 
-        # Format response with user details
-        users_list = []
+        users = []
         for user_dashboard in user_dashboards:
             user = db.query(UserModel).filter(UserModel.id == user_dashboard.user_id).first()
             if user:
-                users_list.append({
-                    "user_id": user.id,
+                users.append({
+                    "id": user.id,
                     "username": user.username,
                     "email": user.email,
-                    "can_read": user_dashboard.can_read,
-                    "can_write": user_dashboard.can_write,
-                    "can_delete": user_dashboard.can_delete
+                    "dashboard_id": dashboard.id
                 })
 
         return {
-            "message": "Users retrieved successfully",
-            "users": users_list
+            "message": "Users associated with the dashboard",
+            "users": users
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
