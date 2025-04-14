@@ -1,3 +1,4 @@
+from sqlalchemy.orm.dependency import OneToManyDP
 from fastapi import Response, Depends, HTTPException, status, Request, Path
 from sqlalchemy.orm import Session
 
@@ -549,5 +550,74 @@ async def delete_role(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        test
+    
+async def get_project_owner_service(
+    project_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the owner of a project.
+    """
+    try:
+        project = db.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+        owners = db.query(UserProjectRoleModel).filter(
+            UserProjectRoleModel.project_id == project_id,
+            UserProjectRoleModel.is_owner == True
+        ).all()
         
+        if not owners:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner not found")
+        
+        owner_list = []
+        for owner in owners:
+            owner_user = db.query(UserModel).filter(UserModel.id == owner.user_id).first()
+            if owner_user:
+                owner_list.append({
+                    "username": owner_user.username,
+                    "user_id": str(owner.user_id)
+                })
+        
+        return {
+            "message": "Project owner retrieved successfully",
+            "owners": owner_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        
+async def get_dashboard_owner_service(
+
+    dashboard_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the owner of a dashboard.
+    """
+    try:
+        dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+        if not dashboard:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+        owners = db.query(UserDashboardModel).filter(
+            UserDashboardModel.dashboard_id == dashboard_id,
+            UserDashboardModel.is_owner == True
+        ).all()
+
+        if not owners:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner not found")
+
+        owner_list = []
+        for owner in owners:
+            owner_user = db.query(UserModel).filter(UserModel.id == owner.user_id).first()
+            if owner_user:
+                owner_list.append({
+                    "username": owner_user.username,
+                    "user_id": str(owner.user_id)
+                })
+        return {
+            "message": "Dashboard owner retrieved successfully",
+            "owners": owner_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

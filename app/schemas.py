@@ -1,3 +1,4 @@
+from operator import is_
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Any, List
 from uuid import UUID
@@ -263,3 +264,10 @@ class UpdateDBConnectionRequest(BaseModel):
     db_host_link: Optional[str] = None
     db_name: Optional[str] = None
     db_type: Optional[str] = None
+
+class CreateSuperUserRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+    is_super: bool = True
+    
