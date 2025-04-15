@@ -160,7 +160,7 @@ async def get_connections(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-
+@require_permission(Permission.EDIT_DATASOURCE)
 async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequest, db: Session):
     """
     Updates an existing database connection with new information.
@@ -203,8 +203,9 @@ async def update_db_connection(connection_id: UUID, data: UpdateDBConnectionRequ
 
     return {"message": "Database connection updated successfully"}
 
-
-async def delete_db_connection(connection_id: UUID, db: Session):
+@require_permission(Permission.DELETE_DATASOURCE)
+async def delete_db_connection(connection_id: UUID, db: Session,token_payload: dict):
+    ""
     """
     Deletes a database connection by ID.
 

@@ -446,7 +446,7 @@ async def delete(
     """
     return await delete_user(project_id,user_id, db)
 
-backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
+@backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def update(
     connection_id: UUID = Path(..., description="Connection ID to update"),
     data: UpdateDBConnectionRequest = None,
@@ -465,11 +465,12 @@ async def update(
     """
     return await update_db_connection(connection_id, data, db, token_payload)
 
-backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
+@backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def delete(
     connection_id: UUID = Path(..., description="Connection ID to delete"),
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
+  
 ):
     """
     Delete a database connection.
@@ -480,7 +481,7 @@ async def delete(
     Returns:
         dict: The deleted connection.
     """
-    return await delete_db_connection(connection_id, db, token_payload)
+    return await delete_db_connection(connection_id, db,token_payload)
 
 @backend_router.post("/super-user",status_code=status.HTTP_201_CREATED)
 async def create_super_user(

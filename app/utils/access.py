@@ -72,7 +72,7 @@ async def check_access(
             return True
 
         # Special case: CREATE_PROJECT or DELETE_PROJECT permission
-        if permission_key in [Permission.CREATE_PROJECT.value, Permission.DELETE_PROJECT.value]:
+        if permission_key in [Permission.CREATE_PROJECT.value, Permission.DELETE_PROJECT.value,Permission.DELETE_DATASOURCE.value,Permission.EDIT_DATASOURCE.value]:
             roles = db.query(UserProjectRoleModel).filter(
                 UserProjectRoleModel.user_id == user_id
             ).all()
