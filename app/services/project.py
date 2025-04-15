@@ -169,12 +169,10 @@ async def list_all_roles_project(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
         # Query roles associated with the project or globally available roles
-        roles = db.query(RoleModel).join(
-            UserProjectRoleModel, 
-            RoleModel.id == UserProjectRoleModel.role_id
-        ).filter(
-            (UserProjectRoleModel.project_id == project_id) | (RoleModel.is_global == True) 
-        ).distinct().all()
+        roles = db.query(RoleModel).filter(
+            (RoleModel.project_id == project_id)  | (RoleModel.is_global == True)
+        ).all()
+        
 
         roles_list = []
 

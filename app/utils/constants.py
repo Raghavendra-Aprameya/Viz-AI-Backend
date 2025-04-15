@@ -33,7 +33,7 @@ POOL_RECYCLE = 300
 POOL_SIZE = 5
 MAX_OVERFLOW = 0
 
-ALLOWED_ORIGINS=["http://localhost:3000"]
+ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3001"]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*"]
