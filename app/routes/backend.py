@@ -39,7 +39,7 @@ from app.services.db_connection import (
 from app.services.userService import (
     create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details,
     update_user, delete_user, create_super_user_service, get_super_user_service,
-    get_users_dashboard_service
+    get_users_dashboard_service, get_favorites_service
 )
 
 
@@ -560,3 +560,18 @@ async def get_dashboard_owner(
         dict: The owner for the dashboard.
     """
     return await get_dashboard_owner_service(dashboard_id, db)
+
+@backend_router.get("/favorites",status_code=status.HTTP_200_OK)
+async def get_favorites(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    """
+    Get the favorites for a user.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The favorites for the user.
+    """
+    return await get_favorites_service(db, token_payload)

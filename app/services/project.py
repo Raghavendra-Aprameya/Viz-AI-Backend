@@ -352,8 +352,8 @@ async def list_users_all_dashboard(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
         # Join the tables to get only dashboards that belong to this user AND project
-        dashboard_query = (
-            db.query(DashboardModel)
+        results = (
+            db.query(DashboardModel, UserDashboardModel)
             .join(UserDashboardModel, UserDashboardModel.dashboard_id == DashboardModel.id)
             .filter(
                 UserDashboardModel.user_id == user_id,
@@ -363,13 +363,14 @@ async def list_users_all_dashboard(
         )
         
         dashboard_details = []
-        for dashboard in dashboard_query:
+        for dashboard, user_dashboard in results:
             dashboard_details.append({
                 "id": dashboard.id,
                 "title": dashboard.title,
                 "description": dashboard.description,
                 "project_id": dashboard.project_id,
-                "created_by": dashboard.created_by
+                "created_by": dashboard.created_by,
+                "is_favorite": user_dashboard.is_favorite
             })
             
         return dashboard_details

@@ -572,3 +572,33 @@ async def get_users_dashboard_service(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+async def get_favorites_service(
+    db: Session,
+    token_payload: dict      
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+        # Get all users associated with the dashboard
+        user_dashboards = db.query(UserDashboardModel).filter(
+            UserDashboardModel.user_id == user_id,
+            UserDashboardModel.is_favorite == True
+        ).all()
+        dashboards = []
+        for user_dashboard in user_dashboards:
+            dashboard = db.query(DashboardModel).filter(DashboardModel.id == user_dashboard.dashboard_id).first()
+            if dashboard:
+                dashboards.append({
+                    "id": dashboard.id,
+                    "name": dashboard.title,
+                    "description": dashboard.description,
+                    "user_id": user_id
+                })
+        return {
+            "message": "Favorites retrieved successfully",
+            "dashboards": dashboards
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

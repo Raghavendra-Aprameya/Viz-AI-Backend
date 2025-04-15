@@ -100,6 +100,8 @@ class UserDashboardModel(Base):
     can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
     is_owner = Column(Boolean, nullable=True, default=False)
+    is_favorite = Column(Boolean, nullable=True, default=False)
+
 
     user = relationship("UserModel", back_populates="dashboards_shared")
     dashboard = relationship("DashboardModel", back_populates="users")
@@ -118,6 +120,7 @@ class UserChartModel(Base):
     can_write = Column(Boolean, nullable=False, default=False)
     can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
+    is_favorite = Column(Boolean, nullable=True, default=False)
 
     user = relationship("UserModel", back_populates="charts_shared")
     chart = relationship("ChartModel", back_populates="users")
