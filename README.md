@@ -113,4 +113,4 @@ Viz-AI-Backend/
 [Add your license information here]
 
 ## Support
-[Add support contact information here]
+For support, please contact developer@webknot.in

@@ -1,16 +1,46 @@
+"""
+This module defines all backend-related routes for managing projects, users, dashboards, roles, permissions,
+database connections, and super user operations.
+
+Routes are prefixed with `/api/v1/backend`.
+
+Each route uses dependency injection to obtain the database session (`db`)
+and the authenticated user information from a token (`token_payload`).
+"""
+
+
 from fastapi import APIRouter, status, Response, Depends, Request, Path
-from sqlalchemy.orm import Session, backref
+from sqlalchemy.orm import Session
 from uuid import UUID
 
 from app.core.db import get_db
-from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, UpdateDashboardRequest, UpdateRoleRequest, UpdateDBConnectionRequest
-from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard,update_role,delete_role,get_project_owner_service,get_dashboard_owner_service
 from app.utils.token_parser import get_current_user
+from app.schemas import (
+    ProjectRequest, DBConnectionResponse, DBConnectionRequest, UpdateDashboardRequest,
+    UpdateRoleRequest, UpdateDBConnectionRequest, CreateUserProjectRequest,
+    CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse,
+    CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
+    CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
+    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest
+)
 
-from app.services.db_connection import create_database_connection, get_connections, update_db_connection, delete_db_connection
+from app.services.project import (
+    create_project, get_projects, list_all_roles_project, create_dashboard,
+    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard,
+    update_project, delete_project, update_dashboard, update_role, delete_role,
+    get_project_owner_service, get_dashboard_owner_service
+)
 
-from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details, update_user, delete_user,create_super_user_service,get_super_user_service,get_users_dashboard_service
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse, CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,UpdateProjectRequest, UpdateUserRequest,CreateSuperUserRequest
+from app.services.db_connection import (
+    create_database_connection, get_connections,
+    update_db_connection, delete_db_connection
+)
+
+from app.services.userService import (
+    create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details,
+    update_user, delete_user, create_super_user_service, get_super_user_service,
+    get_users_dashboard_service, get_favorites_service
+)
 
 
 
@@ -416,7 +446,7 @@ async def delete(
     """
     return await delete_user(project_id,user_id, db)
 
-backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
+@backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def update(
     connection_id: UUID = Path(..., description="Connection ID to update"),
     data: UpdateDBConnectionRequest = None,
@@ -435,11 +465,12 @@ async def update(
     """
     return await update_db_connection(connection_id, data, db, token_payload)
 
-backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
+@backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def delete(
     connection_id: UUID = Path(..., description="Connection ID to delete"),
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
+  
 ):
     """
     Delete a database connection.
@@ -450,7 +481,7 @@ async def delete(
     Returns:
         dict: The deleted connection.
     """
-    return await delete_db_connection(connection_id, db, token_payload)
+    return await delete_db_connection(connection_id, db,token_payload)
 
 @backend_router.post("/super-user",status_code=status.HTTP_201_CREATED)
 async def create_super_user(
@@ -529,3 +560,18 @@ async def get_dashboard_owner(
         dict: The owner for the dashboard.
     """
     return await get_dashboard_owner_service(dashboard_id, db)
+
+@backend_router.get("/favorites",status_code=status.HTTP_200_OK)
+async def get_favorites(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    """
+    Get the favorites for a user.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The favorites for the user.
+    """
+    return await get_favorites_service(db, token_payload)

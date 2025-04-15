@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, inspect
-# from sqlalchemy.orm import sessionmaker
-# from app.models.pre_processing import ExternalDBModel
+
 from datetime import datetime, timedelta
 from app.utils.crypt import decrypt_string
 
