@@ -7,10 +7,11 @@ import json
 from urllib.parse import urlparse, quote_plus
 
 from app.core.db import get_db
-from app.models.schema_models import DatabaseConnectionModel
+from app.models.schema_models import ConnectionTableNameModel, DatabaseConnectionModel
 from app.schemas import DBConnectionRequest, DBConnectionResponse, UpdateDBConnectionRequest
 from app.utils.crypt import encrypt_string, decrypt_string
 from app.utils.schema_structure import get_schema_structure
+from app.utils.extract_table_name import extract_table_names
 from app.utils.token_parser import  get_current_user
 from app.utils.constants import Permissions as Permission
 from app.utils.access import require_permission
@@ -68,14 +69,11 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
 
         schema_structure = get_schema_structure(connection_string, db_type)
 
-       
-        
-            
-    
     connections = db.query(DatabaseConnectionModel).filter(
             DatabaseConnectionModel.connection_name == data.connection_name).first()
     if connections:
             raise HTTPException(status_code=400, detail="Connection already exists")
+    
     # Save encrypted connection and password to the database
     db_entry = DatabaseConnectionModel(
         id=uuid4(),
@@ -90,9 +88,19 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
     )
 
     db.add(db_entry)
-    db.commit()
-    db.refresh(db_entry)
+    db.flush()  # Flush to get the id of db_entry
+    
+    table_names = extract_table_names(connection_string)
+    for table_name in table_names:
+        # Create a new ConnectionTableNameModel instance
+        new_table_name = ConnectionTableNameModel(
+            table_name=table_name,
+            connection_id=db_entry.id
+        )
+        db.add(new_table_name)
 
+    db.commit()
+    
     return DBConnectionResponse(db_entry_id=db_entry.id)
 
 

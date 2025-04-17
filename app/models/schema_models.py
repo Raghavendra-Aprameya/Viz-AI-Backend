@@ -1,25 +1,3 @@
-"""
-This module defines the SQLAlchemy models for the database.
-
-Each class corresponds to a table in the database and defines the columns and relationships.
-
-Classes:
-    Base: Base class for models in this module.
-    UserModel: Represents a user in the system.
-    RolePermissionModel: Represents the relationship between roles and permissions.
-    UserDashboardModel: Represents the relationship between users and dashboards.
-    UserChartModel: Represents the relationship between users and charts.
-    ApiKeyModel: Represents an API key associated with a user.
-    ProjectModel: Represents a project in the system.
-    RoleModel: Represents a role in the system.
-    UserProjectRoleModel: Represents the mapping between users, projects, and roles.
-    PermissionModel: Represents a permission in the system.
-    DashboardModel: Represents a dashboard in the system.
-    ChartModel: Represents a chart in the system.
-    DashboardChartsModel: Represents the relationship between dashboards and charts.
-    DatabaseConnectionModel: Represents a database connection in the system.
-"""
-
 from sqlalchemy import (
     Column,
     String,
@@ -192,6 +170,10 @@ class RoleModel(Base):
         "RolePermissionModel", back_populates="role", cascade="all, delete-orphan"
     )
     project = relationship("ProjectModel", back_populates="roles")
+    # Add this relationship to connect with RoleTableNameModel
+    role_table_names = relationship(
+        "RoleTableNameModel", back_populates="role", cascade="all, delete-orphan"
+    )
 
 
 class UserProjectRoleModel(Base):
@@ -228,7 +210,7 @@ class DashboardModel(Base):
     """
     Represents a dashboard in the system.
     """
-    __tablename__ = 'dashboard'  # Fixed double underscores
+    __tablename__ = 'dashboard'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     title = Column(String, nullable=False)
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
@@ -240,7 +222,7 @@ class DashboardModel(Base):
         "UserDashboardModel", 
         back_populates="dashboard", 
         cascade="all, delete-orphan",
-        passive_deletes=True  # This parameter was added
+        passive_deletes=True
     )
     charts = relationship(
         "DashboardChartsModel", 
@@ -287,7 +269,6 @@ class DashboardChartsModel(Base):
     dashboard = relationship("DashboardModel", back_populates="charts")
     chart = relationship("ChartModel", back_populates="dashboard_charts")
 
-
 class DatabaseConnectionModel(Base):
     """
     Represents a database connection in the system.
@@ -304,5 +285,83 @@ class DatabaseConnectionModel(Base):
     db_name = Column(String, nullable=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
     db_type = Column(String, nullable=True)
+    consent_given = Column(Boolean, nullable=True, default=False)
 
     project = relationship("ProjectModel", back_populates="database_connections")
+
+    connection_table_names = relationship(
+        "ConnectionTableNameModel",
+        back_populates="connection",
+        cascade="all, delete-orphan"
+    )
+
+    related_databases = relationship(
+        "RelatedDatabaseModel",
+        back_populates="connection",
+        cascade="all, delete-orphan",
+        foreign_keys="[RelatedDatabaseModel.connection_id]"
+    )
+
+    def __repr__(self):
+        return f"<DatabaseConnectionModel(id={self.id}, connection_name={self.connection_name}, db_type={self.db_type})>"
+
+
+class ConnectionTableNameModel(Base):
+    """
+    Represents a table name in a database connection.
+    """
+    __tablename__ = 'connection_table_name'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    table_name = Column(String, nullable=False)
+    connection_id = Column(UUID(as_uuid=True), ForeignKey("database_connection.id", ondelete="CASCADE"), nullable=False)
+
+    connection = relationship("DatabaseConnectionModel", back_populates="connection_table_names")
+    
+    # Add this relationship to connect with RoleTableNameModel
+    role_table_names = relationship(
+        "RoleTableNameModel", 
+        back_populates="connection_table_name", 
+        cascade="all, delete-orphan"
+    )
+
+
+class RoleTableNameModel(Base):
+    """
+    Represents a table name in a role.
+    """
+    __tablename__ = 'role_table_name'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("role.id", ondelete="CASCADE"), nullable=False)
+    table_name_id = Column(UUID(as_uuid=True), ForeignKey("connection_table_name.id", ondelete="CASCADE"), nullable=False)
+    
+    # Fix these relationships
+    connection_table_name = relationship("ConnectionTableNameModel", back_populates="role_table_names")
+    role = relationship("RoleModel", back_populates="role_table_names")
+
+
+class RelatedDatabaseModel(Base):
+    """
+    Represents a related database in the system.
+    This model connects two database connections as related.
+    """
+    __tablename__ = 'related_database'
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    connection_id = Column(UUID(as_uuid=True), ForeignKey("database_connection.id", ondelete="CASCADE"), nullable=False)
+    related_connection_id = Column(UUID(as_uuid=True), ForeignKey("database_connection.id", ondelete="CASCADE"), nullable=False)
+
+    # Explicit relationships with foreign_keys specified
+    connection = relationship(
+        'DatabaseConnectionModel',
+        foreign_keys=[connection_id],
+        back_populates='related_databases'
+    )
+
+    related_connection = relationship(
+        'DatabaseConnectionModel',
+        foreign_keys=[related_connection_id],
+        uselist=False
+    )
+
+    def __repr__(self):
+        return f"<RelatedDatabaseModel(id={self.id}, connection_id={self.connection_id}, related_connection_id={self.related_connection_id})>"

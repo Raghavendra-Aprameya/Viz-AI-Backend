@@ -271,3 +271,10 @@ class CreateSuperUserRequest(BaseModel):
     password: str
     is_super: bool = True
     
+class BlackListTableNameRequest(BaseModel):
+    """
+    Represents a request to blacklist multiple table name.
+    """
+    table_name: List[UUID]
+    role_id:UUID
+    

@@ -1,5 +1,6 @@
 
 from email import message
+from pydantic.type_adapter import R
 from sqlalchemy.sql.functions import user
 from fastapi import Response, Depends, HTTPException, status, Request, Path
 from sqlalchemy.orm import Session
@@ -8,14 +9,14 @@ from uuid import UUID
 # Import schemas and models
 from app.schemas import (
     ProjectRequest, CreateDashboardRequest, CreateRoleRequest, 
-    UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest
+    UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest,BlackListTableNameRequest
 )
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.utils.access import require_permission
 from app.models.schema_models import (
     ProjectModel, UserProjectRoleModel, RoleModel, DashboardModel, 
-    PermissionModel, RolePermissionModel, UserDashboardModel, UserModel
+    PermissionModel, RolePermissionModel, UserDashboardModel, UserModel,RoleTableNameModel
 )
 from app.utils.constants import Permissions as Permission
 
@@ -775,4 +776,72 @@ async def get_dashboard_owner_service(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+async def blacklist_service(project_id, data: BlackListTableNameRequest, db: Session, token_payload: dict):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        role = db.query(RoleModel).filter(RoleModel.id == data.role_id, RoleModel.project_id==project_id).first()
+        if not role:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+        
+        # Store all created blacklist entries
+        blacklist_entries = []
+        
+        # Use data.table_name instead of data.table_names
+        for table_name in data.table_name:
+            already_exists_table_name = db.query(RoleTableNameModel).filter(RoleTableNameModel.table_name_id == table_name, RoleTableNameModel.role_id==data.role_id).first()
+            if  already_exists_table_name:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Table name {table_name} already exists in blacklist")
+            blacklist = RoleTableNameModel(
+                role_id = data.role_id,
+                table_name_id = table_name
+            )
+            db.add(blacklist)
+            blacklist_entries.append(blacklist)
+        
+        db.commit()
+        
+        # Refresh all blacklist entries if needed
+        for entry in blacklist_entries:
+            db.refresh(entry)
+        
+        return {
+            "message": "Table names added to blacklist successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
+async def update_blacklist_service(project_id, data: BlackListTableNameRequest, db: Session, token_payload: dict):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+        role = db.query(RoleModel).filter(RoleModel.id == data.role_id, RoleModel.project_id==project_id).first()
+        if not role:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+        # Delete existing blacklist entries
+        db.query(RoleTableNameModel).filter(RoleTableNameModel.role_id == data.role_id).delete()
+        # Store all created blacklist entries
+        blacklist_entries = []
+        # Use data.table_name instead of data.table_names
+        for table_name in data.table_name:
+            blacklist = RoleTableNameModel(
+                role_id = data.role_id,
+                table_name_id = table_name  
+            )
+            db.add(blacklist)
+            blacklist_entries.append(blacklist)
+
+        db.commit()
+        # Refresh all blacklist entries if needed
+        for entry in blacklist_entries:
+            db.refresh(entry)
+        return {
+            "message": "Table names updated in blacklist successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

@@ -9,6 +9,7 @@ and the authenticated user information from a token (`token_payload`).
 """
 
 
+from turtle import back
 from fastapi import APIRouter, status, Response, Depends, Request, Path
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -21,14 +22,14 @@ from app.schemas import (
     CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse,
     CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
     CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
-    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest
+    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest
 )
 
 from app.services.project import (
     create_project, get_projects, list_all_roles_project, create_dashboard,
     list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard,
     update_project, delete_project, update_dashboard, update_role, delete_role,
-    get_project_owner_service, get_dashboard_owner_service
+    get_project_owner_service, get_dashboard_owner_service, blacklist_service,update_blacklist_service
 )
 
 from app.services.db_connection import (
@@ -575,3 +576,41 @@ async def get_favorites(
         dict: The favorites for the user.
     """
     return await get_favorites_service(db, token_payload)
+
+@backend_router.post("/projects/{project_id}/blacklist", status_code=status.HTTP_200_OK)
+async def blacklist(
+    project_id: UUID = Path(..., description="Project ID to blacklist tables for"),
+    data: BlackListTableNameRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Blacklist tables for a project.
+    Args:
+        project_id (UUID): The project ID.
+        data (BlackListTableNameRequest): The table names to blacklist.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The blacklisted tables response.
+    """
+    return await blacklist_service(project_id, data, db, token_payload)
+
+@backend_router.patch("/projects/{project_id}/blacklist", status_code=status.HTTP_200_OK)
+async def update_blacklist(
+    project_id: UUID = Path(..., description="Project ID to update blacklist tables for"),
+    data: BlackListTableNameRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)     \
+):
+    """
+    Update blacklist tables for a project.
+    Args:
+        project_id (UUID): The project ID.
+        data (BlackListTableNameRequest): The table names to update blacklist.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated blacklisted tables response.
+    """
+    return await update_blacklist_service(project_id, data, db, token_payload)
