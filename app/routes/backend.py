@@ -9,7 +9,7 @@ and the authenticated user information from a token (`token_payload`).
 """
 
 
-from turtle import back
+
 from fastapi import APIRouter, status, Response, Depends, Request, Path
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -22,14 +22,16 @@ from app.schemas import (
     CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse,
     CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
     CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
-    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest
+    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
+    ReadDataRequest
 )
 
 from app.services.project import (
     create_project, get_projects, list_all_roles_project, create_dashboard,
-    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard,
+    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard, read_data_service,
     update_project, delete_project, update_dashboard, update_role, delete_role,
-    get_project_owner_service, get_dashboard_owner_service, blacklist_service,update_blacklist_service
+    get_project_owner_service, get_dashboard_owner_service, blacklist_service,update_blacklist_service,
+    read_data_service
 )
 
 from app.services.db_connection import (
@@ -614,3 +616,20 @@ async def update_blacklist(
         dict: The updated blacklisted tables response.
     """
     return await update_blacklist_service(project_id, data, db, token_payload)
+
+@backend_router.patch("/grant-access", status_code=status.HTTP_200_OK)
+async def grant_access(
+    data: ReadDataRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Grant access to a project.
+    Args:
+        data (ReadDataRequest): The grant access data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The grant access response.
+    """
+    return await read_data_service(data, db, token_payload)

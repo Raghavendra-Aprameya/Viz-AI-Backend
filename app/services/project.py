@@ -10,13 +10,15 @@ from uuid import UUID
 from app.schemas import (
     ProjectRequest, CreateDashboardRequest, CreateRoleRequest, 
     UpdateProjectRequest, UpdateDashboardRequest, UpdateRoleRequest,BlackListTableNameRequest
+    ,ReadDataRequest
 )
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.utils.access import require_permission
 from app.models.schema_models import (
     ProjectModel, UserProjectRoleModel, RoleModel, DashboardModel, 
-    PermissionModel, RolePermissionModel, UserDashboardModel, UserModel,RoleTableNameModel
+    PermissionModel, RolePermissionModel, UserDashboardModel, UserModel,RoleTableNameModel,
+    DatabaseConnectionModel
 )
 from app.utils.constants import Permissions as Permission
 
@@ -845,3 +847,54 @@ async def update_blacklist_service(project_id, data: BlackListTableNameRequest, 
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+from uuid import UUID
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+async def read_data_service(data: ReadDataRequest, db: Session, token_payload: dict):
+    try:
+        # 1. Validate user_id
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing user ID in token payload"
+            )
+      
+
+       
+        database_connection = db.query(DatabaseConnectionModel).filter(
+            DatabaseConnectionModel.id == data.connection_id,
+            
+        ).first()
+
+        if not database_connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Database connection not found or unauthorized"
+            )
+
+       
+        database_connection.consent_given = not database_connection.consent_given
+
+        db.commit()
+        db.refresh(database_connection)
+
+        return {
+            "message": "Database connection access permission updated successfully",
+            "consent_given": database_connection.consent_given
+        }
+
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid UUID format for user ID"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
+
+    

@@ -14,7 +14,8 @@ class DBConnectionRequest(BaseModel):
     password: Optional[str] = None
     host: Optional[str] = None
     db_name: Optional[str] = None 
-    name: Optional[str] = None         # 👈 Needed
+    name: Optional[str] = None  
+    grant_access : bool       
 
 
 class DBConnectionResponse(BaseModel):
@@ -278,3 +279,8 @@ class BlackListTableNameRequest(BaseModel):
     table_name: List[UUID]
     role_id:UUID
     
+class ReadDataRequest(BaseModel):
+    """
+    Represents a request to read data from a table.
+    """
+    connection_id: UUID

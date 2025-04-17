@@ -84,7 +84,8 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
         db_password=encrypt_string(password),
         db_host_link=host,
         db_name=db_name,
-        project_id=project_id
+        project_id=project_id,
+        grant_access= data.grant_access,
     )
 
     db.add(db_entry)
@@ -156,7 +157,8 @@ async def get_connections(
                 "db_host_link": conn.db_host_link,
                 "db_name": conn.db_name,
                 "db_type": conn.db_type,
-                "name": conn.connection_name
+                "name": conn.connection_name,
+                "consent_given": conn.consent_given
             }
             connections_list.append(conn_dict)
 
