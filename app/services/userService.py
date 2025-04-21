@@ -405,6 +405,7 @@ async def update_user(
 async def delete_user(
     project_id: UUID,
     user_id: UUID,
+    token_payload: dict,
     db: Session,
 ):
     """

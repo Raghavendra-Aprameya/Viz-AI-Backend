@@ -45,6 +45,8 @@ from app.services.userService import (
     get_users_dashboard_service, get_favorites_service
 )
 
+from app.utils.tasks import generate_charts_asynchronously
+from app.services.chart import generate_charts_service
 
 
 
@@ -435,6 +437,7 @@ async def update(
 async def delete(
     project_id: UUID = Path(..., description="Project ID to delete user for"),
     user_id: UUID = Path(..., description="User ID to delete"),
+    token_payload: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 
 ):
@@ -447,7 +450,7 @@ async def delete(
     Returns:
         dict: The deleted user.
     """
-    return await delete_user(project_id,user_id, db)
+    return await delete_user(project_id,user_id,token_payload, db)
 
 @backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def update(
@@ -633,3 +636,23 @@ async def grant_access(
         dict: The grant access response.
     """
     return await read_data_service(data, db, token_payload)
+
+@backend_router.get("/generate-charts", status_code=status.HTTP_200_OK)
+async def generate_charts(
+    
+):
+    """
+    Test endpoint.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The test response.
+    """
+    # I need to set key to the generate queries here  r.set(key, json.dumps(charts))
+    return await generate_charts_service()
+    # return dat
+
+@backend_router.get("/refersh", status_code=status.HTTP_200_OK)
+async def refresh():
+    return await refresh_service()

@@ -284,3 +284,10 @@ class ReadDataRequest(BaseModel):
     Represents a request to read data from a table.
     """
     connection_id: UUID
+
+class ValidateChartAccessRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    role_id: UUID
+    table_name:List[str]
