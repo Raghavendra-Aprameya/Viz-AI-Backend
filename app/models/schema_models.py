@@ -1,3 +1,5 @@
+
+from telnetlib import STATUS
 from sqlalchemy import (
     Column,
     String,
@@ -7,6 +9,7 @@ from sqlalchemy import (
     Text,
     Boolean,
     Double,
+    Enum as SqlEnum
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -50,6 +53,20 @@ class UserModel(Base):
         "ProjectModel", back_populates="super_user",
         foreign_keys="ProjectModel.super_user_id"
     )
+    sent_chart_access_requests = relationship(
+        "ChartAccessRequestModel",
+        back_populates="requester",
+        foreign_keys="ChartAccessRequestModel.requested_by",
+        cascade="all, delete-orphan"
+    )
+
+    reviewed_chart_access_requests = relationship(
+        "ChartAccessRequestModel",
+        back_populates="reviewer_user",
+        foreign_keys="ChartAccessRequestModel.reviewer",
+        cascade="all, delete-orphan"
+    )
+
 
 
 class RolePermissionModel(Base):
@@ -256,6 +273,13 @@ class ChartModel(Base):
         "DashboardChartsModel", back_populates="chart", cascade="all, delete-orphan"
     )
 
+    access_requests = relationship(
+        "ChartAccessRequestModel",
+        back_populates="chart",
+        cascade="all, delete-orphan"
+    )
+
+
 
 class DashboardChartsModel(Base):
     """
@@ -365,3 +389,31 @@ class RelatedDatabaseModel(Base):
 
     def __repr__(self):
         return f"<RelatedDatabaseModel(id={self.id}, connection_id={self.connection_id}, related_connection_id={self.related_connection_id})>"
+
+class ChartAccessRequestModel(Base):
+    """
+    Represents a request to access a chart.
+    """
+    __tablename__ = 'chart_access_request'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    chart_id = Column(UUID(as_uuid=True), ForeignKey("chart.id"), nullable=False)
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
+    status = Column(SqlEnum("PENDING", "APPROVED", "REJECTED", name="access_status"), nullable=False)
+    reviewer = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=True)
+
+    chart = relationship("ChartModel", back_populates="access_requests")
+
+    requester = relationship(
+        "UserModel",
+        foreign_keys=[requested_by],
+        back_populates="sent_chart_access_requests"
+    )
+
+    reviewer_user = relationship(
+        "UserModel",
+        foreign_keys=[reviewer],
+        back_populates="reviewed_chart_access_requests"
+    )
+
+

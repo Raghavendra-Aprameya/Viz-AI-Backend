@@ -1,5 +1,12 @@
 
+from hmac import new
+from uuid import UUID
 from app.utils.tasks import generate_charts_asynchronously
+from app.schemas import RequestAccess
+from sqlalchemy.orm import Session
+from fastapi import HTTPException
+from app.models.schema_models import ChartAccessRequestModel    
+
 
 async def generate_charts_service():
 
@@ -46,3 +53,28 @@ async def refresh_service():
 #         return {"refreshed_charts": next_charts.decode("utf-8")}
 #     else:
 #         return {"error": "No new charts generated yet"}
+
+async def request_access_service(
+    data:RequestAccess,
+    db: Session,
+    token_payload: dict ):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise ValueError("User ID not found in token payload")
+
+        new_access_request = ChartAccessRequestModel(
+            chart_id=data.chart_id,
+            requested_by=user_id,
+            status = "PENDING"
+            )
+        db.add(new_access_request)
+        db.commit()
+        db.refresh(new_access_request)
+        return{
+            "message": "Access request created successfully",
+            "access_request_id": new_access_request.id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    

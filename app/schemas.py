@@ -291,3 +291,10 @@ class ValidateChartAccessRequest(BaseModel):
     """
     role_id: UUID
     table_name:List[str]
+
+class RequestAccess(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    chart_id: UUID
+    

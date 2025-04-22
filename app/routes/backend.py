@@ -23,7 +23,7 @@ from app.schemas import (
     CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
     CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
-    ReadDataRequest
+    ReadDataRequest,RequestAccess
 )
 
 from app.services.project import (
@@ -46,7 +46,7 @@ from app.services.userService import (
 )
 
 from app.utils.tasks import generate_charts_asynchronously
-from app.services.chart import generate_charts_service
+from app.services.chart import (generate_charts_service,request_access_service)
 
 
 
@@ -653,6 +653,14 @@ async def generate_charts(
     return await generate_charts_service()
     # return dat
 
-@backend_router.get("/refersh", status_code=status.HTTP_200_OK)
+@backend_router.get("/refresh", status_code=status.HTTP_200_OK)
 async def refresh():
     return await refresh_service()
+
+@backend_router.post("/request-access", status_code=status.HTTP_200_OK)
+async def request_access(
+    data:RequestAccess = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await request_access_service(data, db, token_payload)
