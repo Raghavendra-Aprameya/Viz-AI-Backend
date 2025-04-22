@@ -1,17 +1,53 @@
-from fastapi import APIRouter, status, Response, Depends, Request, Path
-from sqlalchemy.orm import Session, backref
+"""
+This module defines all backend-related routes for managing projects, users, dashboards, roles, permissions,
+database connections, and super user operations.
+
+Routes are prefixed with `/api/v1/backend`.
+
+Each route uses dependency injection to obtain the database session (`db`)
+and the authenticated user information from a token (`token_payload`).
+"""
+
+
+from fastapi import APIRouter, status, Response, Depends, Request, Path, HTTPException, Body
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 from uuid import UUID
 
 from app.core.db import get_db
-from app.schemas import ProjectRequest,DBConnectionResponse,DBConnectionRequest, UpdateDashboardRequest, UpdateRoleRequest, UpdateDBConnectionRequest
-from app.services.project import create_project, get_projects, list_all_roles_project, create_dashboard, list_all_permissions, create_role,list_users_all_dashboard, delete_dashboard, update_project,delete_project,update_dashboard,update_role,delete_role,get_project_owner_service,get_dashboard_owner_service
 from app.utils.token_parser import get_current_user
+from app.schemas import (
+    ProjectRequest, DBConnectionResponse, DBConnectionRequest, UpdateDashboardRequest,
+    UpdateRoleRequest, UpdateDBConnectionRequest, CreateUserProjectRequest,
+    CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse,
+    CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
+    CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
+    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest
+)
 
-from app.services.db_connection import create_database_connection, get_connections, update_db_connection, delete_db_connection
+from app.services.project import (
+    create_project, get_projects, list_all_roles_project, create_dashboard,
+    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard,
+    update_project, delete_project, update_dashboard, update_role, delete_role,
+    get_project_owner_service, get_dashboard_owner_service
+)
 
-from app.services.userService import create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details, update_user, delete_user,create_super_user_service,get_super_user_service,get_users_dashboard_service
-from app.schemas import CreateUserProjectRequest, CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse, CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse, CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,UpdateProjectRequest, UpdateUserRequest,CreateSuperUserRequest
+from app.services.db_connection import (
+    create_database_connection, get_connections,
+    update_db_connection, delete_db_connection
+)
 
+from app.services.userService import (
+    create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details,
+    update_user, delete_user, create_super_user_service, get_super_user_service,
+    get_users_dashboard_service, get_favorites_service
+)
+from app.services.generate_queries import (
+    generate_and_store_charts,execute_external_query
+)
+from app.services.nl2sql import (
+    generate_nl_sql_and_save
+)
 
 
 
@@ -416,7 +452,7 @@ async def delete(
     """
     return await delete_user(project_id,user_id, db)
 
-backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
+@backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def update(
     connection_id: UUID = Path(..., description="Connection ID to update"),
     data: UpdateDBConnectionRequest = None,
@@ -435,11 +471,12 @@ async def update(
     """
     return await update_db_connection(connection_id, data, db, token_payload)
 
-backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
+@backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def delete(
     connection_id: UUID = Path(..., description="Connection ID to delete"),
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
+
 ):
     """
     Delete a database connection.
@@ -450,7 +487,7 @@ async def delete(
     Returns:
         dict: The deleted connection.
     """
-    return await delete_db_connection(connection_id, db, token_payload)
+    return await delete_db_connection(connection_id, db,token_payload)
 
 @backend_router.post("/super-user",status_code=status.HTTP_201_CREATED)
 async def create_super_user(
@@ -529,3 +566,76 @@ async def get_dashboard_owner(
         dict: The owner for the dashboard.
     """
     return await get_dashboard_owner_service(dashboard_id, db)
+
+@backend_router.get("/favorites",status_code=status.HTTP_200_OK)
+async def get_favorites(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    """
+    Get the favorites for a user.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The favorites for the user.
+    """
+    return await get_favorites_service(db, token_payload)
+
+@backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
+async def generate_charts(
+    project_id: UUID,
+    datasource_connection_id: UUID,
+    request: QueryRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    # user_id_str = token_payload.get("sub")
+    # if not user_id_str:
+    #     raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # user_id = UUID(user_id_str)
+
+    # user_project_role =  db.execute(
+    #     select(UserProjectRoleModel).filter_by(user_id=user_id, project_id=project_id)
+    # )
+    # user_project_role = user_project_role.scalar_one_or_none()
+    # if not user_project_role:
+    #     raise HTTPException(status_code=403, detail="Access denied: User not in project")
+
+    # role = user_project_role.role.name.lower()
+    # if role != "admin":
+    #     raise HTTPException(status_code=403, detail="Only admins can generate charts")
+
+    try:
+        charts = await generate_and_store_charts(db,datasource_connection_id,project_id, request,token_payload)
+        return {"success": True, "generated_chart_ids": [chart.id for chart in charts]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@backend_router.post("/nl2sql/generate-and-save")
+async def generate_and_save_route(
+    data: Nl2SQLChatRequest = Body(...),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    user_id_str = token_payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_id = UUID(user_id_str)
+    return await generate_nl_sql_and_save(data, db, user_id)
+
+@backend_router.post("/excecute-query/{query_id}/{datasource_connection_id}/")
+def execute_query(
+    query_id: UUID,
+    datasource_connection_id:UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    try:
+        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload)
+        return query_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
