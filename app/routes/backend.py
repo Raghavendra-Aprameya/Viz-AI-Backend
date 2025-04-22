@@ -43,7 +43,7 @@ from app.services.userService import (
     get_users_dashboard_service, get_favorites_service
 )
 from app.services.generate_queries import (
-    generate_and_store_charts
+    generate_and_store_charts,execute_external_query
 )
 from app.services.nl2sql import (
     generate_nl_sql_and_save
@@ -625,3 +625,17 @@ async def generate_and_save_route(
 
     user_id = UUID(user_id_str)
     return await generate_nl_sql_and_save(data, db, user_id)
+
+@backend_router.post("/excecute-query/{query_id}/{datasource_connection_id}/")
+def execute_query(
+    query_id: UUID,
+    datasource_connection_id:UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    try:
+        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload)
+        return query_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    

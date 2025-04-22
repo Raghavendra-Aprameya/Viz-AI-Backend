@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text,create_engine
 from fastapi import HTTPException, status, Depends
 from uuid import UUID
 from typing import Any
@@ -6,6 +7,7 @@ import httpx
 from app.models.schema_models import ChartModel, DashboardChartsModel, DatabaseConnectionModel
 from app.schemas import QueryRequest
 from app.utils.token_parser import  get_current_user
+from app.utils.crypt import decrypt_string
 
 
 LLM_SERVICE_URL = "http://127.0.0.1:8001/queries/"
@@ -59,9 +61,9 @@ async def generate_and_store_charts(
     chart_models = []
     for q in queries:
         chart = ChartModel(
-            title=q["explanation"][:80],
+            title=q["title"][:80],
             query=q["query"],
-            report=q["explanation"],
+            report=q["report"],
             type=q["chart_type"],
             relevance=q["relevance"],
             is_time_based=q["is_time_based"],
@@ -81,3 +83,83 @@ async def generate_and_store_charts(
 
     db.commit()
     return chart_models
+
+def execute_external_query(query_id:UUID,
+                            db:Session,
+                            datasource_connection_id:UUID,
+                            token_payload: dict = Depends(get_current_user),
+                            ):
+    """
+    Executes a SQL query on the external database.
+    """
+    user_id_str = token_payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    
+    try:
+        user_id = UUID(user_id_str)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
+    
+    generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
+    if not generated_query:
+        raise HTTPException(status_code=404, detail="Query not found")
+    query = generated_query.query
+    
+    datasource_connection_id  = db.query(DatabaseConnectionModel).filter_by(id = datasource_connection_id ).first()
+    if not datasource_connection_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Datasource Connection ID dosent Exist")
+    
+    decrypt_conn_string = decrypt_string(datasource_connection_id.db_connection_string)
+    engine = create_engine(decrypt_conn_string)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = SessionLocal()
+    try:
+        print(query)
+        result = session.execute(text(query))
+        data = result.fetchall()  
+        print(data)
+        # Fetch all results
+        response = [dict(row._mapping) for row in data]  # Convert result to dictionary
+        transformed_data =  transform_data_dynamic(response)
+        print(transformed_data)
+        response =  {
+        "result": transformed_data["data"],
+        "x_axis": transformed_data["x_axis"],
+        "y_axis": transformed_data["y_axis"],
+        "id": str(generated_query.id),
+        "chartType": generated_query.chart_type,
+        "report": generated_query.report
+        }
+        print(response)
+        return response
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        session.close()  # Close session after use
+        engine.dispose() 
+
+
+
+def transform_data_dynamic(data):
+    """
+    Transforms an array of dictionaries into the required format by dynamically detecting fields.
+    Also returns the detected x-axis and y-axis labels.
+
+    :param data: List of dictionaries with unknown key names
+    :return: Dictionary containing transformed data and axis labels
+    """
+    if not data:
+        return {"data": [], "x_axis": None, "y_axis": None}
+
+    keys = list(data[0].keys())
+
+    if len(keys) < 2:
+        raise ValueError("Data must contain at least two fields (one for label and one for value).")
+
+    x_axis = keys[0]  # First key for x-axis
+    y_axis = keys[1]  # Second key for y-axis
+
+    transformed_data = [{"label": str(item[x_axis]), "value": item[y_axis]} for item in data]
+
+    return {"data": transformed_data, "x_axis": x_axis, "y_axis": y_axis}
