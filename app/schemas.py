@@ -1,10 +1,11 @@
 from operator import is_
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Union
 from uuid import UUID
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from app.models.schema_models import UserProjectRoleModel, UserModel, UserDashboardModel
+
 class DBConnectionRequest(BaseModel):
     connection_name: str  
     connection_string: Optional[str] = None
@@ -272,6 +273,7 @@ class CreateSuperUserRequest(BaseModel):
     password: str
     is_super: bool = True
     
+
 class BlackListTableNameRequest(BaseModel):
     """
     Represents a request to blacklist multiple table name.
@@ -298,3 +300,34 @@ class RequestAccess(BaseModel):
     """
     chart_id: UUID
     
+
+class QueryRequest(BaseModel):
+    db_type: str
+    domain: str
+    min_date: Optional[Union[datetime, str]] = None
+    max_date: Optional[Union[datetime, str]] = None
+    api_key: Optional[str] = None
+    role:str
+
+
+class QueryForExecutor(BaseModel):
+    query: str
+    explanation: str
+    relevance: float
+    is_time_based: bool
+    chart_type: str
+
+
+class QueriesForExecutorResponse(BaseModel):
+    queries: List[QueryForExecutor]
+    
+class Nl2SQLChatRequest(BaseModel):
+    nl_query: str
+    api_key: Optional[str] 
+
+class Nl2SQLChartResponse(BaseModel):
+    status: str 
+    sql_query: str 
+    chart_id: UUID 
+    
+

@@ -311,6 +311,7 @@ class DatabaseConnectionModel(Base):
     db_type = Column(String, nullable=True)
     consent_given = Column(Boolean, nullable=True, default=False)
 
+
     project = relationship("ProjectModel", back_populates="database_connections")
 
     connection_table_names = relationship(
@@ -415,5 +416,6 @@ class ChartAccessRequestModel(Base):
         foreign_keys=[reviewer],
         back_populates="reviewed_chart_access_requests"
     )
+
 
 
