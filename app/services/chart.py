@@ -7,23 +7,244 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.schema_models import (ChartAccessRequestModel, DashboardChartsModel, ProjectModel, UserProjectRoleModel,ChartModel,
     UserChartModel,RoleModel,RolePermissionModel,PermissionModel,UserModel,DashboardModel)
- # assuming this has a `status` field
+from app.services.generate_queries import generate_and_store_charts
+
+from sqlalchemy.orm import Session
+from app.core.db import get_db
+from fastapi import Depends
+from app.utils.token_parser import get_current_user
+from typing import Optional
 
 
-async def generate_charts_service():
-
-   
-        #write code to generate first set of charts
-        #r.set('charts', charts)
-        # generate_charts_asynchronously.delay()
-        #return first set of charts
-        pass
-async def refresh_service():
-    #write code to replace old charts wirh new charts
-    #rerun generate_charts_asynchronously.delay()
-    # return new charts
-    pass
-
+async def generate_charts_service(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+    datasource_connection_id:UUID = None,
+    project_id: UUID = None,
+    query_request:dict = None
+):
+    """
+    Service function to generate charts and queue the next batch asynchronously.
+    
+    This function:
+    1. Generates and stores the current set of charts
+    2. Saves the chart data to Redis for quick access
+    3. Triggers an asynchronous task to prepare the next batch
+    
+    Args:
+        db (Session): Database session
+        token_payload (dict): User authentication token payload
+        datasource_connection_id (UUID, optional): ID of the datasource connection
+        project_id (UUID, optional): ID of the project
+        query_request (dict, optional): Query parameters for chart generation
+        
+    Returns:
+        dict: Generated charts data and status information
+    """
+    try:
+        user_id = token_payload.get("user_id")
+        
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="User ID not found in token payload"
+            )
+            
+        # Check if there are pre-generated charts in Redis
+        redis_key = f"charts:next:{user_id}"
+        cached_charts = r.get(redis_key)
+        
+        if cached_charts:
+            # Use pre-generated charts if available
+            chart_data = json.loads(cached_charts)
+            
+            # Clear the next batch key since we're using it now
+            r.delete(redis_key)
+            
+            # Store as current charts
+            r.set(f"charts:current:{user_id}", cached_charts)
+            
+            # Log the use of pre-generated charts
+            logger.info(f"Using pre-generated charts for user {user_id}")
+            
+            # Trigger generation of next batch
+            generate_charts_asynchronously.delay(
+                user_id=user_id, 
+                datasource_connection_id=str(datasource_connection_id) if datasource_connection_id else None,
+                project_id=str(project_id) if project_id else None,
+                query_request=query_request
+            )
+            
+            return {
+                "status": "success",
+                "message": "Charts retrieved from cache",
+                "charts": chart_data,
+                "source": "cache"
+            }
+        
+        # No pre-generated charts available, generate them now
+        chart_models = generate_and_store_charts(
+            db=db,
+            datasource_connection_id=datasource_connection_id,
+            project_id=project_id,
+            query_request=query_request,
+            token_payload=token_payload
+        )
+        
+        # Serialize chart data for Redis storage
+        charts_serialized = [{
+            "id": str(chart.id),
+            "title": chart.title,
+            "chart_type": chart.chart_type,
+            "created_at": chart.created_at.isoformat() if hasattr(chart, 'created_at') else None,
+            "data": chart.data if hasattr(chart, 'data') else None,
+            # Add other relevant chart fields here
+        } for chart in chart_models]
+        
+        # Store current charts in Redis with expiration (e.g., 1 hour)
+        r.set(f"charts:current:{user_id}", json.dumps(charts_serialized), ex=3600)
+        
+        # Start background task to generate next batch of charts
+        generate_charts_asynchronously.delay(
+            user_id=user_id,
+            datasource_connection_id=str(datasource_connection_id) if datasource_connection_id else None,
+            project_id=str(project_id) if project_id else None,
+            query_request=query_request
+        )
+        
+        return {
+            "status": "success",
+            "message": "Charts generated successfully",
+            "charts": charts_serialized,
+            "source": "fresh"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in generate_charts_service: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate charts: {str(e)}"
+        )
+      
+        
+# async def refresh_service(
+#     db: Session,
+#     datasource_connection_id: UUID,
+#     project_id: UUID,
+#     token_payload: dict = Depends(get_current_user)
+# ):
+#     user_id = str(UUID(token_payload.get("sub")))
+    
+#     # Get pre-generated charts from Redis
+#     next_charts_json = r.get(f"charts:next:{user_id}")
+    
+#     if not next_charts_json:
+#         # If no pre-generated charts are available, return an informative message
+#         return {
+#             "message": "No pre-generated charts available. Please try again later.",
+#             "charts": []
+#         }
+    
+#     # Parse the next charts from Redis
+#     next_charts = json.loads(next_charts_json)
+    
+#     # Update current charts with the pre-generated ones
+#     r.set(f"charts:current:{user_id}", next_charts_json)
+    
+#     # Start background task to generate the next batch
+#     generate_charts_asynchronously.delay(user_id, str(datasource_connection_id), str(project_id))
+    
+#     # Convert string IDs to UUID objects for database operations
+#     chart_ids = [UUID(chart["id"]) for chart in next_charts]
+    
+#     # Get full chart data from the database
+#     chart_models = db.query(ChartModel).filter(ChartModel.id.in_(chart_ids)).all()
+    
+#     return {
+#         "message": "Charts refreshed successfully",
+#         "charts": chart_models
+#     }
+async def refresh_service(
+    db: Session,
+    datasource_connection_id: UUID,
+    project_id: UUID,
+    token_payload: dict
+):
+    """
+    Service function to refresh charts by using pre-generated charts from Redis.
+    
+    This function:
+    1. Retrieves pre-generated charts from Redis
+    2. Sets them as the current charts
+    3. Triggers asynchronous generation of the next batch
+    4. Returns the full chart data
+    
+    Args:
+        db (Session): Database session
+        datasource_connection_id (UUID): ID of the datasource connection
+        project_id (UUID): ID of the project
+        token_payload (dict): User authentication token payload
+        
+    Returns:
+        dict: Refreshed charts data and status information
+    """
+    try:
+        user_id = str(UUID(token_payload.get("sub")))
+        
+        # Get pre-generated charts from Redis
+        next_charts_key = f"charts:next:{user_id}"
+        next_charts_json = r.get(next_charts_key)
+        
+        if not next_charts_json:
+            # If no pre-generated charts are available, return an informative message
+            logger.warning(f"No pre-generated charts available for user {user_id}")
+            return {
+                "status": "warning",
+                "message": "No pre-generated charts available. Please try again later.",
+                "charts": []
+            }
+        
+        # Parse the next charts from Redis
+        next_charts = json.loads(next_charts_json)
+        
+        # Update current charts with the pre-generated ones
+        r.set(f"charts:current:{user_id}", next_charts_json, ex=3600)
+        
+        # Delete the next charts key since we're using it now
+        r.delete(next_charts_key)
+        
+        # Start background task to generate the next batch
+        generate_charts_asynchronously.delay(
+            user_id=user_id, 
+            datasource_connection_id=str(datasource_connection_id),
+            project_id=str(project_id),
+            query_request=None  # You might want to pass query parameters if needed
+        )
+        
+        # Convert string IDs to UUID objects for database operations
+        chart_ids = [UUID(chart["id"]) for chart in next_charts]
+        
+        # Get full chart data from the database
+        chart_models = db.query(ChartModel).filter(ChartModel.id.in_(chart_ids)).all()
+        
+        # If any charts are missing from the database, log a warning
+        if len(chart_models) < len(chart_ids):
+            logger.warning(f"Some charts from Redis were not found in the database. Expected {len(chart_ids)}, got {len(chart_models)}")
+        
+        return {
+            "status": "success",
+            "message": "Charts refreshed successfully",
+            "charts": chart_models,
+            "count": len(chart_models)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in refresh_service: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Failed to refresh charts: {str(e)}",
+            "charts": []
+        }
 
 # from fastapi import FastAPI
 # from tasks import generate_charts_task

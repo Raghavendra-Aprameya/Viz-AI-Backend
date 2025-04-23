@@ -1,13 +1,14 @@
 from operator import is_
 from turtle import title
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Union
 from uuid import UUID
 from datetime import datetime
 from dataclasses import dataclass, asdict
 
 from sqlalchemy.orm import query
 from app.models.schema_models import UserProjectRoleModel, UserModel, UserDashboardModel
+
 class DBConnectionRequest(BaseModel):
     connection_name: str  
     connection_string: Optional[str] = None
@@ -275,6 +276,7 @@ class CreateSuperUserRequest(BaseModel):
     password: str
     is_super: bool = True
     
+
 class BlackListTableNameRequest(BaseModel):
     """
     Represents a request to blacklist multiple table name.
@@ -307,8 +309,16 @@ class RequestAccess(BaseModel):
     is_time_based: Optional[bool] = None
     chart_type: str
 
-
-    
+class QueryRequest(BaseModel):
+    db_type: str
+    domain: str
+    min_date: Optional[Union[datetime, str]] = None
+    max_date: Optional[Union[datetime, str]] = None
+    api_key: Optional[str] = None
+    role:str
+class Nl2SQLChatRequest(BaseModel):
+    nl_query: str
+    api_key: Optional[str]
     
 
 from pydantic import BaseModel
