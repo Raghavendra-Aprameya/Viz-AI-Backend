@@ -23,7 +23,7 @@ from app.schemas import (
     CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
     CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
-    ReadDataRequest,RequestAccess
+    ReadDataRequest,RequestAccess,SaveChartRequest,UpdateRequestAccess,SaveChartToDashboardRequest
 )
 
 from app.services.project import (
@@ -46,7 +46,9 @@ from app.services.userService import (
 )
 
 from app.utils.tasks import generate_charts_asynchronously
-from app.services.chart import (generate_charts_service,request_access_service)
+from app.services.chart import (generate_charts_service,request_access_service,
+update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
+,save_chart_to_dashboard_service,get_charts_for_dashboard_service)
 
 
 
@@ -657,10 +659,62 @@ async def generate_charts(
 async def refresh():
     return await refresh_service()
 
-@backend_router.post("/request-access", status_code=status.HTTP_200_OK)
+@backend_router.post("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
 async def request_access(
+    project_id: UUID = Path(..., description="Project ID to request access for"),
     data:RequestAccess = None,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
-    return await request_access_service(data, db, token_payload)
+    return await request_access_service(project_id, data, db, token_payload)
+
+@backend_router.patch("/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK)
+async def update_request_access(
+    project_id: UUID = Path(..., description="Project ID to update request access for"),
+    request_id: UUID = Path(..., description="Request ID to update"),
+    data:UpdateRequestAccess = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await update_request_access_service(project_id,request_id, data, db, token_payload)
+
+@backend_router.get("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
+async def get_request_access(
+    project_id: UUID = Path(..., description="Project ID to get request access for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)     
+):
+    return await get_access_requests_service(project_id, db, token_payload)
+
+@backend_router.get("/charts", status_code=status.HTTP_200_OK)
+async def get_charts(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await get_charts_service(db, token_payload)
+
+@backend_router.post("/projects/{project_id}/save-chart", status_code=status.HTTP_200_OK)
+async def save_chart(
+    project_id: UUID = Path(..., description="Project ID to save chart for"),
+    data: SaveChartRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    return await save_chart_service(project_id, data, db, token_payload)
+
+@backend_router.post("/charts/save-to-dashboard", status_code=status.HTTP_200_OK)
+async def save_chart_to_dashboard(
+    data: SaveChartToDashboardRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await save_chart_to_dashboard_service(data, db, token_payload)
+
+@backend_router.get("/dashboards/{dashboard_id}/charts", status_code=status.HTTP_200_OK)
+async def get_charts_for_dashboard(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to get charts for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
+

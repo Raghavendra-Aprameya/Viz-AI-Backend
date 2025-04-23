@@ -1,9 +1,12 @@
 from operator import is_
+from turtle import title
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Any, List
 from uuid import UUID
 from datetime import datetime
 from dataclasses import dataclass, asdict
+
+from sqlalchemy.orm import query
 from app.models.schema_models import UserProjectRoleModel, UserModel, UserDashboardModel
 class DBConnectionRequest(BaseModel):
     connection_name: str  
@@ -296,5 +299,50 @@ class RequestAccess(BaseModel):
     """
     Represents a request to validate chart access.
     """
-    chart_id: UUID
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+
+
     
+    
+
+from pydantic import BaseModel
+from enum import Enum
+
+class AccessStatus(str, Enum):
+    
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+class UpdateRequestAccess(BaseModel):
+    status: AccessStatus
+
+class SaveChartRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+
+class SaveChartToDashboardRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+    dashboard_id: UUID
