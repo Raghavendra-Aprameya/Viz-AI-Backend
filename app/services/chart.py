@@ -1,27 +1,35 @@
 
-from hmac import new
+import json
 from uuid import UUID
 from app.utils.tasks import generate_charts_asynchronously
-from app.schemas import (RequestAccess, UpdateRequestAccess,SaveChartRequest,SaveChartToDashboardRequest)
+from app.schemas import (RequestAccess, UpdateRequestAccess,SaveChartRequest,SaveChartToDashboardRequest,QueryRequest,
+UpdateFavoriteChartRequest)
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.schema_models import (ChartAccessRequestModel, DashboardChartsModel, ProjectModel, UserProjectRoleModel,ChartModel,
     UserChartModel,RoleModel,RolePermissionModel,PermissionModel,UserModel,DashboardModel)
 from app.services.generate_queries import generate_and_store_charts
+from typing import Union
 
 from sqlalchemy.orm import Session
 from app.core.db import get_db
-from fastapi import Depends
+from fastapi import Depends,status
 from app.utils.token_parser import get_current_user
 from typing import Optional
+import logging
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+import redis
+
+r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
 async def generate_charts_service(
+    request: QueryRequest,
+    project_id: UUID,
+    datasource_connection_id: UUID = None,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
-    datasource_connection_id:UUID = None,
-    project_id: UUID = None,
-    query_request:dict = None
 ):
     """
     Service function to generate charts and queue the next batch asynchronously.
@@ -32,17 +40,17 @@ async def generate_charts_service(
     3. Triggers an asynchronous task to prepare the next batch
     
     Args:
+        request (QueryRequest): Query parameters for chart generation
+        project_id (UUID): ID of the project
+        datasource_connection_id (UUID, optional): ID of the datasource connection
         db (Session): Database session
         token_payload (dict): User authentication token payload
-        datasource_connection_id (UUID, optional): ID of the datasource connection
-        project_id (UUID, optional): ID of the project
-        query_request (dict, optional): Query parameters for chart generation
         
     Returns:
         dict: Generated charts data and status information
     """
     try:
-        user_id = token_payload.get("user_id")
+        user_id = UUID(token_payload.get("sub"))
         
         if not user_id:
             raise HTTPException(
@@ -69,10 +77,10 @@ async def generate_charts_service(
             
             # Trigger generation of next batch
             generate_charts_asynchronously.delay(
-                user_id=user_id, 
+                user_id=str(user_id),
                 datasource_connection_id=str(datasource_connection_id) if datasource_connection_id else None,
                 project_id=str(project_id) if project_id else None,
-                query_request=query_request
+                query_request=request.dict()  # Convert Pydantic model to dict
             )
             
             return {
@@ -83,11 +91,11 @@ async def generate_charts_service(
             }
         
         # No pre-generated charts available, generate them now
-        chart_models = generate_and_store_charts(
+        chart_models = await generate_and_store_charts(
             db=db,
             datasource_connection_id=datasource_connection_id,
             project_id=project_id,
-            query_request=query_request,
+            query_request=request,
             token_payload=token_payload
         )
         
@@ -106,10 +114,10 @@ async def generate_charts_service(
         
         # Start background task to generate next batch of charts
         generate_charts_asynchronously.delay(
-            user_id=user_id,
+            user_id=str(user_id),
             datasource_connection_id=str(datasource_connection_id) if datasource_connection_id else None,
             project_id=str(project_id) if project_id else None,
-            query_request=query_request
+            query_request=request.dict() # Convert Pydantic model to dict
         )
         
         return {
@@ -125,7 +133,7 @@ async def generate_charts_service(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate charts: {str(e)}"
         )
-      
+
         
 # async def refresh_service(
 #     db: Session,
@@ -668,3 +676,77 @@ async def get_charts_for_dashboard_service(
         }
     except Exception as e:
         raise HTTPException(status_code=500,detail=str(e))
+
+async def delete_chart_from_dashboard_service(
+    dashboard_id:UUID,
+    chart_id:UUID,
+    db:Session,
+    token_payload:dict
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise ValueError("User ID not found in token payload")
+        dashboard=db.query(DashboardModel).filter(DashboardModel.id==dashboard_id).first()
+        if not dashboard:
+            raise HTTPException(status_code=404,detail="Dashboard not found")
+
+        chart=db.query(DashboardChartsModel).filter(DashboardChartsModel.dashboard_id==dashboard_id,DashboardChartsModel.chart_id==chart_id).first()
+        if not chart:
+            raise HTTPException(status_code=404,detail="Chart not found")
+        db.delete(chart)
+        db.commit()
+        return {
+            "message": "Chart deleted successfully"
+
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=str(e))
+
+async def update_favorite_chart_service(
+     data: UpdateFavoriteChartRequest,
+    db: Session,
+    token_payload: dict
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise ValueError("User ID not found in token payload")
+        # Check if the chart exists
+        chart = db.query(UserChartModel).filter(UserChartModel.chart_id == data.chart_id, UserChartModel.user_id==user_id).first()
+        if not chart:
+            raise HTTPException(status_code=404, detail="Chart not found")
+        # Update the chart's favorite status
+        chart.is_favorite = not chart.is_favorite
+        db.commit()
+        db.refresh(chart)
+        return {
+            "message": "Chart favorite status updated successfully",
+            "is_favorite": chart.is_favorite
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_favorite_charts_service(
+    db: Session,
+    token_payload: dict
+):
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise ValueError("User ID not found in token payload")
+        # Fetch all favorite charts for the user
+        favorite_charts = db.query(UserChartModel).filter(UserChartModel.user_id == user_id, UserChartModel.is_favorite == True).all()
+        return {
+            "message": "Favorite charts retrieved successfully",
+            "favorite_charts": [
+                {
+                    "id": str(chart.chart_id),
+                    "title": chart.chart.title,
+                    "created_at": chart.chart.created_at
+                } for chart in favorite_charts
+            ]   
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

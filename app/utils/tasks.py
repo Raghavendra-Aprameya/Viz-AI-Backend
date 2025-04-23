@@ -3,10 +3,13 @@ from time import sleep
 from turtle import back
 from celery import Celery
 from app.services.generate_queries import generate_and_store_charts
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
-
-app = Celery('tasks', broker='redis://localhost:6379/0',backend='redis://localhost:6379/0')
+celery_app = Celery('tasks', broker='redis://localhost:6379/0',backend='redis://localhost:6379/0')
 
 # @app.task
 # def generate_charts_asynchronously():
@@ -34,7 +37,7 @@ app = Celery('tasks', broker='redis://localhost:6379/0',backend='redis://localho
 #     generate_charts_asynchronously.delay(user_id, str(datasource_connection_id), str(project_id))
 
 #     return chart_models
-@app.task
+@celery_app.task
 def generate_charts_asynchronously(
     user_id,
     datasource_connection_id=None,

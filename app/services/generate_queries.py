@@ -10,8 +10,9 @@ from app.utils.token_parser import  get_current_user
 from app.utils.crypt import decrypt_string
 
 
-LLM_SERVICE_URL = "http://127.0.0.1:8001/queries/"
-
+LLM_SERVICE_URL = "http://192.168.0.39:8001/queries/"
+# celery -A app.utils.tasks.celery_app worker --loglevel=info
+# celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -44,7 +45,7 @@ async def generate_and_store_charts(
         user_id = UUID(user_id_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
-
+    print(query_request.db_type)
     llm_payload = {
         "db_schema": db_conn.db_schema,
         "db_type": query_request.db_type,
@@ -61,9 +62,9 @@ async def generate_and_store_charts(
     chart_models = []
     for q in queries:
         chart = ChartModel(
-            title=q["title"][:80],
+            title=q["explanation"][:80],
             query=q["query"],
-            report=q["report"],
+            report=q["explanation"],
             type=q["chart_type"],
             relevance=q["relevance"],
             is_time_based=q["is_time_based"],

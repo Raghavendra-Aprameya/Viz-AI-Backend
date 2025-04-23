@@ -26,7 +26,8 @@ from app.schemas import (
     CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
     ReadDataRequest,RequestAccess,SaveChartRequest,UpdateRequestAccess,SaveChartToDashboardRequest,
-    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest
+    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest,
+    UpdateFavoriteChartRequest
 
 )
 
@@ -53,7 +54,8 @@ from app.services.userService import (
 from app.utils.tasks import generate_charts_asynchronously
 from app.services.chart import (generate_charts_service,request_access_service,
 update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
-,save_chart_to_dashboard_service,get_charts_for_dashboard_service)
+,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
+update_favorite_chart_service,get_favorite_charts_service)
 
 from app.services.generate_queries import (
     generate_and_store_charts,execute_external_query
@@ -661,14 +663,26 @@ async def generate_charts(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
+    """
+    API endpoint to generate charts for a specific project and datasource connection.
+    
+    Args:
+        request (QueryRequest): Query parameters for chart generation
+        project_id (UUID): ID of the project
+        datasource_connection_id (UUID): ID of the datasource connection
+        db (Session): Database session
+        token_payload (dict): User authentication token payload
+        
+    Returns:
+        dict: Generated charts data and status information
+    """
     return await generate_charts_service(
-        db=db,
-        datasource_connection_id=datasource_connection_id,
-        project_id=project_id,
-        query_request=request,
-        token_payload=token_payload
+        request,
+        project_id,
+        datasource_connection_id,
+        db,
+        token_payload
     )
-
 # @backend_router.get("/refresh-charts", status_code=status.HTTP_200_OK)
 # async def refresh_charts(
 #     db: Session = Depends(get_db),
@@ -817,4 +831,27 @@ async def get_charts_for_dashboard(
     token_payload: dict = Depends(get_current_user)
 ):
     return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
+
+@backend_router.delete("/dashboards/{dashboard_id}/charts/{chart_id}", status_code=status.HTTP_200_OK)
+async def delete_chart_from_dashboard(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to delete chart from"),
+    chart_id: UUID = Path(..., description="Chart ID to delete"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    return await delete_chart_from_dashboard_service(dashboard_id, chart_id, db, token_payload)
+
+@backend_router.patch("/charts/favorite", status_code=status.HTTP_200_OK)
+async def update_favorite_chart(
+    data: UpdateFavoriteChartRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await update_favorite_chart_service(data, db, token_payload)
+@backend_router.get("/charts/favorite", status_code=status.HTTP_200_OK)
+async def get_favorite_charts(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await get_favorite_charts_service(db, token_payload)
 
