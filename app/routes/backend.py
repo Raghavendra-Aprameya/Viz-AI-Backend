@@ -13,7 +13,7 @@ from fastapi import APIRouter, status, Response, Depends, Request, Path, HTTPExc
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from uuid import UUID
-
+from typing import List
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.schemas import (
@@ -22,7 +22,8 @@ from app.schemas import (
     CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse,
     CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
     CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
-    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest
+    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest, 
+    TrinoQueryRequest,TrinoQueryResponse
 )
 
 from app.services.project import (
@@ -47,6 +48,9 @@ from app.services.generate_queries import (
 )
 from app.services.nl2sql import (
     generate_nl_sql_and_save
+)
+from app.services.multiple_db_generate_queries import(
+    generate_trino_queries_service
 )
 
 
@@ -590,28 +594,30 @@ async def generate_charts(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
-    # user_id_str = token_payload.get("sub")
-    # if not user_id_str:
-    #     raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # user_id = UUID(user_id_str)
-
-    # user_project_role =  db.execute(
-    #     select(UserProjectRoleModel).filter_by(user_id=user_id, project_id=project_id)
-    # )
-    # user_project_role = user_project_role.scalar_one_or_none()
-    # if not user_project_role:
-    #     raise HTTPException(status_code=403, detail="Access denied: User not in project")
-
-    # role = user_project_role.role.name.lower()
-    # if role != "admin":
-    #     raise HTTPException(status_code=403, detail="Only admins can generate charts")
-
     try:
-        charts = await generate_and_store_charts(db,datasource_connection_id,project_id, request,token_payload)
-        return {"success": True, "generated_chart_ids": [chart.id for chart in charts]}
+        charts = await generate_and_store_charts(
+            db, datasource_connection_id, project_id, request, token_payload
+        )
+
+        return {
+            "success": True,
+            "generated_charts": [
+                {
+                    "id": str(chart.id),
+                    "title": chart.title,
+                    "query": chart.query,
+                    "chart_type": chart.chart_type,
+                    "relevance": chart.relevance,
+                    "is_time_based": chart.is_time_based,
+                    "report": chart.report
+                }
+                for chart in charts
+            ]
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
     
 @backend_router.post("/nl2sql/generate-and-save")
 async def generate_and_save_route(
@@ -639,3 +645,19 @@ def execute_query(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@backend_router.post("/generate_multiple_db_queries/{project_id}/", response_model=TrinoQueryResponse)
+async def generate_queries_route(
+    project_id: UUID,
+    request: TrinoQueryRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    if not request.connection_ids:
+        raise HTTPException(status_code=400, detail="Connection IDs are required")
+
+    return await generate_trino_queries_service(
+        db=db,
+        project_id=project_id,
+        token_payload=token_payload,
+        request=request
+    )

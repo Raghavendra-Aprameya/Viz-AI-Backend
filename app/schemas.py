@@ -1,6 +1,6 @@
 from operator import is_
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Any, List, Union
+from typing import Optional, Any, List, Union, Dict
 from uuid import UUID
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -301,3 +301,38 @@ class Nl2SQLChartResponse(BaseModel):
     sql_query: str 
     chart_id: UUID 
     
+# class ConnectionConfig(BaseModel):
+#     connection_string: str
+#     db_type: str
+
+
+class ExecutionConfig(BaseModel):
+    host: str = 'localhost'
+    port: int = 8080
+    user: str = 'admin'
+    catalog: str = 'neondb'
+    schema: str = 'public'
+
+class TrinoQueryRequest(BaseModel):
+    connection_ids: List[UUID]  
+    role: str
+    domain: str
+    api_key: Optional[str] = None
+    model_name: str = "gemini-1.5-pro"
+    min_date: Optional[Union[datetime, str]] = None
+    max_date: Optional[Union[datetime, str]] = None
+
+
+class QueryDetail(BaseModel):
+    sql: str
+    chart_type: Optional[str] = None
+    relevance: Optional[float] = None
+    title: Optional[str] = None
+    category: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    is_time_based:bool
+
+class TrinoQueryResponse(BaseModel):
+    queries: List[QueryDetail]
+    min_date: Optional[str] = None
+    max_date: Optional[str] = None
