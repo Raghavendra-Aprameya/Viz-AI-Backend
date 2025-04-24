@@ -15,7 +15,8 @@ class DBConnectionRequest(BaseModel):
     password: Optional[str] = None
     host: Optional[str] = None
     db_name: Optional[str] = None 
-    name: Optional[str] = None         # 👈 Needed
+    name: Optional[str] = None  
+    grant_access : bool       
 
 
 class DBConnectionResponse(BaseModel):
@@ -272,6 +273,34 @@ class CreateSuperUserRequest(BaseModel):
     password: str
     is_super: bool = True
     
+
+class BlackListTableNameRequest(BaseModel):
+    """
+    Represents a request to blacklist multiple table name.
+    """
+    table_name: List[UUID]
+    role_id:UUID
+    
+class ReadDataRequest(BaseModel):
+    """
+    Represents a request to read data from a table.
+    """
+    connection_id: UUID
+
+class ValidateChartAccessRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    role_id: UUID
+    table_name:List[str]
+
+class RequestAccess(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    chart_id: UUID
+    
+
 class QueryRequest(BaseModel):
     db_type: str
     domain: str

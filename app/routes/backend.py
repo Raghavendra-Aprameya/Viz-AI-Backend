@@ -10,6 +10,7 @@ and the authenticated user information from a token (`token_payload`).
 
 
 from fastapi import APIRouter, status, Response, Depends, Request, Path, HTTPException, Body
+
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from uuid import UUID
@@ -28,9 +29,10 @@ from app.schemas import (
 
 from app.services.project import (
     create_project, get_projects, list_all_roles_project, create_dashboard,
-    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard,
+    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard, read_data_service,
     update_project, delete_project, update_dashboard, update_role, delete_role,
-    get_project_owner_service, get_dashboard_owner_service
+    get_project_owner_service, get_dashboard_owner_service, blacklist_service,update_blacklist_service,
+    read_data_service
 )
 
 from app.services.db_connection import (
@@ -43,6 +45,11 @@ from app.services.userService import (
     update_user, delete_user, create_super_user_service, get_super_user_service,
     get_users_dashboard_service, get_favorites_service
 )
+
+
+from app.utils.tasks import generate_charts_asynchronously
+from app.services.chart import (generate_charts_service,request_access_service)
+
 from app.services.generate_queries import (
     generate_and_store_charts,execute_external_query
 )
@@ -442,6 +449,7 @@ async def update(
 async def delete(
     project_id: UUID = Path(..., description="Project ID to delete user for"),
     user_id: UUID = Path(..., description="User ID to delete"),
+    token_payload: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 
 ):
@@ -454,7 +462,7 @@ async def delete(
     Returns:
         dict: The deleted user.
     """
-    return await delete_user(project_id,user_id, db)
+    return await delete_user(project_id,user_id,token_payload, db)
 
 @backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
 async def update(
@@ -585,6 +593,90 @@ async def get_favorites(
         dict: The favorites for the user.
     """
     return await get_favorites_service(db, token_payload)
+
+
+@backend_router.post("/projects/{project_id}/blacklist", status_code=status.HTTP_200_OK)
+async def blacklist(
+    project_id: UUID = Path(..., description="Project ID to blacklist tables for"),
+    data: BlackListTableNameRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Blacklist tables for a project.
+    Args:
+        project_id (UUID): The project ID.
+        data (BlackListTableNameRequest): The table names to blacklist.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The blacklisted tables response.
+    """
+    return await blacklist_service(project_id, data, db, token_payload)
+
+@backend_router.patch("/projects/{project_id}/blacklist", status_code=status.HTTP_200_OK)
+async def update_blacklist(
+    project_id: UUID = Path(..., description="Project ID to update blacklist tables for"),
+    data: BlackListTableNameRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)     \
+):
+    """
+    Update blacklist tables for a project.
+    Args:
+        project_id (UUID): The project ID.
+        data (BlackListTableNameRequest): The table names to update blacklist.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The updated blacklisted tables response.
+    """
+    return await update_blacklist_service(project_id, data, db, token_payload)
+
+@backend_router.patch("/grant-access", status_code=status.HTTP_200_OK)
+async def grant_access(
+    data: ReadDataRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Grant access to a project.
+    Args:
+        data (ReadDataRequest): The grant access data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The grant access response.
+    """
+    return await read_data_service(data, db, token_payload)
+
+@backend_router.get("/generate-charts", status_code=status.HTTP_200_OK)
+async def generate_charts(
+    
+):
+    """
+    Test endpoint.
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The test response.
+    """
+    # I need to set key to the generate queries here  r.set(key, json.dumps(charts))
+    return await generate_charts_service()
+    # return dat
+
+@backend_router.get("/refresh", status_code=status.HTTP_200_OK)
+async def refresh():
+    return await refresh_service()
+
+@backend_router.post("/request-access", status_code=status.HTTP_200_OK)
+async def request_access(
+    data:RequestAccess = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await request_access_service(data, db, token_payload)
 
 @backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
 async def generate_charts(

@@ -3,18 +3,27 @@ This module contains a decorator for checking access to permforming operations.
 """
 
 from functools import wraps
+import imp
 import inspect
 import logging
 from uuid import UUID
 from typing import Optional
 
+from sqlalchemy import true
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.schema_models import (
+    RoleTableNameModel,
     UserProjectRoleModel,
     RolePermissionModel,
-    UserModel
+    UserModel,
+    RoleTableNameModel
+)
+
+from app.schemas import (
+    ValidateChartAccessRequest
 )
 
 from app.utils.constants import Permissions as Permission
@@ -131,7 +140,6 @@ async def check_access(
             detail=str(e)
         )
 
-
 def require_permission(permission_key: str):
     """
     Decorator for checking access to a specific permission.
@@ -182,3 +190,67 @@ def require_permission(permission_key: str):
         return wrapper
 
     return decorator
+
+# def validate_chart_access(data:ValidateChartAccessRequest,db:Session,user_id:dict):
+#     """
+#     Validate access to a chart.     
+#     """
+#     try:
+#         user_id = UUID(user_id.get("sub"))
+#         if not user_id:
+#             raise HTTPException(
+#                 status_code=status.HTTP_401_UNAUTHORIZED,
+#                 detail="Invalid token payload"  
+#             )
+#         for table_name in data.table_names:
+#             blacklist_data = db.query(BlacklistModel).filter(
+#                 BlackListModel.role_id == data.role_id,
+#                 BlacklistModel.table_name == table_name
+#             ).first()
+#             if blacklist_data:
+#                 raise HTTPException(
+#                     status_code=status.HTTP_403_FORBIDDEN,
+#                     detail="Access denied to this table"        
+#                 )
+#         return true
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail=str(e)
+#         )
+def validate_chart_access(data: ValidateChartAccessRequest, db: Session, user_id: dict):
+    """
+    Validate access to a chart by checking if the user's role has permission to access the tables.
+    """
+    try:
+        # Ensure user_id is valid and properly converted to UUID from the token
+        user_id = UUID(user_id.get("sub"))
+        
+        # Loop through all table names provided in the request data
+        for table_name in data.table_names:
+            # Query the blacklist to check if the user has been denied access to this table
+            blacklist_data = db.query(RoleTableNameModel).filter(
+                RoleTableNameModel.role_id == data.role_id,
+                RoleTableNameModel.table_name == table_name
+            ).first()
+
+            # If there is an entry in the blacklist for this table, deny access
+            if blacklist_data:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied to table: {table_name}"
+                )
+        
+        # If no blacklist entries are found, return True indicating access is validated
+        return True
+
+    except HTTPException as http_error:
+        # Catch HTTPExceptions explicitly and re-raise
+        raise http_error
+
+    except Exception as e:
+        # Handle unexpected errors by raising a 400 error with the exception message
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error occurred: {str(e)}"
+        )
