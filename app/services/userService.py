@@ -29,6 +29,107 @@ from app.models.schema_models import (
 )
 from app.utils.constants import Permissions as Permission
 
+# @require_permission(Permission.CREATE_USER)
+# async def create_user_project(
+#     data: CreateUserProjectRequest, 
+#     db: Session, 
+#     token_payload: dict,
+#     project_id: UUID
+# ):
+#     """
+#     Creates a new user for a project by validating the provided data, checking for existing users,
+#     and assigning the user a role in the project. Returns the created user and user-project association.
+    
+#     Args:
+#         data (CreateUserProjectRequest): The data to create the user.
+#         db (Session): The database session.
+#         token_payload (dict): The token payload containing the current user's info.
+#         project_id (UUID): The project ID to associate the user with.
+        
+#     Returns:
+#         dict: The response containing a success message, created user, and user-project role.
+        
+#     Raises:
+#         HTTPException: If any validation fails or an error occurs during creation.
+#     """
+#     try:
+#         user_id = UUID(token_payload.get("sub"))
+
+#         if not user_id:
+#             db.rollback()
+#             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+#         # Check if the specified role exists
+#         role = db.query(RoleModel).filter(RoleModel.id == data.role_id).first()
+#         if not role:
+#             db.rollback()
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail=f"Role with ID {data.role_id} does not exist"
+#             )
+        
+#         # Check if username already exists
+#         existing_user = db.query(UserModel).filter(UserModel.username == data.username).first()
+#         if existing_user:
+#             db.rollback()
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail="Username already exists"
+#             )
+        
+#         # Check if email already exists
+#         existing_email = db.query(UserModel).filter(UserModel.email == data.email).first()
+#         if existing_email:
+#             db.rollback()
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail="Email already exists"
+#             )
+        
+#         try:
+#             # Hash password before saving
+#             password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+#             # Create the new user
+#             new_user = UserModel(
+#                 username=data.username,
+#                 email=data.email,
+#                 password=password
+#             )
+#             db.add(new_user)
+#             db.flush()  # Flush to get the new_user.id before creating user_project
+            
+#             # Create the user-project role mapping
+#             user_project = UserProjectRoleModel(
+#                 user_id=new_user.id,  
+#                 project_id=project_id,
+#                 role_id=data.role_id
+#             )
+
+#             db.add(user_project)
+#             db.commit()
+#             db.refresh(user_project)
+#             db.refresh(new_user)
+
+#             user_project_role = {
+#                 "id": user_project.user_id,  
+#                 "user_id": user_project.user_id,
+#                 "project_id": user_project.project_id,
+#                 "role_id": user_project.role_id
+#             }
+
+#             return {
+#                 "message": "User project created successfully",
+#                 "user_project": user_project_role,
+#                 "user": new_user
+#             }
+#         except Exception as e:
+#             db.rollback()
+#             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user project")
+            
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 @require_permission(Permission.CREATE_USER)
 async def create_user_project(
     data: CreateUserProjectRequest, 
@@ -37,8 +138,10 @@ async def create_user_project(
     project_id: UUID
 ):
     """
-    Creates a new user for a project by validating the provided data, checking for existing users,
-    and assigning the user a role in the project. Returns the created user and user-project association.
+    Creates a new user for a project or adds an existing user to the project.
+    - If the user already exists in the project, throws an exception
+    - If the user exists in the database but not in the project, adds them to the project
+    - If the user doesn't exist, creates a new user and adds them to the project
     
     Args:
         data (CreateUserProjectRequest): The data to create the user.
@@ -69,68 +172,91 @@ async def create_user_project(
             )
         
         # Check if username already exists
-        existing_user = db.query(UserModel).filter(UserModel.username == data.username).first()
+        existing_user = db.query(UserModel).filter(
+            (UserModel.username == data.username) | (UserModel.email == data.email)
+        ).first()
+        
         if existing_user:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username already exists"
-            )
-        
-        # Check if email already exists
-        existing_email = db.query(UserModel).filter(UserModel.email == data.email).first()
-        if existing_email:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already exists"
-            )
-        
-        try:
-            # Hash password before saving
-            password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            # Check if user is already in this project
+            existing_user_project = db.query(UserProjectRoleModel).filter(
+                (UserProjectRoleModel.user_id == existing_user.id) & 
+                (UserProjectRoleModel.project_id == project_id)
+            ).first()
             
-            # Create the new user
-            new_user = UserModel(
-                username=data.username,
-                email=data.email,
-                password=password
-            )
-            db.add(new_user)
-            db.flush()  # Flush to get the new_user.id before creating user_project
-            
-            # Create the user-project role mapping
+            if existing_user_project:
+                db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User already exists in this project"
+                )
+                
+            # User exists in DB but not in project, add them to the project
             user_project = UserProjectRoleModel(
-                user_id=new_user.id,  
+                user_id=existing_user.id,
                 project_id=project_id,
                 role_id=data.role_id
             )
-
+            
             db.add(user_project)
             db.commit()
             db.refresh(user_project)
-            db.refresh(new_user)
-
+            
             user_project_role = {
-                "id": user_project.user_id,  
                 "user_id": user_project.user_id,
                 "project_id": user_project.project_id,
                 "role_id": user_project.role_id
             }
-
-            return {
-                "message": "User project created successfully",
-                "user_project": user_project_role,
-                "user": new_user
-            }
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user project")
             
+            return {
+                "message": "Existing user added to project successfully",
+                "user_project": user_project_role,
+                "user": existing_user
+            }
+        else:
+            # User doesn't exist, create a new one
+            try:
+                # Hash password before saving
+                password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                
+                # Create the new user
+                new_user = UserModel(
+                    username=data.username,
+                    email=data.email,
+                    password=password
+                )
+                db.add(new_user)
+                db.flush()  # Flush to get the new_user.id before creating user_project
+                
+                # Create the user-project role mapping
+                user_project = UserProjectRoleModel(
+                    user_id=new_user.id,  
+                    project_id=project_id,
+                    role_id=data.role_id
+                )
+
+                db.add(user_project)
+                db.commit()
+                db.refresh(user_project)
+                db.refresh(new_user)
+
+                user_project_role = {
+                    "user_id": user_project.user_id,
+                    "project_id": user_project.project_id,
+                    "role_id": user_project.role_id
+                }
+
+                return {
+                    "message": "New user created and added to project successfully",
+                    "user_project": user_project_role,
+                    "user": new_user
+                }
+            except Exception as e:
+                db.rollback()
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user project")
+                
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
 async def list_all_users_project(
     project_id: UUID,
     db: Session,

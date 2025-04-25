@@ -4,14 +4,16 @@ from fastapi import HTTPException, status, Depends
 from uuid import UUID
 from typing import Any
 import httpx
+import json
 from app.models.schema_models import ChartModel, DashboardChartsModel, DatabaseConnectionModel
 from app.schemas import QueryRequest
 from app.utils.token_parser import  get_current_user
 from app.utils.crypt import decrypt_string
 
 
-LLM_SERVICE_URL = "http://127.0.0.1:8001/queries/"
-
+LLM_SERVICE_URL = "http://localhost:8001/queries/"
+# celery -A app.utils.tasks.celery_app worker --loglevel=info
+# celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -44,26 +46,27 @@ async def generate_and_store_charts(
         user_id = UUID(user_id_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
-
+    db_schema = json.loads(db_conn.db_schema)
     llm_payload = {
         "db_schema": db_conn.db_schema,
         "db_type": query_request.db_type,
         "role": query_request.role,
         "domain": query_request.domain,
-        "min_date": query_request.min_date,
-        "max_date": query_request.max_date,
+        "min_date": db_schema.get("min_date"),
+        "max_date": db_schema.get("max_date"),
         "api_key": query_request.api_key,
     }
 
     llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
     queries = llm_response.get("queries", [])
+    print(queries)
 
     chart_models = []
     for q in queries:
         chart = ChartModel(
-            title=q["title"][:80],
+            title=q["explanation"],
             query=q["query"],
-            report=q["report"],
+            report=q["explanation"],
             type=q["chart_type"],
             relevance=q["relevance"],
             is_time_based=q["is_time_based"],

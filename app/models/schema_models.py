@@ -166,7 +166,10 @@ class ProjectModel(Base):
     database_connections = relationship(
         "DatabaseConnectionModel", back_populates="project", cascade="all, delete-orphan"
     )
-
+    access_requests = relationship(
+        "ChartAccessRequestModel", back_populates="project", cascade="all, delete-orphan"
+    )
+    
 
 class RoleModel(Base):
     """
@@ -259,7 +262,7 @@ class ChartModel(Base):
     report = Column(Text, nullable=True)
     type = Column(String, nullable=False)
     relevance = Column(Double, nullable=False)
-    is_time_based = Column(Boolean, nullable=False)
+    is_time_based = Column(Boolean, nullable=True)
     chart_type = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     is_user_generated = Column(Boolean, nullable=False, default=False)
@@ -273,11 +276,7 @@ class ChartModel(Base):
         "DashboardChartsModel", back_populates="chart", cascade="all, delete-orphan"
     )
 
-    access_requests = relationship(
-        "ChartAccessRequestModel",
-        back_populates="chart",
-        cascade="all, delete-orphan"
-    )
+    
 
 
 
@@ -398,12 +397,24 @@ class ChartAccessRequestModel(Base):
     __tablename__ = 'chart_access_request'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    chart_id = Column(UUID(as_uuid=True), ForeignKey("chart.id"), nullable=False)
+    title = Column(String, nullable=False)
+    query = Column(Text, nullable=False)
+    report = Column(Text, nullable=True)
+    type = Column(String, nullable=False)
+    relevance = Column(Double, nullable=False)
+    is_time_based = Column(Boolean, nullable=True)
+    chart_type = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    is_user_generated = Column(Boolean, nullable=False, default=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     requested_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     status = Column(SqlEnum("PENDING", "APPROVED", "REJECTED", name="access_status"), nullable=False)
     reviewer = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=True)
-
-    chart = relationship("ChartModel", back_populates="access_requests")
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
+   
+    project = relationship("ProjectModel", back_populates="access_requests")
+   
+    
 
     requester = relationship(
         "UserModel",

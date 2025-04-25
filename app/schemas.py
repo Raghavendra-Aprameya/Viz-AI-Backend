@@ -1,9 +1,14 @@
 from operator import is_
+from turtle import title
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Any, List, Union
+from typing import Optional, Any, List, Union, Dict
 from uuid import UUID
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from enum import Enum
+
+
+from sqlalchemy.orm import query
 from app.models.schema_models import UserProjectRoleModel, UserModel, UserDashboardModel
 
 class DBConnectionRequest(BaseModel):
@@ -298,29 +303,36 @@ class RequestAccess(BaseModel):
     """
     Represents a request to validate chart access.
     """
-    chart_id: UUID
-    
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
 
 class QueryRequest(BaseModel):
+    """
+    Pydantic model for chart generation request parameters.
+    """
     db_type: str
     domain: str
     min_date: Optional[Union[datetime, str]] = None
     max_date: Optional[Union[datetime, str]] = None
     api_key: Optional[str] = None
-    role:str
-
-
-class QueryForExecutor(BaseModel):
-    query: str
-    explanation: str
-    relevance: float
-    is_time_based: bool
-    chart_type: str
-
-
-class QueriesForExecutorResponse(BaseModel):
-    queries: List[QueryForExecutor]
+    role: str
     
+    def dict(self):
+        """
+        Convert the model to a dictionary, handling datetime objects.
+        """
+        data = super().dict()
+        # Convert datetime objects to strings
+        if isinstance(data.get('min_date'), datetime):
+            data['min_date'] = data['min_date'].isoformat()
+        if isinstance(data.get('max_date'), datetime):
+            data['max_date'] = data['max_date'].isoformat()
+        return data
 class Nl2SQLChatRequest(BaseModel):
     nl_query: str
     api_key: Optional[str] 
@@ -331,3 +343,72 @@ class Nl2SQLChartResponse(BaseModel):
     chart_id: UUID 
     
 
+class ExecutionConfig(BaseModel):
+    host: str = 'localhost'
+    port: int = 8080
+    user: str = 'admin'
+    catalog: str = 'neondb'
+    schema: str = 'public'
+
+class TrinoQueryRequest(BaseModel):
+    connection_ids: List[UUID]  
+    role: str
+    domain: str
+    api_key: Optional[str] = None
+    model_name: str = "gemini-1.5-pro"
+    min_date: Optional[Union[datetime, str]] = None
+    max_date: Optional[Union[datetime, str]] = None
+
+
+class QueryDetail(BaseModel):
+    sql: str
+    chart_type: Optional[str] = None
+    relevance: Optional[float] = None
+    title: Optional[str] = None
+    category: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    is_time_based:bool
+
+class TrinoQueryResponse(BaseModel):
+    queries: List[QueryDetail]
+    min_date: Optional[str] = None
+    max_date: Optional[str] = None
+
+class AccessStatus(str, Enum):
+    
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+class UpdateRequestAccess(BaseModel):
+    status: AccessStatus
+
+class SaveChartRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+
+class SaveChartToDashboardRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+    dashboard_id: UUID
+
+class UpdateFavoriteChartRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    chart_id: UUID
