@@ -655,34 +655,34 @@ async def grant_access(
     """
     return await read_data_service(data, db, token_payload)
 
-@backend_router.post("/generate-charts/{project_id}/{datasource_connection_id}")
-async def generate_charts(
-    request: QueryRequest,
-    project_id: UUID = Path(..., description="Project ID to generate charts for"),
-    datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    """
-    API endpoint to generate charts for a specific project and datasource connection.
+# @backend_router.post("/generate-charts/{project_id}/{datasource_connection_id}")
+# async def generate_charts(
+#     request: QueryRequest,
+#     project_id: UUID = Path(..., description="Project ID to generate charts for"),
+#     datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
+#     db: Session = Depends(get_db),
+#     token_payload: dict = Depends(get_current_user)
+# ):
+#     """
+#     API endpoint to generate charts for a specific project and datasource connection.
     
-    Args:
-        request (QueryRequest): Query parameters for chart generation
-        project_id (UUID): ID of the project
-        datasource_connection_id (UUID): ID of the datasource connection
-        db (Session): Database session
-        token_payload (dict): User authentication token payload
+#     Args:
+#         request (QueryRequest): Query parameters for chart generation
+#         project_id (UUID): ID of the project
+#         datasource_connection_id (UUID): ID of the datasource connection
+#         db (Session): Database session
+#         token_payload (dict): User authentication token payload
         
-    Returns:
-        dict: Generated charts data and status information
-    """
-    return await generate_charts_service(
-        request,
-        project_id,
-        datasource_connection_id,
-        db,
-        token_payload
-    )
+#     Returns:
+#         dict: Generated charts data and status information
+#     """
+#     return await generate_charts_service(
+#         request,
+#         project_id,
+#         datasource_connection_id,
+#         db,
+#         token_payload
+#     )
 # @backend_router.get("/refresh-charts", status_code=status.HTTP_200_OK)
 # async def refresh_charts(
 #     db: Session = Depends(get_db),
@@ -723,36 +723,36 @@ async def request_access(
 ):
     return await request_access_service(project_id, data, db, token_payload)
 
-# @backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
-# async def generate_charts(
-#     project_id: UUID,
-#     datasource_connection_id: UUID,
-#     request: QueryRequest,
-#     db: Session = Depends(get_db),
-#     token_payload: dict = Depends(get_current_user)
-# ):
-    # user_id_str = token_payload.get("sub")
-    # if not user_id_str:
-    #     raise HTTPException(status_code=401, detail="Unauthorized")
+@backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
+async def generate_charts(
+    project_id: UUID,
+    datasource_connection_id: UUID,
+    request: QueryRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    user_id_str = token_payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # user_id = UUID(user_id_str)
+    user_id = UUID(user_id_str)
 
-    # user_project_role =  db.execute(
-    #     select(UserProjectRoleModel).filter_by(user_id=user_id, project_id=project_id)
-    # )
-    # user_project_role = user_project_role.scalar_one_or_none()
-    # if not user_project_role:
-    #     raise HTTPException(status_code=403, detail="Access denied: User not in project")
+    user_project_role =  db.execute(
+        select(UserProjectRoleModel).filter_by(user_id=user_id, project_id=project_id)
+    )
+    user_project_role = user_project_role.scalar_one_or_none()
+    if not user_project_role:
+        raise HTTPException(status_code=403, detail="Access denied: User not in project")
 
-    # role = user_project_role.role.name.lower()
-    # if role != "admin":
-    #     raise HTTPException(status_code=403, detail="Only admins can generate charts")
+    role = user_project_role.role.name.lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can generate charts")
 
-    # try:
-    #     charts = await generate_and_store_charts(db,datasource_connection_id,project_id, request,token_payload)
-    #     return {"success": True, "generated_chart_ids": [chart.id for chart in charts]}
-    # except Exception as e:
-    #     raise HTTPException(status_code=500, detail=str(e))
+    try:
+        charts = await generate_and_store_charts(db,datasource_connection_id,project_id, request,token_payload)
+        return {"success": True, "generated_chart_ids": [chart.id for chart in charts]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
 @backend_router.post("/nl2sql/generate-and-save")
 async def generate_and_save_route(
