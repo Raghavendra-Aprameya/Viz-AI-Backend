@@ -9,6 +9,7 @@ from app.models.schema_models import ChartModel, DashboardChartsModel, DatabaseC
 from app.schemas import QueryRequest
 from app.utils.token_parser import  get_current_user
 from app.utils.crypt import decrypt_string
+from app.utils.sample_data import get_sample_data
 
 
 LLM_SERVICE_URL = "http://localhost:8001/queries/"
@@ -38,6 +39,8 @@ async def generate_and_store_charts(
     if not db_conn:
         raise HTTPException(status_code=404, detail="No database connection found for this project or db connection not found")
     
+    decrypt_conn_string = decrypt_string(db_conn.db_connection_string)
+
     user_id_str = token_payload.get("sub")
     if not user_id_str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
@@ -46,6 +49,8 @@ async def generate_and_store_charts(
         user_id = UUID(user_id_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
+    if db_conn.consent_given:
+        sample_data = get_sample_data(decrypt_conn_string)
     db_schema = json.loads(db_conn.db_schema)
     llm_payload = {
         "db_schema": db_conn.db_schema,
@@ -55,6 +60,7 @@ async def generate_and_store_charts(
         "min_date": db_schema.get("min_date"),
         "max_date": db_schema.get("max_date"),
         "api_key": query_request.api_key,
+        "sample_data":sample_data
     }
 
     llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)

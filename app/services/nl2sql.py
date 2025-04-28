@@ -13,7 +13,7 @@ async def generate_nl_sql(
     db: Session,
     user_id: UUID,
     datasource_connection_id:UUID,
-    llm_endpoint: str = "http://127.0.0.1:8001/queries/convert_nl_to_sql/"
+    llm_endpoint: str = "http://127.0.0.1:8001/api/nlq/convert_nl_to_sql"
 ):
     try:
         # user_roles = db.query(UserProjectRoleModel).filter_by(user_id=user_id).all()
@@ -29,7 +29,7 @@ async def generate_nl_sql(
         payload = {
             "nl_query": data.nl_query,
             "db_schema": schema_str,
-            "db_type": db_type, 
+            "db_type": db_type or "mysql", 
             "api_key": getattr(data, "api_key", None)
         }
 
