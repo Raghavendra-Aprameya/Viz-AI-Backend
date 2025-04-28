@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def generate_nl_sql_and_save(
+async def generate_nl_sql(
     data: Nl2SQLChatRequest,
     db: Session,
     user_id: UUID,
@@ -20,19 +20,16 @@ async def generate_nl_sql_and_save(
         # if not user_roles:
         #     raise HTTPException(status_code=403, detail="User has no project roles assigned.")
 
-        db_conn = None
         db_conn = db.query(DatabaseConnectionModel).filter_by(id=datasource_connection_id).first()
-        if db_conn:
-            schema_str = db_conn.db_schema or "{}"
-
-
         if not db_conn:
             raise HTTPException(status_code=404, detail="No database connection found for user's projects.")
 
+        schema_str = db_conn.db_schema or "{}"
+        db_type = db_conn.db_type
         payload = {
             "nl_query": data.nl_query,
             "db_schema": schema_str,
-            "db_type": "postgresql", 
+            "db_type": db_type, 
             "api_key": getattr(data, "api_key", None)
         }
 
@@ -45,24 +42,24 @@ async def generate_nl_sql_and_save(
         if not sql_query:
             raise HTTPException(status_code=400, detail="LLM did not return SQL query.")
 
-        new_chart = ChartModel(
-            title="Generated Chart",
-            query=sql_query,
-            report=llm_result.get("explanation", "Auto-generated"),
-            type="sql",
-            relevance=llm_result.get("relevance", 1.0),
-            is_time_based=llm_result.get("is_time_based", False),
-            chart_type=llm_result.get("chart_type", "unknown"),
-            is_user_generated=True
-        )
+        # new_chart = ChartModel(
+        #     title="Generated Chart",
+        #     query=sql_query,
+        #     report=llm_result.get("explanation", "Auto-generated"),
+        #     type="sql",
+        #     relevance=llm_result.get("relevance", 1.0),
+        #     is_time_based=llm_result.get("is_time_based", False),
+        #     chart_type=llm_result.get("chart_type", "unknown"),
+        #     is_user_generated=True
+        # )
 
-        db.add(new_chart)
-        db.commit()
+        # db.add(new_chart)
+        # db.commit()
 
         return {
             "status": "success",
             "sql_query": sql_query,
-            "chart_id": str(new_chart.id)
+            # "chart_id": str(new_chart.id)
         }
 
     except httpx.HTTPStatusError as e:
