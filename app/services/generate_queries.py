@@ -62,34 +62,35 @@ async def generate_and_store_charts(
     print(queries)
 
     chart_models = []
-    for q in queries:
-        chart = ChartModel(
-            title=q["explanation"],
-            query=q["query"],
-            report=q["explanation"],
-            type=q["chart_type"],
-            relevance=q["relevance"],
-            is_time_based=q["is_time_based"],
-            chart_type=q["chart_type"],
-            is_user_generated=False,
-            created_by=user_id
-        )
-        db.add(chart)
-        db.flush()
+    # for q in queries:
+    #     chart = ChartModel(
+    #         title=q["explanation"],
+    #         query=q["query"],
+    #         report=q["explanation"],
+    #         type=q["chart_type"],
+    #         relevance=q["relevance"],
+    #         is_time_based=q["is_time_based"],
+    #         chart_type=q["chart_type"],
+    #         is_user_generated=False,
+    #         created_by=user_id
+    #     )
+    #     db.add(chart)
+    #     db.flush()
 
         # assoc = DashboardChartsModel(
         #     chart_id=chart.id,
         #     dashboard_id=dashboard_id,
         # )
         # db.add(assoc)
-        chart_models.append(chart)
+        # chart_models.append(chart)
 
     db.commit()
     return chart_models
 
-def execute_external_query(query_id:UUID,
+def execute_external_query(
                             db:Session,
                             datasource_connection_id:UUID,
+                            query:str,
                             token_payload: dict = Depends(get_current_user),
                             ):
     """
@@ -104,10 +105,10 @@ def execute_external_query(query_id:UUID,
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
     
-    generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
-    if not generated_query:
-        raise HTTPException(status_code=404, detail="Query not found")
-    query = generated_query.query
+    # generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
+    # if not generated_query:
+    #     raise HTTPException(status_code=404, detail="Query not found")
+    query = query
     
     datasource_connection_id  = db.query(DatabaseConnectionModel).filter_by(id = datasource_connection_id ).first()
     if not datasource_connection_id:
@@ -122,7 +123,6 @@ def execute_external_query(query_id:UUID,
         result = session.execute(text(query))
         data = result.fetchall()  
         print(data)
-        # Fetch all results
         response = [dict(row._mapping) for row in data]  # Convert result to dictionary
         transformed_data =  transform_data_dynamic(response)
         print(transformed_data)
@@ -130,16 +130,16 @@ def execute_external_query(query_id:UUID,
         "result": transformed_data["data"],
         "x_axis": transformed_data["x_axis"],
         "y_axis": transformed_data["y_axis"],
-        "id": str(generated_query.id),
-        "chartType": generated_query.chart_type,
-        "report": generated_query.report
+        # "id": str(generated_query.id),
+        # "chartType": generated_query.chart_type,
+        # "report": generated_query.report
         }
         print(response)
         return response
     except Exception as e:
         return {"error": str(e)}
     finally:
-        session.close()  # Close session after use
+        session.close()  
         engine.dispose() 
 
 

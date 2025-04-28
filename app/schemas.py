@@ -333,6 +333,9 @@ class QueryRequest(BaseModel):
         if isinstance(data.get('max_date'), datetime):
             data['max_date'] = data['max_date'].isoformat()
         return data
+    
+class QueryExecutionRequest(BaseModel):
+    query: str
 class Nl2SQLChatRequest(BaseModel):
     nl_query: str
     api_key: Optional[str] 

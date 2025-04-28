@@ -12,24 +12,22 @@ async def generate_nl_sql_and_save(
     data: Nl2SQLChatRequest,
     db: Session,
     user_id: UUID,
+    datasource_connection_id:UUID,
     llm_endpoint: str = "http://127.0.0.1:8001/queries/convert_nl_to_sql/"
 ):
     try:
-        user_roles = db.query(UserProjectRoleModel).filter_by(user_id=user_id).all()
-        if not user_roles:
-            raise HTTPException(status_code=403, detail="User has no project roles assigned.")
+        # user_roles = db.query(UserProjectRoleModel).filter_by(user_id=user_id).all()
+        # if not user_roles:
+        #     raise HTTPException(status_code=403, detail="User has no project roles assigned.")
 
         db_conn = None
-        for role in user_roles:
-            db_conn = db.query(DatabaseConnectionModel).filter_by(project_id=role.project_id).first()
-            if db_conn:
-                break
+        db_conn = db.query(DatabaseConnectionModel).filter_by(id=datasource_connection_id).first()
+        if db_conn:
+            schema_str = db_conn.db_schema or "{}"
+
 
         if not db_conn:
             raise HTTPException(status_code=404, detail="No database connection found for user's projects.")
-
-        schema_str = db_conn.db_schema or "{}"
-
 
         payload = {
             "nl_query": data.nl_query,

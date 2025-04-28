@@ -28,7 +28,7 @@ from app.schemas import (
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
     ReadDataRequest,RequestAccess,SaveChartRequest,UpdateRequestAccess,SaveChartToDashboardRequest,
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest,
-    UpdateFavoriteChartRequest,TrinoQueryRequest,TrinoQueryResponse
+    UpdateFavoriteChartRequest,TrinoQueryRequest,TrinoQueryResponse,QueryExecutionRequest
 
 )
 
@@ -758,10 +758,11 @@ async def generate_charts(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@backend_router.post("/nl2sql/generate-and-save")
+@backend_router.post("/nl2sql/generate-and-save/{datasource_connection_id}")
 async def generate_and_save_route(
     data: Nl2SQLChatRequest = Body(...),
     db: Session = Depends(get_db),
+    datasource_connection_id = UUID,
     token_payload: dict = Depends(get_current_user)
 ):
     user_id_str = token_payload.get("sub")
@@ -769,17 +770,19 @@ async def generate_and_save_route(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     user_id = UUID(user_id_str)
-    return await generate_nl_sql_and_save(data, db, user_id)
+    return await generate_nl_sql_and_save(data, db, user_id,data,datasource_connection_id)
 
-@backend_router.post("/excecute-query/{query_id}/{datasource_connection_id}/")
+@backend_router.post("/excecute-query/{datasource_connection_id}/")
 def execute_query(
     query_id: UUID,
     datasource_connection_id:UUID,
     db: Session = Depends(get_db),
+    request: QueryExecutionRequest = Body(...),
     token_payload: dict = Depends(get_current_user),
 ):
     try:
-        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload)
+        query = request.query
+        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload,query)
         return query_result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
