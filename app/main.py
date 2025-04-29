@@ -1,18 +1,19 @@
-"""
-This module contains the FastAPI application instance and defines the routes for the API.
-"""
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-# from routes import router
+from app.middleware.response_time import ResponseTimeMiddleware
 
+# Import routers and constants
 from app.routes.auth import auth_router
 from app.routes.backend import backend_router
-from app.utils.constants import ALLOWED_ORIGINS, ALLOWED_CREDENTIALS,ALLOWED_METHODS,ALLOWED_HEADERS
-# from database import engine, Base
+from app.utils.constants import ALLOWED_ORIGINS, ALLOWED_CREDENTIALS, ALLOWED_METHODS, ALLOWED_HEADERS
+from sqlalchemy.orm import Session
+  # For SQLAlchemy session, if used elsewhere
 
+# Create a single FastAPI app instance
 app = FastAPI()
 
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -21,9 +22,9 @@ app.add_middleware(
     allow_headers=ALLOWED_HEADERS,
 )
 
-app.include_router(auth_router)
-app.include_router(backend_router)
 
-# @app.get("/")
-# def read_root():
-#     return {"message": "Welcome to the Database Connection Service API"}
+# Include routers for your endpoints
+app.include_router(auth_router)  # Include auth-related endpoints
+app.include_router(backend_router)  # Include backend-related endpoints
+
+app.add_middleware(ResponseTimeMiddleware)

@@ -116,26 +116,52 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.services.generate_queries import generate_and_store_charts
-from app.core.settings import settings  # Adjust this import based on your project structure
+from app.core.settings import settings
+from app.schemas import QueryRequest  # Import the QueryRequest schema
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Celery app config
-celery_app = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
+# Celery app config with properly configured serializer
+celery_app = Celery(
+    'tasks',
+    broker='redis://localhost:6379/0',
+    backend='redis://localhost:6379/0'
+)
+
+# Configure Celery to use 'solo' instead of 'fork' on macOS
+celery_app.conf.update(
+    worker_pool='solo',  # Use solo pool instead of prefork on macOS
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+)
 
 # Redis client
 r = redis.Redis(host='localhost', port=6379, db=0)
 
-# Directly define database connection here
+# Create engine outside of task to avoid recreation
 engine = create_engine(
     url=settings.DB_URI,
     pool_pre_ping=True,
-    pool_recycle=3600,  # Default values if POOL_RECYCLE is not available
-    pool_size=5,        # Default values if POOL_SIZE is not available
-    max_overflow=10,    # Default values if MAX_OVERFLOW is not available
+    pool_recycle=3600,
+    pool_size=5,
+    max_overflow=10,
 )
 TaskSessionLocal = sessionmaker(bind=engine, autoflush=False)
+
+# Function to run async code in synchronous context
+def run_async(async_func, *args, **kwargs):
+    import asyncio
+    
+    # Create a new event loop for this function call
+    loop = asyncio.new_event_loop()
+    try:
+        # Run the async function and return the result
+        return loop.run_until_complete(async_func(*args, **kwargs))
+    finally:
+        # Always close the loop to free up resources
+        loop.close()
 
 @celery_app.task
 def generate_charts_asynchronously(
@@ -149,24 +175,34 @@ def generate_charts_asynchronously(
     for quick access on the next user request.
     """
     try:
-        # Create a database session using our local definition
+        # Create a database session
         db = TaskSessionLocal()
         
         # Convert string IDs to UUID if provided
         ds_conn_id = UUID(datasource_connection_id) if datasource_connection_id else None
         proj_id = UUID(project_id) if project_id else None
 
-        # Placeholder token logic
-        token_payload = {"user_id": user_id}
+        # Token payload with user ID
+        token_payload = {"sub": user_id}
 
         logger.info(f"Starting chart generation for user {user_id}")
+        
+        # Convert the dictionary back to a QueryRequest object
+        # This is needed because we pass query_request.dict() when calling the task
+        if query_request is not None:
+            logger.info(f"Converting dict to QueryRequest: {query_request}")
+            query_request_obj = QueryRequest(**query_request)
+        else:
+            logger.warning(f"No query_request provided for user {user_id}")
+            query_request_obj = None
 
-        # Generate charts
-        chart_models = generate_and_store_charts(
+        # Use our helper function to run the async function
+        chart_models = run_async(
+            generate_and_store_charts,
             db=db,
             datasource_connection_id=ds_conn_id,
             project_id=proj_id,
-            query_request=query_request,
+            query_request=query_request_obj,
             token_payload=token_payload
         )
 

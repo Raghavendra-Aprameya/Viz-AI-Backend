@@ -36,7 +36,7 @@ from app.services.project import (
     list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard, read_data_service,
     update_project, delete_project, update_dashboard, update_role, delete_role,
     get_project_owner_service, get_dashboard_owner_service, blacklist_service,update_blacklist_service,
-    read_data_service
+    read_data_service,
 )
 
 from app.services.db_connection import (
@@ -55,7 +55,7 @@ from app.utils.tasks import generate_charts_asynchronously
 from app.services.chart import (generate_charts_service,request_access_service,
 update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
 ,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
-update_favorite_chart_service,get_favorite_charts_service)
+update_favorite_chart_service,get_favorite_charts_service,refresh_service)
 
 from app.services.generate_queries import (
     generate_and_store_charts,execute_external_query
@@ -655,64 +655,66 @@ async def grant_access(
     """
     return await read_data_service(data, db, token_payload)
 
-# @backend_router.post("/generate-charts/{project_id}/{datasource_connection_id}")
-# async def generate_charts(
-#     request: QueryRequest,
-#     project_id: UUID = Path(..., description="Project ID to generate charts for"),
-#     datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
-#     db: Session = Depends(get_db),
-#     token_payload: dict = Depends(get_current_user)
-# ):
-#     """
-#     API endpoint to generate charts for a specific project and datasource connection.
+@backend_router.post("/generate-charts/{project_id}/{datasource_connection_id}")
+async def generate_charts(
+    request: QueryRequest,
+    project_id: UUID = Path(..., description="Project ID to generate charts for"),
+    datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    API endpoint to generate charts for a specific project and datasource connection.
     
-#     Args:
-#         request (QueryRequest): Query parameters for chart generation
-#         project_id (UUID): ID of the project
-#         datasource_connection_id (UUID): ID of the datasource connection
-#         db (Session): Database session
-#         token_payload (dict): User authentication token payload
+    Args:
+        request (QueryRequest): Query parameters for chart generation
+        project_id (UUID): ID of the project
+        datasource_connection_id (UUID): ID of the datasource connection
+        db (Session): Database session
+        token_payload (dict): User authentication token payload
         
-#     Returns:
-#         dict: Generated charts data and status information
-#     """
-#     return await generate_charts_service(
-#         request,
-#         project_id,
-#         datasource_connection_id,
-#         db,
-#         token_payload
-#     )
-# @backend_router.get("/refresh-charts", status_code=status.HTTP_200_OK)
-# async def refresh_charts(
-#     db: Session = Depends(get_db),
-#     token_payload: dict = Depends(get_current_user),
-#     datasource_connection_id: UUID = Query(..., description="ID of the datasource connection"),
-#     project_id: UUID = Query(..., description="ID of the project")
-# ):
-#     """
-#     Endpoint to refresh charts using pre-generated charts from Redis.
+    Returns:
+        dict: Generated charts data and status information
+    """
+    return await generate_charts_service(
+        request,
+        project_id,
+        datasource_connection_id,
+        db,
+        token_payload
+    )
+@backend_router.post("/refresh-charts/{project_id}/{datasource_connection_id}", status_code=status.HTTP_200_OK)
+async def refresh_charts(
+    request: QueryRequest,
+    project_id: UUID = Path(..., description="Project ID to generate charts for"),
+    datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    """
+    Endpoint to refresh charts using pre-generated charts from Redis.
     
-#     This endpoint:
-#     1. Retrieves pre-generated charts from Redis
-#     2. Sets them as the current charts
-#     3. Triggers asynchronous generation of the next batch
+    This endpoint:
+    1. Retrieves pre-generated charts from Redis
+    2. Sets them as the current charts
+    3. Triggers asynchronous generation of the next batch
     
-#     Args:
-#         db (Session): The database session
-#         token_payload (dict): The token payload
-#         datasource_connection_id (UUID): ID of the datasource connection
-#         project_id (UUID): ID of the project
+    Args:
+        db (Session): The database session
+        token_payload (dict): The token payload
+        datasource_connection_id (UUID): ID of the datasource connection
+        project_id (UUID): ID of the project
         
-#     Returns:
-#         dict: Refreshed charts data and status information
-#     """
-#     return await refresh_service(
-#         db=db,
-#         datasource_connection_id=datasource_connection_id,
-#         project_id=project_id,
-#         token_payload=token_payload
-#     )
+    Returns:
+        dict: Refreshed charts data and status information
+    """
+    return await refresh_service(
+        request,
+        project_id=project_id,
+        datasource_connection_id=datasource_connection_id,
+        db=db,
+        token_payload=token_payload
+    )
 
 @backend_router.post("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
 async def request_access(
@@ -723,36 +725,37 @@ async def request_access(
 ):
     return await request_access_service(project_id, data, db, token_payload)
 
-@backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
-async def generate_charts(
-    project_id: UUID,
-    datasource_connection_id: UUID,
-    request: QueryRequest,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    user_id_str = token_payload.get("sub")
-    if not user_id_str:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+# @backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
+# async def generate_charts(
+#     project_id: UUID,
+#     datasource_connection_id: UUID,
+#     request: QueryRequest,
+#     db: Session = Depends(get_db),
+#     token_payload: dict = Depends(get_current_user)
+# ):
+#     try:
+#         charts = await generate_and_store_charts(
+#             db, datasource_connection_id, project_id, request, token_payload
+#         )
 
-    user_id = UUID(user_id_str)
+#         return {
+#             "success": True,
+#             "generated_charts": [
+#                 {
+#                     "id": str(chart.id),
+#                     "title": chart.title,
+#                     "query": chart.query,
+#                     "chart_type": chart.chart_type,
+#                     "relevance": chart.relevance,
+#                     "is_time_based": chart.is_time_based,
+#                     "report": chart.report
+#                 }
+#                 for chart in charts
+#             ]
+#         }
 
-    user_project_role =  db.execute(
-        select(UserProjectRoleModel).filter_by(user_id=user_id, project_id=project_id)
-    )
-    user_project_role = user_project_role.scalar_one_or_none()
-    if not user_project_role:
-        raise HTTPException(status_code=403, detail="Access denied: User not in project")
-
-    role = user_project_role.role.name.lower()
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can generate charts")
-
-    try:
-        charts = await generate_and_store_charts(db,datasource_connection_id,project_id, request,token_payload)
-        return {"success": True, "generated_chart_ids": [chart.id for chart in charts]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
     
 @backend_router.post("/nl2sql/generate-and-save")
 async def generate_and_save_route(

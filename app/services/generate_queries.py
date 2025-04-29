@@ -10,12 +10,12 @@ from app.utils.token_parser import  get_current_user
 from app.utils.crypt import decrypt_string
 
 
-LLM_SERVICE_URL = "http://localhost:8010/queries/"
+LLM_SERVICE_URL = "http://localhost:8002/queries/"
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(url, json=payload) 
             response.raise_for_status()
             return response.json() 
