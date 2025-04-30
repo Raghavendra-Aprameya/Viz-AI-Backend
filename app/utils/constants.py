@@ -33,7 +33,10 @@ POOL_RECYCLE = 300
 POOL_SIZE = 5
 MAX_OVERFLOW = 0
 
-ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3006","http://localhost:3007","http://localhost:3005"]
+ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3001","http://localhost:3003","http://localhost:3004","http://localhost:3005","http://localhost:3006","http://localhost:3007","http://localhost:3008","http://localhost:3009","http://localhost:3010"]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*"]
+
+LLM_SERVICE_URL = "http://localhost:8003/queries/"
+LLM_SPREADSHEET_URL = "http://localhost:8003/generate-sheet-queries/"

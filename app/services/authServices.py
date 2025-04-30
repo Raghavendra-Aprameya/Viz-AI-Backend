@@ -70,6 +70,7 @@ async def register_user(user: UserRequest, response: Response, db: Session = Non
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+
 async def login_user(login_data: LoginData, response: Response, db: Session = None) -> dict:
     """
     Log in a user by validating credentials and issuing new tokens.

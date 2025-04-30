@@ -15,6 +15,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from uuid import uuid4
 from app.core.base import Base
+from datetime import datetime
 
 
 class UserModel(Base):
@@ -428,5 +429,13 @@ class ChartAccessRequestModel(Base):
         back_populates="reviewed_chart_access_requests"
     )
 
-
-
+class ResponseTimeModel(Base):
+    __tablename__ = "response_times"
+    
+    id = Column(UUID, primary_key=True, index=True)
+    url = Column(String, index=True)
+    avg_process_time = Column(Double)
+    last_process_time = Column(Double)
+    request_count = Column(Double, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

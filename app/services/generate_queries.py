@@ -9,14 +9,16 @@ from app.models.schema_models import ChartModel, DashboardChartsModel, DatabaseC
 from app.schemas import QueryRequest
 from app.utils.token_parser import  get_current_user
 from app.utils.crypt import decrypt_string
+from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
+from app.utils.sample_data import get_sample_data
 
 
-LLM_SERVICE_URL = "http://localhost:8001/queries/"
+LLM_SERVICE_URL = "http://localhost:8005/queries/"
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(url, json=payload) 
             response.raise_for_status()
             return response.json() 
@@ -38,6 +40,8 @@ async def generate_and_store_charts(
     if not db_conn:
         raise HTTPException(status_code=404, detail="No database connection found for this project or db connection not found")
     
+    decrypt_conn_string = decrypt_string(db_conn.db_connection_string)
+
     user_id_str = token_payload.get("sub")
     if not user_id_str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
@@ -46,7 +50,11 @@ async def generate_and_store_charts(
         user_id = UUID(user_id_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
-    db_schema = json.loads(db_conn.db_schema)
+    sample_data = None
+    if db_conn.consent_given:
+        sample_data = get_sample_data(decrypt_conn_string)
+    db_schema = json.loads(db_conn.db_schema)    
+    print(query_request.db_type)
     llm_payload = {
         "db_schema": db_conn.db_schema,
         "db_type": query_request.db_type,
@@ -55,10 +63,17 @@ async def generate_and_store_charts(
         "min_date": db_schema.get("min_date"),
         "max_date": db_schema.get("max_date"),
         "api_key": query_request.api_key,
+        "sample_data":sample_data or ""
     }
 
-    llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
-    queries = llm_response.get("queries", [])
+    
+    
+    if db_conn.db_type == "spreadsheet":
+        llm_response_spreadsheet = await post_to_llm(LLM_SPREADSHEET_URL, llm_payload)
+        queries= llm_response_spreadsheet.get("queries", [])
+    else:
+        llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
+        queries = llm_response.get("queries", [])
     print(queries)
 
     chart_models = []
@@ -74,8 +89,8 @@ async def generate_and_store_charts(
             is_user_generated=False,
             created_by=user_id
         )
-        db.add(chart)
-        db.flush()
+    #     db.add(chart)
+    #     db.flush()
 
         # assoc = DashboardChartsModel(
         #     chart_id=chart.id,
@@ -87,9 +102,10 @@ async def generate_and_store_charts(
     db.commit()
     return chart_models
 
-def execute_external_query(query_id:UUID,
+def execute_external_query(
                             db:Session,
                             datasource_connection_id:UUID,
+                            query:str,
                             token_payload: dict = Depends(get_current_user),
                             ):
     """
@@ -104,10 +120,10 @@ def execute_external_query(query_id:UUID,
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
     
-    generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
-    if not generated_query:
-        raise HTTPException(status_code=404, detail="Query not found")
-    query = generated_query.query
+    # generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
+    # if not generated_query:
+    #     raise HTTPException(status_code=404, detail="Query not found")
+    query = query
     
     datasource_connection_id  = db.query(DatabaseConnectionModel).filter_by(id = datasource_connection_id ).first()
     if not datasource_connection_id:
@@ -122,7 +138,6 @@ def execute_external_query(query_id:UUID,
         result = session.execute(text(query))
         data = result.fetchall()  
         print(data)
-        # Fetch all results
         response = [dict(row._mapping) for row in data]  # Convert result to dictionary
         transformed_data =  transform_data_dynamic(response)
         print(transformed_data)
@@ -130,16 +145,16 @@ def execute_external_query(query_id:UUID,
         "result": transformed_data["data"],
         "x_axis": transformed_data["x_axis"],
         "y_axis": transformed_data["y_axis"],
-        "id": str(generated_query.id),
-        "chartType": generated_query.chart_type,
-        "report": generated_query.report
+        # "id": str(generated_query.id),
+        # "chartType": generated_query.chart_type,
+        # "report": generated_query.report
         }
         print(response)
         return response
     except Exception as e:
         return {"error": str(e)}
     finally:
-        session.close()  # Close session after use
+        session.close()  
         engine.dispose() 
 
 

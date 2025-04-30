@@ -1,5 +1,6 @@
 from operator import is_
 from turtle import title
+from turtle import title
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Any, List, Union, Dict
 from uuid import UUID
@@ -315,6 +316,9 @@ class QueryRequest(BaseModel):
     """
     Pydantic model for chart generation request parameters.
     """
+    """
+    Pydantic model for chart generation request parameters.
+    """
     db_type: str
     domain: str
     min_date: Optional[Union[datetime, str]] = None
@@ -333,16 +337,61 @@ class QueryRequest(BaseModel):
         if isinstance(data.get('max_date'), datetime):
             data['max_date'] = data['max_date'].isoformat()
         return data
+    
+class QueryExecutionRequest(BaseModel):
+    query: str
 class Nl2SQLChatRequest(BaseModel):
     nl_query: str
-    api_key: Optional[str] 
-
-class Nl2SQLChartResponse(BaseModel):
-    status: str 
-    sql_query: str 
-    chart_id: UUID 
+    api_key: Optional[str]
     
 
+from pydantic import BaseModel
+from enum import Enum
+
+class AccessStatus(str, Enum):
+    
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+class UpdateRequestAccess(BaseModel):
+    status: AccessStatus
+
+class SaveChartRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+
+class SaveChartToDashboardRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    title: str
+    query: str
+    report: Optional[str] = None
+    type: str
+    relevance: Optional[str] = None
+    is_time_based: Optional[bool] = None
+    chart_type: str
+    dashboard_id: UUID
+
+class UpdateFavoriteChartRequest(BaseModel):
+    """
+    Represents a request to validate chart access.
+    """
+    chart_id: UUID
+class AddSpreadsheetRequest(BaseModel):
+    """
+    Represents a request to add a spreadsheet datasource.
+    """
+    connection_name: str
+    sheet_id: str
 class ExecutionConfig(BaseModel):
     host: str = 'localhost'
     port: int = 8080
