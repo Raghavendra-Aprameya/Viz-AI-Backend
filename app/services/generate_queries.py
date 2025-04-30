@@ -8,10 +8,9 @@ from app.models.schema_models import ChartModel, DashboardChartsModel, DatabaseC
 from app.schemas import QueryRequest
 from app.utils.token_parser import  get_current_user
 from app.utils.crypt import decrypt_string
+from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
 
 
-LLM_SERVICE_URL = "http://localhost:8002/queries/"
-LLM_SPREADSHEET_URL = "http://localhost:8002/generate-sheet-queries/"
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:

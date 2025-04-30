@@ -105,6 +105,7 @@ async def create_database_connection(project_id: UUID, token_payload: dict, data
     return DBConnectionResponse(db_entry_id=db_entry.id)
 
 
+
 @require_permission(Permission.VIEW_DATASOURCE)
 async def get_connections(
     project_id: UUID, 
@@ -113,39 +114,26 @@ async def get_connections(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user)
 ):
-    """
-    Retrieves all database connections for the specified project.
-
-    Args:
-        project_id (UUID): Project whose DB connections are to be fetched.
-        request (Request): FastAPI request object.
-        response (Response): FastAPI response object.
-        db (Session): SQLAlchemy DB session.
-        token_payload (dict): Parsed token payload.
-
-    Returns:
-        dict: A list of decrypted and structured DB connections.
-    """
     try:
         user_id_str = token_payload.get("sub")
         if not user_id_str:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-        try:
-            user_id = UUID(user_id_str)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
+        user_id = UUID(user_id_str)  # Will raise ValueError if invalid
 
-        # Query database connections for the project
         connections = db.query(DatabaseConnectionModel).filter(
             DatabaseConnectionModel.project_id == project_id
         ).all()
 
-        # Format and decrypt connections
         connections_list = []
         for conn in connections:
-            decrypted_password = decrypt_string(conn.db_password)
-            decrypted_connection_string = decrypt_string(conn.db_connection_string)
+            # Skip decryption for spreadsheets
+            if conn.db_type == "spreadsheet":
+                decrypted_password = conn.db_password
+                decrypted_connection_string = conn.db_connection_string
+            else:
+                decrypted_password = decrypt_string(conn.db_password)
+                decrypted_connection_string = decrypt_string(conn.db_connection_string)
 
             conn_dict = {
                 "id": str(conn.id),

@@ -226,7 +226,7 @@ def add_spreadsheet_datasource_service(project_id, data, db, token_payload):
             project_id=project_id,
             connection_name=data.connection_name,
             db_type="spreadsheet",
-            db_schema=db_schema_json,  # Store as JSON string, not dict
+            db_schema=db_schema_json,  
             db_connection_string=url,
             consent_given=True,
         )

@@ -37,3 +37,6 @@ ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3001","http://localho
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*"]
+
+LLM_SERVICE_URL = "http://localhost:8003/queries/"
+LLM_SPREADSHEET_URL = "http://localhost:8003/generate-sheet-queries/"
