@@ -11,6 +11,7 @@ from app.utils.crypt import decrypt_string
 
 
 LLM_SERVICE_URL = "http://localhost:8002/queries/"
+LLM_SPREADSHEET_URL = "http://localhost:8002/generate-sheet-queries/"
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:
@@ -56,8 +57,14 @@ async def generate_and_store_charts(
         "api_key": query_request.api_key,
     }
 
-    llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
-    queries = llm_response.get("queries", [])
+    
+    
+    if db_conn.db_type == "spreadsheet":
+        llm_response_spreadsheet = await post_to_llm(LLM_SPREADSHEET_URL, llm_payload)
+        queries= llm_response_spreadsheet.get("queries", [])
+    else:
+        llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
+        queries = llm_response.get("queries", [])
 
     chart_models = []
     for q in queries:

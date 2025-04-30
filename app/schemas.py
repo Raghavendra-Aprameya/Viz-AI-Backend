@@ -377,3 +377,9 @@ class UpdateFavoriteChartRequest(BaseModel):
     Represents a request to validate chart access.
     """
     chart_id: UUID
+class AddSpreadsheetRequest(BaseModel):
+    """
+    Represents a request to add a spreadsheet datasource.
+    """
+    connection_name: str
+    sheet_id: str
