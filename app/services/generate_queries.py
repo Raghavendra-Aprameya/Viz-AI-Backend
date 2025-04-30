@@ -49,6 +49,7 @@ async def generate_and_store_charts(
         user_id = UUID(user_id_str)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID format in token")
+    sample_data = None
     if db_conn.consent_given:
         sample_data = get_sample_data(decrypt_conn_string)
     db_schema = json.loads(db_conn.db_schema)
@@ -60,7 +61,7 @@ async def generate_and_store_charts(
         "min_date": db_schema.get("min_date"),
         "max_date": db_schema.get("max_date"),
         "api_key": query_request.api_key,
-        "sample_data":sample_data
+        "sample_data":sample_data or ""
     }
 
     llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
@@ -68,18 +69,18 @@ async def generate_and_store_charts(
     print(queries)
 
     chart_models = []
-    # for q in queries:
-    #     chart = ChartModel(
-    #         title=q["explanation"],
-    #         query=q["query"],
-    #         report=q["explanation"],
-    #         type=q["chart_type"],
-    #         relevance=q["relevance"],
-    #         is_time_based=q["is_time_based"],
-    #         chart_type=q["chart_type"],
-    #         is_user_generated=False,
-    #         created_by=user_id
-    #     )
+    for q in queries:
+        chart = ChartModel(
+            title=q["explanation"],
+            query=q["query"],
+            report=q["explanation"],
+            type=q["chart_type"],
+            relevance=q["relevance"],
+            is_time_based=q["is_time_based"],
+            chart_type=q["chart_type"],
+            is_user_generated=False,
+            created_by=user_id
+        )
     #     db.add(chart)
     #     db.flush()
 
@@ -88,7 +89,7 @@ async def generate_and_store_charts(
         #     dashboard_id=dashboard_id,
         # )
         # db.add(assoc)
-        # chart_models.append(chart)
+        chart_models.append(chart)
 
     db.commit()
     return chart_models
