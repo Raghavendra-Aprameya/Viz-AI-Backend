@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, inspect
 from datetime import datetime, timedelta
 from app.utils.crypt import decrypt_string
 
-def get_schema_structure(connection_string: str, db_type: str):
+def get_schema_structure(connection_string: str):
     engine = create_engine(connection_string)
     inspector = inspect(engine)
 

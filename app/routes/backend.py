@@ -11,11 +11,12 @@ and the authenticated user information from a token (`token_payload`).
 
 from fastapi import APIRouter, status, Response, Depends, Request, Path, HTTPException, Body
 from typing import Optional
+from typing import Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from uuid import UUID
-
+from typing import List
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.schemas import (
@@ -27,7 +28,7 @@ from app.schemas import (
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
     ReadDataRequest,RequestAccess,SaveChartRequest,UpdateRequestAccess,SaveChartToDashboardRequest,
     UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest,
-    UpdateFavoriteChartRequest
+    UpdateFavoriteChartRequest,TrinoQueryRequest,TrinoQueryResponse,QueryExecutionRequest
 
 )
 
@@ -56,14 +57,20 @@ from app.services.chart import (generate_charts_service,request_access_service,
 update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
 ,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
 update_favorite_chart_service,get_favorite_charts_service)
+from app.services.chart import (generate_charts_service,request_access_service,
+update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
+,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
+update_favorite_chart_service,get_favorite_charts_service)
 
 from app.services.generate_queries import (
     generate_and_store_charts,execute_external_query
 )
 from app.services.nl2sql import (
-    generate_nl_sql_and_save
+    generate_nl_sql
 )
-
+from app.services.multiple_db_generate_queries import(
+    generate_trino_queries_service
+)
 
 
 
@@ -664,42 +671,43 @@ async def request_access(
 ):
     return await request_access_service(project_id, data, db, token_payload)
 
-# @backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
-# async def generate_charts(
-#     project_id: UUID,
-#     datasource_connection_id: UUID,
-#     request: QueryRequest,
-#     db: Session = Depends(get_db),
-#     token_payload: dict = Depends(get_current_user)
-# ):
-#     try:
-#         charts = await generate_and_store_charts(
-#             db, datasource_connection_id, project_id, request, token_payload
-#         )
+@backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
+async def generate_charts(
+    project_id: UUID,
+    datasource_connection_id: UUID,
+    request: QueryRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        charts = await generate_and_store_charts(
+            db, datasource_connection_id, project_id, request, token_payload
+        )
 
-#         return {
-#             "success": True,
-#             "generated_charts": [
-#                 {
-#                     "id": str(chart.id),
-#                     "title": chart.title,
-#                     "query": chart.query,
-#                     "chart_type": chart.chart_type,
-#                     "relevance": chart.relevance,
-#                     "is_time_based": chart.is_time_based,
-#                     "report": chart.report
-#                 }
-#                 for chart in charts
-#             ]
-#         }
+        return {
+            "success": True,
+            "generated_charts": [
+                {
+                    "id": str(chart.id),
+                    "title": chart.title,
+                    "query": chart.query,
+                    "chart_type": chart.chart_type,
+                    "relevance": chart.relevance,
+                    "is_time_based": chart.is_time_based,
+                    "report": chart.report
+                }
+                for chart in charts
+            ]
+        }
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
-@backend_router.post("/nl2sql/generate-and-save")
+@backend_router.post("/nl2sql/generate/{datasource_connection_id}")
 async def generate_and_save_route(
     data: Nl2SQLChatRequest = Body(...),
     db: Session = Depends(get_db),
+    datasource_connection_id: UUID = Path(...),
     token_payload: dict = Depends(get_current_user)
 ):
     user_id_str = token_payload.get("sub")
@@ -707,21 +715,113 @@ async def generate_and_save_route(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     user_id = UUID(user_id_str)
-    return await generate_nl_sql_and_save(data, db, user_id)
+    return await generate_nl_sql(data, db, user_id,datasource_connection_id)
 
-@backend_router.post("/excecute-query/{query_id}/{datasource_connection_id}/")
+@backend_router.post("/excecute-query/{datasource_connection_id}/")
 def execute_query(
     query_id: UUID,
     datasource_connection_id:UUID,
     db: Session = Depends(get_db),
+    request: QueryExecutionRequest = Body(...),
     token_payload: dict = Depends(get_current_user),
 ):
     try:
-        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload)
+        query = request.query
+        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload,query)
         return query_result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@backend_router.post("/generate_multiple_db_queries/{project_id}/", response_model=TrinoQueryResponse)
+async def generate_queries_route(
+    project_id: UUID,
+    request: TrinoQueryRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    if not request.connection_ids:
+        raise HTTPException(status_code=400, detail="Connection IDs are required")
+
+    return await generate_trino_queries_service(
+        db=db,
+        project_id=project_id,
+        token_payload=token_payload,
+        request=request
+    )
+
+
+@backend_router.patch("/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK)
+async def update_request_access(
+    project_id: UUID = Path(..., description="Project ID to update request access for"),
+    request_id: UUID = Path(..., description="Request ID to update"),
+    data:UpdateRequestAccess = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await update_request_access_service(project_id,request_id, data, db, token_payload)
+
+@backend_router.get("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
+async def get_request_access(
+    project_id: UUID = Path(..., description="Project ID to get request access for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)     
+):
+    return await get_access_requests_service(project_id, db, token_payload)
+
+# @backend_router.get("/charts", status_code=status.HTTP_200_OK)
+# async def get_charts(
+#     db: Session = Depends(get_db),
+#     token_payload: dict = Depends(get_current_user)
+# ):
+#     return await get_charts_service(db, token_payload)
+
+@backend_router.post("/projects/{project_id}/save-chart", status_code=status.HTTP_200_OK)
+async def save_chart(
+    project_id: UUID = Path(..., description="Project ID to save chart for"),
+    data: SaveChartRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    return await save_chart_service(project_id, data, db, token_payload)
+
+@backend_router.post("/charts/save-to-dashboard", status_code=status.HTTP_200_OK)
+async def save_chart_to_dashboard(
+    data: SaveChartToDashboardRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await save_chart_to_dashboard_service(data, db, token_payload)
+
+@backend_router.get("/dashboards/{dashboard_id}/charts", status_code=status.HTTP_200_OK)
+async def get_charts_for_dashboard(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to get charts for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
+
+@backend_router.delete("/dashboards/{dashboard_id}/charts/{chart_id}", status_code=status.HTTP_200_OK)
+async def delete_chart_from_dashboard(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to delete chart from"),
+    chart_id: UUID = Path(..., description="Chart ID to delete"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user) 
+):
+    return await delete_chart_from_dashboard_service(dashboard_id, chart_id, db, token_payload)
+
+@backend_router.patch("/charts/favorite", status_code=status.HTTP_200_OK)
+async def update_favorite_chart(
+    data: UpdateFavoriteChartRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await update_favorite_chart_service(data, db, token_payload)
+@backend_router.get("/charts/favorite", status_code=status.HTTP_200_OK)
+async def get_favorite_charts(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    return await get_favorite_charts_service(db, token_payload)
 
 
 @backend_router.patch("/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK)
