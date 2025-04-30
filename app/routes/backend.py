@@ -55,7 +55,7 @@ from app.utils.tasks import generate_charts_asynchronously
 from app.services.chart import (generate_charts_service,request_access_service,
 update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
 ,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
-update_favorite_chart_service,get_favorite_charts_service,refresh_service)
+update_favorite_chart_service,get_favorite_charts_service)
 
 from app.services.generate_queries import (
     generate_and_store_charts,execute_external_query
@@ -655,67 +655,6 @@ async def grant_access(
     """
     return await read_data_service(data, db, token_payload)
 
-@backend_router.post("/generate-charts/{project_id}/{datasource_connection_id}")
-async def generate_charts(
-    request: QueryRequest,
-    project_id: UUID = Path(..., description="Project ID to generate charts for"),
-    datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    """
-    API endpoint to generate charts for a specific project and datasource connection.
-    
-    Args:
-        request (QueryRequest): Query parameters for chart generation
-        project_id (UUID): ID of the project
-        datasource_connection_id (UUID): ID of the datasource connection
-        db (Session): Database session
-        token_payload (dict): User authentication token payload
-        
-    Returns:
-        dict: Generated charts data and status information
-    """
-    return await generate_charts_service(
-        request,
-        project_id,
-        datasource_connection_id,
-        db,
-        token_payload
-    )
-@backend_router.post("/refresh-charts/{project_id}/{datasource_connection_id}", status_code=status.HTTP_200_OK)
-async def refresh_charts(
-    request: QueryRequest,
-    project_id: UUID = Path(..., description="Project ID to generate charts for"),
-    datasource_connection_id: UUID = Path(..., description="Datasource connection ID to generate charts for"),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    """
-    Endpoint to refresh charts using pre-generated charts from Redis.
-    
-    This endpoint:
-    1. Retrieves pre-generated charts from Redis
-    2. Sets them as the current charts
-    3. Triggers asynchronous generation of the next batch
-    
-    Args:
-        db (Session): The database session
-        token_payload (dict): The token payload
-        datasource_connection_id (UUID): ID of the datasource connection
-        project_id (UUID): ID of the project
-        
-    Returns:
-        dict: Refreshed charts data and status information
-    """
-    return await refresh_service(
-        request,
-        project_id=project_id,
-        datasource_connection_id=datasource_connection_id,
-        db=db,
-        token_payload=token_payload
-    )
-
 @backend_router.post("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
 async def request_access(
     project_id: UUID = Path(..., description="Project ID to request access for"),
@@ -858,3 +797,34 @@ async def get_favorite_charts(
 ):
     return await get_favorite_charts_service(db, token_payload)
 
+@backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
+async def generate_charts(
+    project_id: UUID,
+    datasource_connection_id: UUID,
+    request: QueryRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
+):
+    try:
+        charts = await generate_and_store_charts(
+            db, datasource_connection_id, project_id, request, token_payload
+        )
+
+        return {
+            "success": True,
+            "generated_charts": [
+                {
+                    "id": str(chart.id),
+                    "title": chart.title,
+                    "query": chart.query,
+                    "chart_type": chart.chart_type,
+                    "relevance": chart.relevance,
+                    "is_time_based": chart.is_time_based,
+                    "report": chart.report
+                }
+                for chart in charts
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
