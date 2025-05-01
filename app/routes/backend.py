@@ -1,108 +1,155 @@
 """
-This module defines all backend-related routes for managing projects, users, dashboards, roles, permissions,
-database connections, and super user operations.
-
-Routes are prefixed with `/api/v1/backend`.
-
-Each route uses dependency injection to obtain the database session (`db`)
-and the authenticated user information from a token (`token_payload`).
+Backend routes for managing projects, dashboards, users, roles, permissions, 
+and database connections. All routes are prefixed with `/api/v1/backend` and 
+use dependency injection for DB session and user authentication.
 """
 
-
-from fastapi import APIRouter, status, Response, Depends, Request, Path, HTTPException, Body
-from typing import Optional
-from typing import Optional
-
-from sqlalchemy.orm import Session
-from sqlalchemy import select
 from uuid import UUID
-from typing import List
+import traceback
+from fastapi import (
+    APIRouter,
+    status,
+    Response,
+    Depends,
+    Request,
+    Path,
+    HTTPException,
+    Body,
+)
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
-from app.schemas import (
-    ProjectRequest, DBConnectionResponse, DBConnectionRequest, UpdateDashboardRequest,
-    UpdateRoleRequest, UpdateDBConnectionRequest, CreateUserProjectRequest,
-    CreateUserProjectResponse, ListAllUsersProjectResponse, ListAllRolesProjectResponse,
-    CreateDashboardRequest, CreateDashboardResponse, ListAllPermissionsResponse,
-    CreateRoleRequest, CreateRoleResponse, AddUserDashboardRequest, AddUserDashboardResponse,
-    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest , BlackListTableNameRequest,
-    ReadDataRequest,RequestAccess,SaveChartRequest,UpdateRequestAccess,SaveChartToDashboardRequest,
-    UpdateProjectRequest, UpdateUserRequest, CreateSuperUserRequest,QueryRequest,Nl2SQLChatRequest,
-    UpdateFavoriteChartRequest,TrinoQueryRequest,TrinoQueryResponse,QueryExecutionRequest
 
+# Schema imports
+from app.schemas import (
+    ProjectRequest,
+    UpdateProjectRequest,
+    UpdateUserRequest,
+    CreateSuperUserRequest,
+    DBConnectionRequest,
+    UpdateDBConnectionRequest,
+    DBConnectionResponse,
+    CreateUserProjectRequest,
+    CreateUserProjectResponse,
+    ListAllUsersProjectResponse,
+    ListAllRolesProjectResponse,
+    CreateDashboardRequest,
+    CreateDashboardResponse,
+    UpdateDashboardRequest,
+    AddUserDashboardRequest,
+    AddUserDashboardResponse,
+    CreateRoleRequest,
+    CreateRoleResponse,
+    UpdateRoleRequest,
+    ListAllPermissionsResponse,
+    BlackListTableNameRequest,
+    ReadDataRequest,
+    RequestAccess,
+    SaveChartRequest,
+    UpdateRequestAccess,
+    SaveChartToDashboardRequest,
+    QueryRequest,
+    Nl2SQLChatRequest,
+    UpdateFavoriteChartRequest,
+    TrinoQueryRequest,
+    TrinoQueryResponse,
+    QueryExecutionRequest,
 )
 
+# Service imports
 from app.services.project import (
-    create_project, get_projects, list_all_roles_project, create_dashboard,
-    list_all_permissions, create_role, list_users_all_dashboard, delete_dashboard, read_data_service,
-    update_project, delete_project, update_dashboard, update_role, delete_role,
-    get_project_owner_service, get_dashboard_owner_service, blacklist_service,update_blacklist_service,
+    create_project,
+    get_projects,
+    list_all_roles_project,
+    create_dashboard,
+    list_all_permissions,
+    create_role,
+    list_users_all_dashboard,
+    delete_dashboard,
+    update_project,
+    delete_project,
+    update_dashboard,
+    update_role,
+    delete_role,
+    get_project_owner_service,
+    get_dashboard_owner_service,
+    blacklist_service,
+    update_blacklist_service,
     read_data_service,
 )
 
 from app.services.db_connection import (
-    create_database_connection, get_connections,
-    update_db_connection, delete_db_connection
+    create_database_connection,
+    get_connections,
+    update_db_connection,
+    delete_db_connection,
 )
 
 from app.services.userService import (
-    create_user_project, list_all_users_project, add_user_to_dashboard, get_user_details,
-    update_user, delete_user, create_super_user_service, get_super_user_service,
-    get_users_dashboard_service, get_favorites_service
+    create_user_project,
+    list_all_users_project,
+    add_user_to_dashboard,
+    get_user_details,
+    update_user,
+    delete_user,
+    create_super_user_service,
+    get_super_user_service,
+    get_users_dashboard_service,
+    get_favorites_service,
 )
 
-
-from app.utils.tasks import generate_charts_asynchronously
-from app.services.chart import (generate_charts_service,request_access_service,
-update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
-,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
-update_favorite_chart_service,get_favorite_charts_service)
-from app.services.chart import (generate_charts_service,request_access_service,
-update_request_access_service,get_access_requests_service,get_charts_service,save_chart_service
-,save_chart_to_dashboard_service,get_charts_for_dashboard_service,delete_chart_from_dashboard_service,
-update_favorite_chart_service,get_favorite_charts_service)
+from app.services.chart import (
+    request_access_service,
+    update_request_access_service,
+    get_access_requests_service,
+    get_charts_service,
+    save_chart_service,
+    save_chart_to_dashboard_service,
+    get_charts_for_dashboard_service,
+    delete_chart_from_dashboard_service,
+    update_favorite_chart_service,
+    get_favorite_charts_service,
+)
 
 from app.services.generate_queries import (
-    generate_and_store_charts,execute_external_query
-)
-from app.services.nl2sql import (
-    generate_nl_sql
-)
-from app.services.multiple_db_generate_queries import(
-    generate_trino_queries_service
+    generate_and_store_charts,
+    execute_external_query,
 )
 
+from app.services.nl2sql import generate_nl_sql
+
+from app.services.multiple_db_generate_queries import generate_trino_queries_service
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
 
-@backend_router.post("/create-project", status_code=status.HTTP_201_CREATED)
 
+@backend_router.post("/create-project", status_code=status.HTTP_201_CREATED)
 async def create_project_route(
-    project: ProjectRequest, 
-    
+    project: ProjectRequest,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
-  
-
 ):
     """
-Create a new project.
-Args:
-    project (ProjectRequest): The project data.
-    db (Session): The database session.
-    token_payload (dict): The token payload.
-Returns:
-    dict: The created project.
-"""
-    return await create_project(project,  db, token_payload)
+    Create a new project.
+    Args:
+        project (ProjectRequest): The project data.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+    Returns:
+        dict: The created project.
+    """
+    return await create_project(project, db, token_payload)
+
 
 @backend_router.post("/database/{project_id}", response_model=DBConnectionResponse)
 async def add_database_connection(
     project_id: UUID,
     data: DBConnectionRequest,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Create a new database connection.
@@ -117,13 +164,15 @@ async def add_database_connection(
     return await create_database_connection(project_id, token_payload, data, db)
 
 
-@backend_router.get("/connections/{project_id}", status_code=status.HTTP_200_OK, response_model=dict)
+@backend_router.get(
+    "/connections/{project_id}", status_code=status.HTTP_200_OK, response_model=dict
+)
 async def get_connections_route(
     project_id: UUID = Path(..., description="Project ID to get connections for"),
     request: Request = None,
     response: Response = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Get all connections for a project.
@@ -138,12 +187,13 @@ async def get_connections_route(
     """
     return await get_connections(project_id, request, response, db, token_payload)
 
+
 @backend_router.get("/projects", status_code=status.HTTP_200_OK)
 async def get_projects_route(
     request: Request = None,
     response: Response = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Get all projects.
@@ -158,12 +208,16 @@ async def get_projects_route(
     return await get_projects(request, response, db, token_payload)
 
 
-@backend_router.post("/projects/{project_id}/users", status_code=status.HTTP_201_CREATED, response_model=CreateUserProjectResponse)
+@backend_router.post(
+    "/projects/{project_id}/users",
+    status_code=status.HTTP_201_CREATED,
+    response_model=CreateUserProjectResponse,
+)
 async def add_user_project(
     project_id: UUID = Path(..., description="Project ID to add user to"),
     data: CreateUserProjectRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Add a user to a project.
@@ -177,11 +231,16 @@ async def add_user_project(
     """
     return await create_user_project(data, db, token_payload, project_id)
 
-@backend_router.get("/projects/{project_id}/users", status_code=status.HTTP_200_OK, response_model=ListAllUsersProjectResponse)
+
+@backend_router.get(
+    "/projects/{project_id}/users",
+    status_code=status.HTTP_200_OK,
+    response_model=ListAllUsersProjectResponse,
+)
 async def list_all_users(
     project_id: UUID = Path(..., description="Project ID to list all users for"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     List all users for a project.
@@ -194,11 +253,16 @@ async def list_all_users(
     """
     return await list_all_users_project(project_id, db, token_payload)
 
-@backend_router.get("/projects/{project_id}/roles", status_code=status.HTTP_200_OK, response_model=ListAllRolesProjectResponse)
+
+@backend_router.get(
+    "/projects/{project_id}/roles",
+    status_code=status.HTTP_200_OK,
+    response_model=ListAllRolesProjectResponse,
+)
 async def list_all_roles(
     project_id: UUID = Path(..., description="Project ID to list all roles for"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     List all roles for a project.
@@ -211,12 +275,17 @@ async def list_all_roles(
     """
     return await list_all_roles_project(project_id, db, token_payload)
 
-@backend_router.post("/projects/{project_id}/dashboard", status_code=status.HTTP_201_CREATED, response_model=CreateDashboardResponse)
+
+@backend_router.post(
+    "/projects/{project_id}/dashboard",
+    status_code=status.HTTP_201_CREATED,
+    response_model=CreateDashboardResponse,
+)
 async def dashboard(
     project_id: UUID = Path(..., description="Project ID to create dashboard for"),
     data: CreateDashboardRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Create a new dashboard.
@@ -230,10 +299,14 @@ async def dashboard(
     """
     return await create_dashboard(data, db, token_payload, project_id)
 
-@backend_router.get("/permissions",status_code=status.HTTP_200_OK,response_model=ListAllPermissionsResponse)
+
+@backend_router.get(
+    "/permissions",
+    status_code=status.HTTP_200_OK,
+    response_model=ListAllPermissionsResponse,
+)
 async def list_permissions(
     db: Session = Depends(get_db),
-    
 ):
     """
     List all permissions.
@@ -245,13 +318,16 @@ async def list_permissions(
     return await list_all_permissions(db)
 
 
-@backend_router.post("/projects/{project_id}/roles", status_code=status.HTTP_201_CREATED, response_model=CreateRoleResponse)
+@backend_router.post(
+    "/projects/{project_id}/roles",
+    status_code=status.HTTP_201_CREATED,
+    response_model=CreateRoleResponse,
+)
 async def create_roles(
     project_id: UUID = Path(..., description="Project ID to create role for"),
     data: CreateRoleRequest = None,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
-    
 ):
     """
     Create a new role.
@@ -265,14 +341,18 @@ async def create_roles(
     """
     return await create_role(data, db, token_payload, project_id)
 
-@backend_router.post("/projects/{project_id}/dashboard/user", status_code=status.HTTP_201_CREATED, response_model=AddUserDashboardResponse)
+
+@backend_router.post(
+    "/projects/{project_id}/dashboard/user",
+    status_code=status.HTTP_201_CREATED,
+    response_model=AddUserDashboardResponse,
+)
 async def add_user_dashboard(
     project_id: UUID = Path(..., description="Project ID to add user to"),
     data: AddUserDashboardRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
-
     """
     Add a user to a dashboard.
     Args:
@@ -281,16 +361,18 @@ async def add_user_dashboard(
         db (Session): The database session.
         token_payload (dict): The token payload.
     Returns:
-        dict: The created user. 
+        dict: The created user.
     """
     return await add_user_to_dashboard(project_id, data, db, token_payload)
 
 
-@backend_router.get("/projects/{project_id}/users/dashboard", status_code=status.HTTP_200_OK)
+@backend_router.get(
+    "/projects/{project_id}/users/dashboard", status_code=status.HTTP_200_OK
+)
 async def list_all_users_dashboard(
     project_id: UUID = Path(..., description="Project ID to list all users for"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     List all users for a dashboard.
@@ -303,12 +385,17 @@ async def list_all_users_dashboard(
     """
     return await list_users_all_dashboard(project_id, db, token_payload)
 
-@backend_router.delete("/projects/{project_id}/dashboard/{dashboard_id}", status_code=status.HTTP_200_OK)
+
+@backend_router.delete(
+    "/projects/{project_id}/dashboard/{dashboard_id}", status_code=status.HTTP_200_OK
+)
 async def delete_dashboards(
     project_id: UUID = Path(..., description="Project ID to delete user dashboard for"),
-    dashboard_id: UUID = Path(..., description="Dashboard ID to delete user dashboard for"),
+    dashboard_id: UUID = Path(
+        ..., description="Dashboard ID to delete user dashboard for"
+    ),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Delete a user from a dashboard.
@@ -320,12 +407,12 @@ async def delete_dashboards(
     Returns:
         dict: The deleted user.
     """
-    return await delete_dashboard(project_id,dashboard_id, db, token_payload)
+    return await delete_dashboard(project_id, dashboard_id, db, token_payload)
+
 
 @backend_router.get("/user_profile", status_code=status.HTTP_200_OK)
 async def get_current_user_details(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    db: Session = Depends(get_db), token_payload: dict = Depends(get_current_user)
 ):
     """
     Get the current user's details.
@@ -334,15 +421,16 @@ async def get_current_user_details(
         token_payload (dict): The token payload.
     Returns:
         dict: The current user's details.
-    """ 
+    """
     return await get_user_details(db, token_payload)
 
-@backend_router.patch("/projects/{project_id}",status_code=status.HTTP_200_OK)
+
+@backend_router.patch("/projects/{project_id}", status_code=status.HTTP_200_OK)
 async def update(
     project_id: UUID = Path(..., description="Project ID to update"),
     data: UpdateProjectRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Update a project.
@@ -356,11 +444,12 @@ async def update(
     """
     return await update_project(project_id, data, db, token_payload)
 
-@backend_router.delete("/projects/{project_id}",status_code=status.HTTP_200_OK)
+
+@backend_router.delete("/projects/{project_id}", status_code=status.HTTP_200_OK)
 async def delete(
     project_id: UUID = Path(..., description="Project ID to delete"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Delete a project.
@@ -373,14 +462,16 @@ async def delete(
     """
     return await delete_project(project_id, db, token_payload)
 
-@backend_router.patch("/projects/{project_id}/dashboard/{dashboard_id}",status_code=status.HTTP_200_OK)
-async def update(
+
+@backend_router.patch(
+    "/projects/{project_id}/dashboard/{dashboard_id}", status_code=status.HTTP_200_OK
+)
+async def update_dashboard_route(
     project_id: UUID = Path(..., description="Project ID to update"),
     dashboard_id: UUID = Path(..., description="Dashboard ID to update"),
     data: UpdateDashboardRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Update a dashboard.
@@ -393,16 +484,18 @@ async def update(
     Returns:
         dict: The updated dashboard.
     """
-    return await update_dashboard(project_id,dashboard_id, data, db, token_payload)
+    return await update_dashboard(project_id, dashboard_id, data, db, token_payload)
 
 
-@backend_router.patch("/projects/{project_id}/role/{role_id}",status_code=status.HTTP_200_OK)
-async def update(
+@backend_router.patch(
+    "/projects/{project_id}/role/{role_id}", status_code=status.HTTP_200_OK
+)
+async def update_role_route(
     project_id: UUID = Path(..., description="Project ID to update"),
     role_id: UUID = Path(..., description="Role ID to update"),
     data: UpdateRoleRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Update a role.
@@ -415,14 +508,17 @@ async def update(
     Returns:
         dict: The updated role.
     """
-    return await update_role(project_id,role_id, data, db, token_payload)
+    return await update_role(project_id, role_id, data, db, token_payload)
 
-@backend_router.delete("/projects/{project_id}/role/{role_id}",status_code=status.HTTP_200_OK)
-async def delete(
+
+@backend_router.delete(
+    "/projects/{project_id}/role/{role_id}", status_code=status.HTTP_200_OK
+)
+async def delete_role_route(
     project_id: UUID = Path(..., description="Project ID to delete"),
     role_id: UUID = Path(..., description="Role ID to delete"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Delete a role.
@@ -434,15 +530,18 @@ async def delete(
     Returns:
         dict: The deleted role.
     """
-    return await delete_role(project_id,role_id, db, token_payload)
+    return await delete_role(project_id, role_id, db, token_payload)
 
-@backend_router.patch("/projects/{project_id}/users/{user_id}",status_code=status.HTTP_200_OK)
-async def update(
+
+@backend_router.patch(
+    "/projects/{project_id}/users/{user_id}", status_code=status.HTTP_200_OK
+)
+async def update_user_route(
     project_id: UUID = Path(..., description="Project ID to update user for"),
     user_id: UUID = Path(..., description="User ID to update"),
     data: UpdateUserRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Update a user.
@@ -457,13 +556,15 @@ async def update(
     """
     return await update_user(project_id, user_id, data, db, token_payload)
 
-@backend_router.delete("/projects/{project_id}/users/{user_id}",status_code=status.HTTP_200_OK)
-async def delete(
+
+@backend_router.delete(
+    "/projects/{project_id}/users/{user_id}", status_code=status.HTTP_200_OK
+)
+async def delete_user_route(
     project_id: UUID = Path(..., description="Project ID to delete user for"),
     user_id: UUID = Path(..., description="User ID to delete"),
     token_payload: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-
+    db: Session = Depends(get_db),
 ):
     """
     Delete a user.
@@ -474,14 +575,15 @@ async def delete(
     Returns:
         dict: The deleted user.
     """
-    return await delete_user(project_id,user_id,token_payload, db)
+    return await delete_user(project_id, user_id, token_payload, db)
 
-@backend_router.patch("/connections/{connection_id}",status_code=status.HTTP_200_OK)
-async def update(
+
+@backend_router.patch("/connections/{connection_id}", status_code=status.HTTP_200_OK)
+async def update_connection_route(
     connection_id: UUID = Path(..., description="Connection ID to update"),
     data: UpdateDBConnectionRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Update a database connection.
@@ -493,14 +595,19 @@ async def update(
     Returns:
         dict: The updated connection.
     """
-    return await update_db_connection(connection_id, data, db, token_payload)
+    return await update_db_connection(
+        connection_id=connection_id,
+        data=data,
+        db=db,
+        token_payload=token_payload,
+    )
 
-@backend_router.delete("/connections/{connection_id}",status_code=status.HTTP_200_OK)
-async def delete(
+
+@backend_router.delete("/connections/{connection_id}", status_code=status.HTTP_200_OK)
+async def delete_connection_route(
     connection_id: UUID = Path(..., description="Connection ID to delete"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Delete a database connection.
@@ -511,13 +618,14 @@ async def delete(
     Returns:
         dict: The deleted connection.
     """
-    return await delete_db_connection(connection_id, db,token_payload)
+    return await delete_db_connection(connection_id, db, token_payload)
 
-@backend_router.post("/super-user",status_code=status.HTTP_201_CREATED)
+
+@backend_router.post("/super-user", status_code=status.HTTP_201_CREATED)
 async def create_super_user(
-    data: CreateSuperUserRequest ,
+    data: CreateSuperUserRequest,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Create a new super user.
@@ -527,12 +635,12 @@ async def create_super_user(
     Returns:
         dict: The created super user.
     """
-    return await create_super_user_service(data, db,token_payload)
+    return await create_super_user_service(data, db, token_payload)
 
-@backend_router.get("/super-user",status_code=status.HTTP_200_OK)
+
+@backend_router.get("/super-user", status_code=status.HTTP_200_OK)
 async def get_super_user(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)     
+    db: Session = Depends(get_db), token_payload: dict = Depends(get_current_user)
 ):
     """
     Get the super user.
@@ -542,13 +650,14 @@ async def get_super_user(
     Returns:
         dict: The super user.
     """
-    return await get_super_user_service(db,token_payload)
+    return await get_super_user_service(db, token_payload)
 
-@backend_router.get("/dashboard/{dashboard_id}/users",status_code=status.HTTP_200_OK)
+
+@backend_router.get("/dashboard/{dashboard_id}/users", status_code=status.HTTP_200_OK)
 async def get_users_dashboard(
     dashboard_id: UUID = Path(..., description="Dashboard ID to get users for"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Get the users for a dashboard.
@@ -559,9 +668,10 @@ async def get_users_dashboard(
     Returns:
         dict: The users for the dashboard.
     """
-    return await get_users_dashboard_service(dashboard_id, db, token_payload) 
+    return await get_users_dashboard_service(dashboard_id, db, token_payload)
 
-@backend_router.get("/projects/{project_id}/owners",status_code=status.HTTP_200_OK)
+
+@backend_router.get("/projects/{project_id}/owners", status_code=status.HTTP_200_OK)
 async def get_project_owner(
     project_id: UUID = Path(..., description="Project ID to get owner for"),
     db: Session = Depends(get_db),
@@ -576,10 +686,11 @@ async def get_project_owner(
     """
     return await get_project_owner_service(project_id, db)
 
-@backend_router.get("/dashboards/{dashboard_id}/owners",status_code=status.HTTP_200_OK)
+
+@backend_router.get("/dashboards/{dashboard_id}/owners", status_code=status.HTTP_200_OK)
 async def get_dashboard_owner(
     dashboard_id: UUID = Path(..., description="Dashboard ID to get owner for"),
-    db: Session = Depends(get_db),  
+    db: Session = Depends(get_db),
 ):
     """
     Get the owner for a dashboard.
@@ -591,10 +702,10 @@ async def get_dashboard_owner(
     """
     return await get_dashboard_owner_service(dashboard_id, db)
 
-@backend_router.get("/favorites",status_code=status.HTTP_200_OK)
+
+@backend_router.get("/favorites", status_code=status.HTTP_200_OK)
 async def get_favorites(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user) 
+    db: Session = Depends(get_db), token_payload: dict = Depends(get_current_user)
 ):
     """
     Get the favorites for a user.
@@ -612,7 +723,7 @@ async def blacklist(
     project_id: UUID = Path(..., description="Project ID to blacklist tables for"),
     data: BlackListTableNameRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Blacklist tables for a project.
@@ -626,12 +737,17 @@ async def blacklist(
     """
     return await blacklist_service(project_id, data, db, token_payload)
 
-@backend_router.patch("/projects/{project_id}/blacklist", status_code=status.HTTP_200_OK)
+
+@backend_router.patch(
+    "/projects/{project_id}/blacklist", status_code=status.HTTP_200_OK
+)
 async def update_blacklist(
-    project_id: UUID = Path(..., description="Project ID to update blacklist tables for"),
+    project_id: UUID = Path(
+        ..., description="Project ID to update blacklist tables for"
+    ),
     data: BlackListTableNameRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)     \
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Update blacklist tables for a project.
@@ -645,11 +761,12 @@ async def update_blacklist(
     """
     return await update_blacklist_service(project_id, data, db, token_payload)
 
+
 @backend_router.patch("/grant-access", status_code=status.HTTP_200_OK)
 async def grant_access(
     data: ReadDataRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
     """
     Grant access to a project.
@@ -662,14 +779,31 @@ async def grant_access(
     """
     return await read_data_service(data, db, token_payload)
 
-@backend_router.post("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
+
+@backend_router.post(
+    "/projects/{project_id}/request-access", status_code=status.HTTP_200_OK
+)
+@backend_router.post("/projects/{project_id}/request-access")
 async def request_access(
     project_id: UUID = Path(..., description="Project ID to request access for"),
-    data:RequestAccess = None,
+    data: RequestAccess = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Request access to a specific project.
+
+    Args:
+        project_id (UUID): The ID of the project to request access for.
+        data (RequestAccess): Request access payload.
+        db (Session): Database session.
+        token_payload (dict): Authenticated user payload.
+
+    Returns:
+        dict: Response from the request access service.
+    """
     return await request_access_service(project_id, data, db, token_payload)
+
 
 @backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
 async def generate_charts(
@@ -677,13 +811,25 @@ async def generate_charts(
     datasource_connection_id: UUID,
     request: QueryRequest,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Generate and store charts from a SQL datasource.
+
+    Args:
+        project_id (UUID): Project identifier.
+        datasource_connection_id (UUID): Datasource connection ID.
+        request (QueryRequest): Chart generation request payload.
+        db (Session): Database session.
+        token_payload (dict): Authenticated user payload.
+
+    Returns:
+        dict: Generated charts with metadata.
+    """
     try:
         charts = await generate_and_store_charts(
             db, datasource_connection_id, project_id, request, token_payload
         )
-
         return {
             "success": True,
             "generated_charts": [
@@ -694,78 +840,166 @@ async def generate_charts(
                     "chart_type": chart.chart_type,
                     "relevance": chart.relevance,
                     "is_time_based": chart.is_time_based,
-                    "report": chart.report
+                    "report": chart.report,
                 }
                 for chart in charts
-            ]
+            ],
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
+        #log the exception for debugging
+        traceback.print_exc()
+
+        # Re-raise the exception with more context
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error occurred: {str(e)}"
+        ) from e
+
+
 @backend_router.post("/nl2sql/generate/{datasource_connection_id}")
 async def generate_and_save_route(
     data: Nl2SQLChatRequest = Body(...),
     db: Session = Depends(get_db),
     datasource_connection_id: UUID = Path(...),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Generate and store SQL queries from natural language input.
+
+    Args:
+        data (Nl2SQLChatRequest): Natural language input for query generation.
+        db (Session): Database session.
+        datasource_connection_id (UUID): Connection ID for the target datasource.
+        token_payload (dict): Authenticated user payload.
+
+    Returns:
+        dict: Generated SQL query and related metadata.
+    """
     user_id_str = token_payload.get("sub")
     if not user_id_str:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     user_id = UUID(user_id_str)
-    return await generate_nl_sql(data, db, user_id,datasource_connection_id)
+    return await generate_nl_sql(data, db, user_id, datasource_connection_id)
+
 
 @backend_router.post("/excecute-query/{datasource_connection_id}/")
 def execute_query(
-    query_id: UUID,
-    datasource_connection_id:UUID,
+    datasource_connection_id: UUID,
     db: Session = Depends(get_db),
     request: QueryExecutionRequest = Body(...),
     token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Execute a raw SQL query against the specified datasource.
+
+    Args:
+        query_id (UUID): Query identifier.
+        datasource_connection_id (UUID): Datasource connection ID.
+        db (Session): Database session.
+        request (QueryExecutionRequest): Query to execute.
+        token_payload (dict): Authenticated user payload.
+
+    Returns:
+        dict: Query execution result.
+    """
     try:
-        query = request.query
-        query_result =  execute_external_query(query_id,db, datasource_connection_id,token_payload,query)
-        return query_result
+        return execute_external_query(
+            db=db,
+            datasource_connection_id=datasource_connection_id,
+            query=request.query,
+            token_payload=token_payload
+        )
+    except SQLAlchemyError as e:
+        # Explicitly re-raise the exception with context
+        raise HTTPException(status_code=500, detail=f"Database execution error: {str(e)}") from e
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"ValueError: {str(e)}") from e
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@backend_router.post("/generate_multiple_db_queries/{project_id}/", response_model=TrinoQueryResponse)
+        # Print the stack trace for debugging purposes
+        traceback.print_exc()
+        # Explicitly re-raise the unexpected exception with more context
+        raise HTTPException(status_code=500, detail="Unexpected error occurred") from e
+
+
+@backend_router.post(
+    "/generate_multiple_db_queries/{project_id}/", response_model=TrinoQueryResponse
+)
 async def generate_queries_route(
     project_id: UUID,
     request: TrinoQueryRequest,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Generate Trino SQL queries for multiple database connections.
+
+    Args:
+        project_id (UUID): Project identifier.
+        request (TrinoQueryRequest): Payload including connection IDs and other context.
+        db (Session): Database session.
+        token_payload (dict): Authenticated user payload.
+
+    Returns:
+        TrinoQueryResponse: Generated SQL queries for each connection.
+    """
     if not request.connection_ids:
         raise HTTPException(status_code=400, detail="Connection IDs are required")
 
     return await generate_trino_queries_service(
-        db=db,
-        project_id=project_id,
-        token_payload=token_payload,
-        request=request
+        db=db, project_id=project_id, token_payload=token_payload, request=request
     )
 
-
-@backend_router.patch("/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK)
+@backend_router.patch(
+    "/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK
+)
 async def update_request_access(
     project_id: UUID = Path(..., description="Project ID to update request access for"),
     request_id: UUID = Path(..., description="Request ID to update"),
-    data:UpdateRequestAccess = None,
+    data: UpdateRequestAccess = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
-    return await update_request_access_service(project_id,request_id, data, db, token_payload)
+    """
+    Update the request access for a specific project.
 
-@backend_router.get("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
+    Args:
+        project_id (UUID): The ID of the project.
+        request_id (UUID): The ID of the request to update.
+        data (UpdateRequestAccess): The data to update the request access with.
+        db (Session): The database session.
+        token_payload (dict): The authenticated user's token payload.
+
+    Returns:
+        dict: The updated request access data.
+    """
+    return await update_request_access_service(
+        project_id, request_id, data, db, token_payload
+    )
+
+
+@backend_router.get(
+    "/projects/{project_id}/request-access", status_code=status.HTTP_200_OK
+)
 async def get_request_access(
     project_id: UUID = Path(..., description="Project ID to get request access for"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)     
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Retrieve the request access for a specific project.
+
+    Args:
+        project_id (UUID): The ID of the project to get the request access for.
+        db (Session): The database session.
+        token_payload (dict): The authenticated user's token payload.
+
+    Returns:
+        dict: The request access data for the specified project.
+    """
     return await get_access_requests_service(project_id, db, token_payload)
 
 # @backend_router.get("/charts", status_code=status.HTTP_200_OK)
@@ -775,156 +1009,145 @@ async def get_request_access(
 # ):
 #     return await get_charts_service(db, token_payload)
 
-@backend_router.post("/projects/{project_id}/save-chart", status_code=status.HTTP_200_OK)
+
+@backend_router.post(
+    "/projects/{project_id}/save-chart", status_code=status.HTTP_200_OK
+)
 async def save_chart(
     project_id: UUID = Path(..., description="Project ID to save chart for"),
     data: SaveChartRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user) 
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Save a chart for the specified project.
+
+    Args:
+        project_id (UUID): The ID of the project to save the chart for.
+        data (SaveChartRequest): The chart data to save.
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        dict: The response containing the saved chart details.
+    """
     return await save_chart_service(project_id, data, db, token_payload)
+
 
 @backend_router.post("/charts/save-to-dashboard", status_code=status.HTTP_200_OK)
 async def save_chart_to_dashboard(
     data: SaveChartToDashboardRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Save a chart to the specified dashboard.
+
+    Args:
+        data (SaveChartToDashboardRequest): The chart data and dashboard ID to save to.
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        dict: The response indicating the chart has been saved to the dashboard.
+    """
     return await save_chart_to_dashboard_service(data, db, token_payload)
+
 
 @backend_router.get("/dashboards/{dashboard_id}/charts", status_code=status.HTTP_200_OK)
 async def get_charts_for_dashboard(
     dashboard_id: UUID = Path(..., description="Dashboard ID to get charts for"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Get all charts for the specified dashboard.
+
+    Args:
+        dashboard_id (UUID): The ID of the dashboard to retrieve charts for.
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        list: A list of charts associated with the specified dashboard.
+    """
     return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
 
-@backend_router.delete("/dashboards/{dashboard_id}/charts/{chart_id}", status_code=status.HTTP_200_OK)
+
+@backend_router.delete(
+    "/dashboards/{dashboard_id}/charts/{chart_id}", status_code=status.HTTP_200_OK
+)
 async def delete_chart_from_dashboard(
     dashboard_id: UUID = Path(..., description="Dashboard ID to delete chart from"),
     chart_id: UUID = Path(..., description="Chart ID to delete"),
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user) 
+    token_payload: dict = Depends(get_current_user),
 ):
-    return await delete_chart_from_dashboard_service(dashboard_id, chart_id, db, token_payload)
+    """
+    Delete a chart from the specified dashboard.
+
+    Args:
+        dashboard_id (UUID): The ID of the dashboard to delete the chart from.
+        chart_id (UUID): The ID of the chart to delete.
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        dict: A response indicating the chart has been successfully deleted.
+    """
+    return await delete_chart_from_dashboard_service(
+        dashboard_id, chart_id, db, token_payload
+    )
 
 @backend_router.patch("/charts/favorite", status_code=status.HTTP_200_OK)
 async def update_favorite_chart(
     data: UpdateFavoriteChartRequest = None,
     db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    token_payload: dict = Depends(get_current_user),
 ):
+    """
+    Update the favorite status of a chart.
+
+    Args:
+        data (UpdateFavoriteChartRequest): The data to update the favorite status of a chart.
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        dict: The updated favorite chart details.
+    """
     return await update_favorite_chart_service(data, db, token_payload)
+
+
 @backend_router.get("/charts/favorite", status_code=status.HTTP_200_OK)
 async def get_favorite_charts(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    db: Session = Depends(get_db), token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Get all favorite charts for the authenticated user.
+
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        list: A list of favorite charts for the authenticated user.
+    """
     return await get_favorite_charts_service(db, token_payload)
 
-
-@backend_router.patch("/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK)
-async def update_request_access(
-    project_id: UUID = Path(..., description="Project ID to update request access for"),
-    request_id: UUID = Path(..., description="Request ID to update"),
-    data:UpdateRequestAccess = None,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    return await update_request_access_service(project_id,request_id, data, db, token_payload)
-
-@backend_router.get("/projects/{project_id}/request-access", status_code=status.HTTP_200_OK)
-async def get_request_access(
-    project_id: UUID = Path(..., description="Project ID to get request access for"),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)     
-):
-    return await get_access_requests_service(project_id, db, token_payload)
 
 @backend_router.get("/charts", status_code=status.HTTP_200_OK)
 async def get_charts(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
+    db: Session = Depends(get_db), token_payload: dict = Depends(get_current_user)
 ):
+    """
+    Get all charts for the authenticated user.
+
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        list: A list of all charts for the authenticated user.
+    """
     return await get_charts_service(db, token_payload)
-
-@backend_router.post("/projects/{project_id}/save-chart", status_code=status.HTTP_200_OK)
-async def save_chart(
-    project_id: UUID = Path(..., description="Project ID to save chart for"),
-    data: SaveChartRequest = None,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user) 
-):
-    return await save_chart_service(project_id, data, db, token_payload)
-
-@backend_router.post("/charts/save-to-dashboard", status_code=status.HTTP_200_OK)
-async def save_chart_to_dashboard(
-    data: SaveChartToDashboardRequest = None,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    return await save_chart_to_dashboard_service(data, db, token_payload)
-
-@backend_router.get("/dashboards/{dashboard_id}/charts", status_code=status.HTTP_200_OK)
-async def get_charts_for_dashboard(
-    dashboard_id: UUID = Path(..., description="Dashboard ID to get charts for"),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
-
-@backend_router.delete("/dashboards/{dashboard_id}/charts/{chart_id}", status_code=status.HTTP_200_OK)
-async def delete_chart_from_dashboard(
-    dashboard_id: UUID = Path(..., description="Dashboard ID to delete chart from"),
-    chart_id: UUID = Path(..., description="Chart ID to delete"),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user) 
-):
-    return await delete_chart_from_dashboard_service(dashboard_id, chart_id, db, token_payload)
-
-@backend_router.patch("/charts/favorite", status_code=status.HTTP_200_OK)
-async def update_favorite_chart(
-    data: UpdateFavoriteChartRequest = None,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    return await update_favorite_chart_service(data, db, token_payload)
-@backend_router.get("/charts/favorite", status_code=status.HTTP_200_OK)
-async def get_favorite_charts(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    return await get_favorite_charts_service(db, token_payload)
-
-@backend_router.post("/generate_charts/{project_id}/{datasource_connection_id}")
-async def generate_charts(
-    project_id: UUID,
-    datasource_connection_id: UUID,
-    request: QueryRequest,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user)
-):
-    try:
-        charts = await generate_and_store_charts(
-            db, datasource_connection_id, project_id, request, token_payload
-        )
-
-        return {
-            "success": True,
-            "generated_charts": [
-                {
-                    "id": str(chart.id),
-                    "title": chart.title,
-                    "query": chart.query,
-                    "chart_type": chart.chart_type,
-                    "relevance": chart.relevance,
-                    "is_time_based": chart.is_time_based,
-                    "report": chart.report
-                }
-                for chart in charts
-            ]
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
