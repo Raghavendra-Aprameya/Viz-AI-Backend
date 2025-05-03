@@ -63,7 +63,9 @@ class ResponseTimeMiddleware(BaseHTTPMiddleware):
                     db.add(new_record)
 
                 db.commit()
-                logger.info("Request URL: %s, Processing Time: %.4f seconds", path, process_time)
+                logger.info(
+                    "Request URL: %s, Processing Time: %.4f seconds", path, process_time
+                )
 
             except SQLAlchemyError as db_err:
                 db.rollback()

@@ -165,8 +165,6 @@ async def create_database_connection(
 @require_permission(Permission.VIEW_DATASOURCE)
 async def get_connections(
     project_id: UUID,
-    request: Request,
-    response: Response,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):

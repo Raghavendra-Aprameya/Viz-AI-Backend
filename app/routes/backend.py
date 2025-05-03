@@ -1,6 +1,6 @@
 """
-Backend routes for managing projects, dashboards, users, roles, permissions, 
-and database connections. All routes are prefixed with `/api/v1/backend` and 
+Backend routes for managing projects, dashboards, users, roles, permissions,
+and database connections. All routes are prefixed with `/api/v1/backend` and
 use dependency injection for DB session and user authentication.
 """
 
@@ -134,7 +134,7 @@ async def create_project_route(
 ):
     """
     Create a new project.
-    Args:
+    Args:s
         project (ProjectRequest): The project data.
         db (Session): The database session.
         token_payload (dict): The token payload.
@@ -169,8 +169,6 @@ async def add_database_connection(
 )
 async def get_connections_route(
     project_id: UUID = Path(..., description="Project ID to get connections for"),
-    request: Request = None,
-    response: Response = None,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
@@ -185,13 +183,11 @@ async def get_connections_route(
     Returns:
         dict: The connections for the project.
     """
-    return await get_connections(project_id, request, response, db, token_payload)
+    return await get_connections(project_id, db, token_payload)
 
 
 @backend_router.get("/projects", status_code=status.HTTP_200_OK)
 async def get_projects_route(
-    request: Request = None,
-    response: Response = None,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
@@ -205,7 +201,7 @@ async def get_projects_route(
     Returns:
         dict: The projects.
     """
-    return await get_projects(request, response, db, token_payload)
+    return await get_projects(db, token_payload)
 
 
 @backend_router.post(
@@ -697,7 +693,7 @@ async def get_dashboard_owner(
     Args:
         dashboard_id (UUID): The dashboard ID.
         db (Session): The database session.
-    Returns:
+    Returns:`̀
         dict: The owner for the dashboard.
     """
     return await get_dashboard_owner_service(dashboard_id, db)
@@ -847,13 +843,12 @@ async def generate_charts(
         }
 
     except Exception as e:
-        #log the exception for debugging
+        # log the exception for debugging
         traceback.print_exc()
 
         # Re-raise the exception with more context
         raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error occurred: {str(e)}"
+            status_code=500, detail=f"Unexpected error occurred: {str(e)}"
         ) from e
 
 
@@ -908,12 +903,14 @@ def execute_query(
         return execute_external_query(
             db=db,
             datasource_connection_id=datasource_connection_id,
-            query=request.query,
-            token_payload=token_payload
+            query_input=request.query,
+            token_payload=token_payload,
         )
     except SQLAlchemyError as e:
         # Explicitly re-raise the exception with context
-        raise HTTPException(status_code=500, detail=f"Database execution error: {str(e)}") from e
+        raise HTTPException(
+            status_code=500, detail=f"Database execution error: {str(e)}"
+        ) from e
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"ValueError: {str(e)}") from e
@@ -952,6 +949,7 @@ async def generate_queries_route(
     return await generate_trino_queries_service(
         db=db, project_id=project_id, token_payload=token_payload, request=request
     )
+
 
 @backend_router.patch(
     "/projects/{project_id}/request-access/{request_id}", status_code=status.HTTP_200_OK
@@ -1001,6 +999,7 @@ async def get_request_access(
         dict: The request access data for the specified project.
     """
     return await get_access_requests_service(project_id, db, token_payload)
+
 
 # @backend_router.get("/charts", status_code=status.HTTP_200_OK)
 # async def get_charts(
@@ -1098,6 +1097,7 @@ async def delete_chart_from_dashboard(
     return await delete_chart_from_dashboard_service(
         dashboard_id, chart_id, db, token_payload
     )
+
 
 @backend_router.patch("/charts/favorite", status_code=status.HTTP_200_OK)
 async def update_favorite_chart(

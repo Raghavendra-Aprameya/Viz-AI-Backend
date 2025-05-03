@@ -1,12 +1,15 @@
 """
-    This module contains the constants for the application.
+This module contains the constants for the application.
 """
+
 from enum import Enum
+
 
 class Permissions(str, Enum):
     """
     Enum class for all permissions.
     """
+
     VIEW_CHART = "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a2"
     CREATE_CHART = "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a3"
     CREATE_ROLE = "6e073b1d-f56c-4a6e-8a9d-2cb37a4702a4"
@@ -18,25 +21,37 @@ class Permissions(str, Enum):
     CREATE_PROJECT = "8e1c6f1e-7c99-4f28-bd2e-c7b79d6122c1"
     ADD_DATASOURCE = "f11a63e3-fc6e-4d36-aeae-943d118c3e27"
     VIEW_DATASOURCE = "6e073b1d-f56c-4a6e-8a9d-2cb37a470393"
-    ADD_USER_DASHBOARD ="f89c88c2-64a1-4c73-9a71-72cf02e6f2f0"
+    ADD_USER_DASHBOARD = "f89c88c2-64a1-4c73-9a71-72cf02e6f2f0"
     EDIT_PROJECT = "6e073b1d-f56c-4a6e-8a9d-2cb37a4703a8"
     DELETE_PROJECT = "f89c88c2-64a1-4c73-9a71-72cf02e6f2f1"
     EDIT_DASHBOARD = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb48"
     EDIT_ROLE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb49"
     DELETE_ROLE = "3f62d2c3-58ff-402f-bf1a-b199a43f607e"
-    EDIT_USER ="0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb50"
-    DELETE_USER ="0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb51"
+    EDIT_USER = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb50"
+    DELETE_USER = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb51"
     EDIT_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb52"
     DELETE_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb53"
+
 
 POOL_RECYCLE = 300
 POOL_SIZE = 5
 MAX_OVERFLOW = 0
 
-ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3001","http://localhost:3003","http://localhost:3004","http://localhost:3005","http://localhost:3006","http://localhost:3007","http://localhost:3008","http://localhost:3009","http://localhost:3010"]
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3003",
+    "http://localhost:3004",
+    "http://localhost:3005",
+    "http://localhost:3006",
+    "http://localhost:3007",
+    "http://localhost:3008",
+    "http://localhost:3009",
+    "http://localhost:3010",
+]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*"]
 
-LLM_SERVICE_URL = "http://localhost:8003/queries/"
-LLM_SPREADSHEET_URL = "http://localhost:8003/generate-sheet-queries/"
+LLM_SERVICE_URL = "http://localhost:8002/queries/"
+LLM_SPREADSHEET_URL = "http://localhost:8002/generate-sheet-queries/"
