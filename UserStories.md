@@ -90,7 +90,18 @@
 
 ---
 
+## User Story: View Available Datasources
 
+**As a** user,  
+**I want to** view all the datasources I’ve connected to a project,  
+**so that** I can choose which one to use for chart generation.
+
+#### Acceptance Criteria:
+- [ ] User can access a Datasources page or dropdown.
+- [ ] All previously added datasources are listed with name and type.
+- [ ] Invalid or broken connections are marked appropriately.
+
+---
 
 ## User Story: Switch Between Datasources
 
@@ -184,18 +195,6 @@
       
 ---
 
-## User Story: View Available Datasources
-
-**As a** user,  
-**I want to** view all the datasources I’ve connected to a project,  
-**so that** I can choose which one to use for chart generation.
-
-#### Acceptance Criteria:
-- [ ] User can access a Datasources page or dropdown.
-- [ ] All previously added datasources are listed with name and type.
-- [ ] Invalid or broken connections are marked appropriately.
-
----
 
 ## User Story: Manually Create a Chart
 
