@@ -196,19 +196,6 @@
 ---
 
 
-## User Story: Manually Create a Chart
-
-**As a** user,  
-**I want to** manually define a chart by writing a SQL query,  
-**so that** I can generate exactly the chart I need.
-
-#### Acceptance Criteria:
-- [ ] User can open a manual chart creation form.
-- [ ] A SQL editor input is available for custom queries.
-- [ ] User can preview the result and define chart type (e.g., bar, line).
-
----
-
 ## User Story: Preview and Edit Generated Charts
 
 **As a** user,  
