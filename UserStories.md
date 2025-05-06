@@ -13,7 +13,17 @@
 - [ ] Login fails gracefully with appropriate message on incorrect credentials.
 
 ---
+## User Story: First-Time User Project Creation
 
+**As a** first-time user,  
+**I want to** create a new project if I don’t have any,  
+**so that** I can begin setting up my workspace.
+
+#### Acceptance Criteria:
+- [ ] If user has no projects, an empty state is shown.
+- [ ] “Create Project” button is available and leads to a project creation flow.
+
+---
 ## User Story: View Projects
 
 **As a** logged-in user,  
@@ -63,18 +73,6 @@
 - [ ] Blocked charts are visually distinguished (e.g., grayed out).
 - [ ] Clicking a restricted chart shows a message and option to request access.
 - [ ] Access requests are sent to project admins for approval.
-
----
-
-## User Story: First-Time User Project Creation
-
-**As a** first-time user,  
-**I want to** create a new project if I don’t have any,  
-**so that** I can begin setting up my workspace.
-
-#### Acceptance Criteria:
-- [ ] If user has no projects, an empty state is shown.
-- [ ] “Create Project” button is available and leads to a project creation flow.
 
 ---
 
