@@ -738,6 +738,7 @@ class RequestAccess(BaseModel):
     relevance: Optional[str] = None
     is_time_based: Optional[bool] = None
     chart_type: str
+    data_connection_id: UUID = None
 
 
 class QueryRequest(BaseModel):
@@ -846,6 +847,7 @@ class SaveChartRequest(BaseModel):
     relevance: Optional[str] = None
     is_time_based: Optional[bool] = None
     chart_type: str
+    data_connection_id: UUID = None
 
 
 class SaveChartToDashboardRequest(BaseModel):
@@ -871,6 +873,7 @@ class SaveChartToDashboardRequest(BaseModel):
     is_time_based: Optional[bool] = None
     chart_type: str
     dashboard_id: UUID
+    data_connection_id: UUID
 
 
 class UpdateFavoriteChartRequest(BaseModel):

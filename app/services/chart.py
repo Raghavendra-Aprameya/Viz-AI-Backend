@@ -405,6 +405,7 @@ async def request_access_service(
             chart_type=data.chart_type,
             created_by=user_id,
             requested_by=user_id,
+            database_connection_id=data.data_connection_id,
             status="PENDING",
             is_user_generated=True,
             project_id=project_id,
@@ -510,6 +511,7 @@ async def update_request_access_service(
                 can_read=True,
                 can_write=False,
                 can_delete=False,
+                database_connection_id=access_request.database_connection_id,
             )
 
             db.add(user_chart)
@@ -572,6 +574,7 @@ async def get_access_requests_service(
         user_id = UUID(token_payload.get("sub"))
         if not user_id:
             raise ValueError("User ID not found in token payload")
+
         # Fetch all access requests for the project
         user_project_role = (
             db.query(UserProjectRoleModel)
@@ -592,6 +595,7 @@ async def get_access_requests_service(
             .filter(ChartAccessRequestModel.project_id == project_id)
             .all()
         )
+
         return {
             "message": "Access requests retrieved successfully",
             "access_requests": [
@@ -600,6 +604,26 @@ async def get_access_requests_service(
                     "title": request.title,
                     "status": request.status,
                     "created_at": request.created_at,
+                    "requested_by": (
+                        db.query(UserModel)
+                        .filter(UserModel.id == request.requested_by)
+                        .first()
+                        .username
+                        if db.query(UserModel)
+                        .filter(UserModel.id == request.requested_by)
+                        .first()
+                        else None
+                    ),
+                    "reviewer": (
+                        db.query(UserModel)
+                        .filter(UserModel.id == request.reviewer)
+                        .first()
+                        .username
+                        if db.query(UserModel)
+                        .filter(UserModel.id == request.reviewer)
+                        .first()
+                        else None
+                    ),
                 }
                 for request in access_requests
             ],
@@ -628,6 +652,10 @@ async def get_charts_service(db: Session, token_payload: dict):
                     "id": str(chart.chart_id),
                     "title": chart.chart.title,
                     "created_at": chart.chart.created_at,
+                    "query": chart.chart.query,
+                    "type": chart.chart.chart_type,
+                    "isFavorite": chart.is_favorite,
+                    "connection_id": chart.database_connection_id,
                 }
                 for chart in user_charts
             ],
@@ -740,6 +768,7 @@ async def save_chart_service(
             can_read=can_read,
             can_write=can_write,
             can_delete=can_delete,
+            database_connection_id=data.data_connection_id,
         )
         db.add(user_chart)
         db.commit()
@@ -803,6 +832,7 @@ async def save_chart_to_dashboard_service(
         new_chart_to_dashboard = DashboardChartsModel(
             dashboard_id=data.dashboard_id,
             chart_id=new_chart.id,
+            database_connection_id=data.data_connection_id,
         )
         db.add(new_chart_to_dashboard)
         db.commit()
@@ -855,6 +885,7 @@ async def get_charts_for_dashboard_service(
                     "id": str(chart.chart_id),
                     "title": chart.chart.title,
                     "created_at": chart.chart.created_at,
+                    "connection_id": chart.database_connection_id,
                 }
                 for chart in charts
             ],
@@ -986,6 +1017,8 @@ async def get_favorite_charts_service(db: Session, token_payload: dict):
                     "id": str(chart.chart_id),
                     "title": chart.chart.title,
                     "created_at": chart.chart.created_at,
+                    "connection_id": chart.data_connection_id,
+                    "query": chart.chart.query,
                 }
                 for chart in favorite_charts
             ],

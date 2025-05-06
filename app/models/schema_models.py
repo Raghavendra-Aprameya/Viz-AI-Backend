@@ -153,7 +153,14 @@ class UserChartModel(Base):
     can_read = Column(Boolean, nullable=False, default=True)
     can_delete = Column(Boolean, nullable=False, default=False)
     is_favorite = Column(Boolean, nullable=True, default=False)
-
+    database_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("database_connection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    database_connection = relationship(
+        "DatabaseConnectionModel", back_populates="user_charts"
+    )
     user = relationship("UserModel", back_populates="charts_shared")
     chart = relationship("ChartModel", back_populates="users")
 
@@ -337,7 +344,15 @@ class DashboardChartsModel(Base):
         UUID(as_uuid=True), ForeignKey("dashboard.id"), primary_key=True
     )
     chart_id = Column(UUID(as_uuid=True), ForeignKey("chart.id"), primary_key=True)
+    database_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("database_connection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
+    database_connection = relationship(
+        "DatabaseConnectionModel", back_populates="dashboard_charts"
+    )
     dashboard = relationship("DashboardModel", back_populates="charts")
     chart = relationship("ChartModel", back_populates="dashboard_charts")
 
@@ -374,6 +389,24 @@ class DatabaseConnectionModel(Base):
         back_populates="connection",
         cascade="all, delete-orphan",
         foreign_keys="[RelatedDatabaseModel.connection_id]",
+    )
+
+    user_charts = relationship(
+        "UserChartModel",
+        back_populates="database_connection",
+        cascade="all, delete-orphan",
+    )
+
+    chart_access_requests = relationship(
+        "ChartAccessRequestModel",
+        back_populates="database_connection",
+        cascade="all, delete-orphan",
+        foreign_keys="[ChartAccessRequestModel.database_connection_id]",
+    )
+    dashboard_charts = relationship(
+        "DashboardChartsModel",
+        back_populates="database_connection",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self):
@@ -494,6 +527,14 @@ class ChartAccessRequestModel(Base):
     )
     reviewer = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
+    database_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("database_connection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    database_connection = relationship(
+        "DatabaseConnectionModel", back_populates="chart_access_requests"
+    )
 
     project = relationship("ProjectModel", back_populates="access_requests")
 
