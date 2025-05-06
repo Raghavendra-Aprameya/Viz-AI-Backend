@@ -35,7 +35,7 @@
 
 #### Acceptance Criteria:
 - [ ] Landing page shows user's favourite dashboards.
-- [ ] Favourite charts are displayed in a separate section.
+- [ ] The landing page also displays the user's favorite charts in a separate section(below the favourite dashboards).
 - [ ] Clicking on a dashboard opens its charts view.
 
 ---
