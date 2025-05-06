@@ -113,7 +113,7 @@
 - [ ] User selects a valid datasource.
 - [ ] “Generate Charts” button is enabled for selected datasource.
 - [ ] Charts are generated via LLM and displayed in preview mode.
-- [ ] User can save and assign charts to a dashboard.
+- [ ] User can save or assign charts to a dashboard.
 
 ---
 
