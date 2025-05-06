@@ -84,6 +84,7 @@
 
 #### Acceptance Criteria:
 - [ ] User can enter connection details manually or via hosted link.
+- [ ] Database passwords are obscured so that they are not visible to anyone.
 - [ ] Connection is verified and saved if successful.
 - [ ] Connection can be edited or deleted later.
 
