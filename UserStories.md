@@ -282,7 +282,7 @@ so that they can begin contributing with the correct access.
 - [ ] On submit, new user is added to the list and receives default project access.
 
 
-# Admin User Stories for Viz_AI
+# Super User Stories for Viz_AI
 
 ---
 
@@ -419,18 +419,6 @@ so that they can begin contributing with the correct access.
 
 ---
 
-### **User Story: Assign Multiple Roles to a User**
-
-**As a** superuser,  
-**I want to** assign multiple roles to a user,  
-**so that** I can provide them with a combination of permissions across different project areas.
-
-#### Acceptance Criteria:
-- [ ] The user creation form allows for multiple roles to be selected.
-- [ ] User is granted permissions from all assigned roles.
-- [ ] User roles can be modified or removed from the user’s settings.
-
----
 
 ### **User Story: View User Permissions**
 
