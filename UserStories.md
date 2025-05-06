@@ -231,6 +231,56 @@
 - [ ] Each chart has an “Export” or “Download CSV” option.
 - [ ] Clicking the option downloads the chart’s underlying dataset as CSV.
 - [ ] Export respects data visibility and user permissions.
+      
+### User Story: Access Role Management Page
+As a user with role management permissions,  
+I want to access the Roles page,  
+so that I can view and manage the roles within the project.
+
+**Acceptance Criteria:**
+- [ ] The "Roles" tab is visible in the sidebar or navigation.
+- [ ] User sees a list of all roles in the project.
+- [ ] Each role displays its name, description, and assigned permissions.
+- [ ] Edit and delete buttons are visible if the user has edit/delete role permission.
+
+---
+
+### User Story: Add a New Role
+As a user with permission to manage roles,  
+I want to create a new role with specific permissions,  
+so that I can define access levels for different project members.
+
+**Acceptance Criteria:**
+- [ ] "Add Role" button is available on the Roles page.
+- [ ] Role creation form includes name, description, and permission selection.
+- [ ] Table access restrictions (blacklisting) are available in the form.
+- [ ] On submit, the new role appears in the role list with correct settings.
+
+---
+
+### User Story: Access User Management Page
+As a user with user management permissions,  
+I want to access the Users page,  
+so that I can view all project members and manage their roles.
+
+**Acceptance Criteria:**
+- [ ] "Users" tab is visible and accessible.
+- [ ] User list displays name, email, and assigned roles.
+- [ ] Edit and delete actions are available if the user has respective permissions.
+
+---
+
+### User Story: Add a New User
+As a user with permission to manage users,  
+I want to add a new user to the project and assign roles,  
+so that they can begin contributing with the correct access.
+
+**Acceptance Criteria:**
+- [ ] "Add User" button is available on the Users page.
+- [ ] User creation form includes name, email, password, and role(s) selection.
+- [ ] Form validation ensures email uniqueness and password strength.
+- [ ] On submit, new user is added to the list and receives default project access.
+
 
 # Admin User Stories for Viz_AI
 
