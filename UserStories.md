@@ -90,6 +90,34 @@
 
 ---
 
+
+
+## User Story: Switch Between Datasources
+
+**As a** user,  
+**I want to** switch between different datasources,  
+**so that** I can generate charts from different datasets.
+
+#### Acceptance Criteria:
+- [ ] User can select a datasource from a dropdown or list.
+- [ ] Selected datasource context is preserved when generating or querying charts.
+- [ ] Chart generation uses the schema of the currently selected datasource.
+
+---
+
+## User Story: Edit or Delete a Datasource
+
+**As a** user,  
+**I want to** update or remove a datasource I previously added,  
+**so that** I can manage outdated or incorrect connections.
+
+#### Acceptance Criteria:
+- [ ] Each datasource has edit and delete options.
+- [ ] Editing a datasource allows changing connection parameters.
+- [ ] Deleting a datasource prompts for confirmation and removes it cleanly.
+
+---
+
 ## User Story: Enable Data Analysis Toggle
 
 **As a** user adding a connection,  
@@ -153,6 +181,9 @@
 - [ ] A text input accepts natural language queries.
 - [ ] System generates a chart using LLM response.
 - [ ] User can preview and save generated charts.
+      
+---
+
 ## User Story: View Available Datasources
 
 **As a** user,  
@@ -163,32 +194,6 @@
 - [ ] User can access a Datasources page or dropdown.
 - [ ] All previously added datasources are listed with name and type.
 - [ ] Invalid or broken connections are marked appropriately.
-
----
-
-## User Story: Switch Between Datasources
-
-**As a** user,  
-**I want to** switch between different datasources,  
-**so that** I can generate charts from different datasets.
-
-#### Acceptance Criteria:
-- [ ] User can select a datasource from a dropdown or list.
-- [ ] Selected datasource context is preserved when generating or querying charts.
-- [ ] Chart generation uses the schema of the currently selected datasource.
-
----
-
-## User Story: Edit or Delete a Datasource
-
-**As a** user,  
-**I want to** update or remove a datasource I previously added,  
-**so that** I can manage outdated or incorrect connections.
-
-#### Acceptance Criteria:
-- [ ] Each datasource has edit and delete options.
-- [ ] Editing a datasource allows changing connection parameters.
-- [ ] Deleting a datasource prompts for confirmation and removes it cleanly.
 
 ---
 
