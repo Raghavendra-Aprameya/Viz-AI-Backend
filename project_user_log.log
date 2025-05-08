@@ -1,0 +1,8 @@
+2025-05-07 08:42:05,095 - INFO - [CHECKPOINT 1] Extracting user_id from token took: 0.000004s
+2025-05-07 08:42:05,844 - INFO - [CHECKPOINT 2] Query user-project-role mappings with JOIN: 0.748690s
+2025-05-07 08:42:05,844 - INFO - [CHECKPOINT 3] Build response list: 0.000025s
+2025-05-07 08:42:05,844 - INFO - [CHECKPOINT 4] Total execution time: 0.749176s
+2025-05-07 08:44:34,434 - INFO - [CHECKPOINT 1] Extracting user_id from token took: 0.000004s
+2025-05-07 08:44:35,295 - INFO - [CHECKPOINT 2] Query user-project-role mappings with JOIN: 0.861094s
+2025-05-07 08:44:35,295 - INFO - [CHECKPOINT 3] Build response list: 0.000012s
+2025-05-07 08:44:35,295 - INFO - [CHECKPOINT 4] Total execution time: 0.861470s

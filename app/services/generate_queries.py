@@ -28,29 +28,42 @@ from app.utils.token_parser import get_current_user
 
 # LLM_SERVICE_URL = "http://localhost:8001/queries/"
 
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text, create_engine
+from fastapi import HTTPException, status, Depends
+from uuid import UUID
+from typing import Any
+import httpx
+import json
+from app.models.schema_models import (
+    ChartModel,
+    DashboardChartsModel,
+    DatabaseConnectionModel,
+)
+from app.schemas import QueryRequest
+from app.utils.token_parser import get_current_user
+from app.utils.crypt import decrypt_string
+from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
+from app.utils.sample_data import get_sample_data
 
+
+LLM_SERVICE_URL = "http://localhost:8002/queries/"
+
+
+# celery -A app.utils.tasks.celery_app worker --loglevel=info
+# celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:
-    """
-    Posts data to the LLM service and returns the response.
-    :param url: The URL of the LLM service.
-    :param payload: The data to be sent to the LLM service.
-    :return: The response from the LLM service.
-    """
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()
     except httpx.RequestError as e:
-        raise httpx.RequestError(
-            f"Error communicating with LLM service at {url}: {str(e)}"
-        ) from e
+        raise Exception(f"Error communicating with LLM service at {url}: {str(e)}")
     except httpx.HTTPStatusError as e:
-        raise httpx.HTTPStatusError(
-            f"LLM service error: {str(e.response.status_code)} - {str(e.response.text)}",
-            request=e.request,
-            response=e.response,
-        ) from e
+        raise Exception(
+            f"LLM service error: {str(e.response.status_code)} - {str(e.response.text)}"
+        )
 
 
 async def generate_and_store_charts(
@@ -60,15 +73,6 @@ async def generate_and_store_charts(
     query_request: QueryRequest,
     token_payload: dict = Depends(get_current_user),
 ):
-    """
-    Generates SQL queries based on user input and stores the charts in the database.
-    :param db: The database session.
-    :param datasource_connection_id: The ID of the database connection.
-    :param project_id: The ID of the project.
-    :param query_request: The request object containing user input.
-    :param token_payload: The token payload containing user information.
-    :return: A list of generated charts.
-    """
     db_conn = (
         db.query(DatabaseConnectionModel)
         .filter_by(id=datasource_connection_id, project_id=project_id)
@@ -90,11 +94,11 @@ async def generate_and_store_charts(
 
     try:
         user_id = UUID(user_id_str)
-    except ValueError as exc:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid UUID format in token",
-        ) from exc
+        )
     sample_data = None
     if db_conn.consent_given:
         sample_data = get_sample_data(decrypt_conn_string)
@@ -192,7 +196,7 @@ def execute_external_query(
         result = session.execute(text(query))
         data = result.fetchall()
         print(data)
-        response = [dict(row._mapping) for row in data]  # Convert result to dictionary
+        response = [dict(row._mapping) for row in data]
         transformed_data = transform_data_dynamic(response)
         print(transformed_data)
         response = {

@@ -809,23 +809,11 @@ async def generate_charts(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
-    """
-    Generate and store charts from a SQL datasource.
-
-    Args:
-        project_id (UUID): Project identifier.
-        datasource_connection_id (UUID): Datasource connection ID.
-        request (QueryRequest): Chart generation request payload.
-        db (Session): Database session.
-        token_payload (dict): Authenticated user payload.
-
-    Returns:
-        dict: Generated charts with metadata.
-    """
     try:
         charts = await generate_and_store_charts(
             db, datasource_connection_id, project_id, request, token_payload
         )
+
         return {
             "success": True,
             "generated_charts": [
@@ -843,13 +831,7 @@ async def generate_charts(
         }
 
     except Exception as e:
-        # log the exception for debugging
-        traceback.print_exc()
-
-        # Re-raise the exception with more context
-        raise HTTPException(
-            status_code=500, detail=f"Unexpected error occurred: {str(e)}"
-        ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @backend_router.post("/nl2sql/generate/{datasource_connection_id}")

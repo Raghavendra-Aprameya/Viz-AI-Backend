@@ -655,7 +655,7 @@ async def get_charts_service(db: Session, token_payload: dict):
                     "query": chart.chart.query,
                     "type": chart.chart.chart_type,
                     "isFavorite": chart.is_favorite,
-                    "connection_id": chart.database_connection_id,
+                    "datasourceConnectionId": chart.database_connection_id,
                 }
                 for chart in user_charts
             ],

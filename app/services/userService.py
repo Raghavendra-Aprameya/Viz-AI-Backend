@@ -1,5 +1,6 @@
 # Standard library imports
 from uuid import UUID
+import time
 
 # Third-party imports
 from fastapi import HTTPException, status, Depends, Path
@@ -24,6 +25,7 @@ from app.models.schema_models import (
     DashboardModel,
 )
 from app.utils.constants import Permissions as Permission
+
 
 logger = logging.getLogger(__name__)
 
@@ -257,88 +259,10 @@ async def create_user_project(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Failed to create user project",
-                )
+                ) from e
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-import time
-import logging
-from fastapi import HTTPException, status
-from uuid import UUID
-from sqlalchemy.orm import Session
-
-logger = logging.getLogger(__name__)
-
-
-from uuid import UUID
-from sqlalchemy.orm import Session
-from fastapi import HTTPException, status
-from app.models import (
-    UserModel,
-    UserProjectRoleModel,
-)  # Adjust import based on your project structure
-
-
-async def list_all_users_project(project_id: UUID, db: Session, token_payload: dict):
-    """
-    Lists all users associated with a project by querying the user-project roles and returning
-    the users' details.
-
-    Args:
-        project_id (UUID): The project ID to list users for.
-        db (Session): The database session.
-        token_payload (dict): The token payload containing the current user's info.
-
-    Returns:
-        dict: The response containing a success message and a list of users in the project.
-
-    Raises:
-        HTTPException: If an error occurs while querying the database.
-    """
-    try:
-        user_id = UUID(token_payload.get("sub"))
-
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
-            )
-
-        # Perform a JOIN between UserProjectRoleModel and UserModel to get all users in the project
-        user_roles = (
-            db.query(
-                UserProjectRoleModel.user_id,
-                UserProjectRoleModel.project_id,
-                UserProjectRoleModel.role_id,
-                UserModel.username,
-                UserModel.password,  # Optional: consider excluding in production
-                UserModel.email,
-                UserModel.created_at,
-            )
-            .join(UserModel, UserProjectRoleModel.user_id == UserModel.id)
-            .filter(UserProjectRoleModel.project_id == project_id)
-            .all()
-        )
-
-        users = [
-            {
-                "id": row.user_id,
-                "user_id": row.user_id,
-                "project_id": row.project_id,
-                "role_id": row.role_id,
-                "username": row.username,
-                "password": row.password,  # Optional
-                "email": row.email,
-                "created_at": str(row.created_at),
-            }
-            for row in user_roles
-        ]
-
-        return {"message": "Users retrieved successfully", "users": users}
-
-    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
         ) from e
@@ -360,61 +284,47 @@ async def list_all_users_project(project_id: UUID, db: Session, token_payload: d
 #     Raises:
 #         HTTPException: If an error occurs while querying the database.
 #     """
-#     start_time = time.perf_counter()
 #     try:
-#         t0 = time.perf_counter()
 #         user_id = UUID(token_payload.get("sub"))
-#         logger.info(
-#             f"[Time taken] Extracting user_id from token: {time.perf_counter() - t0:.6f}s"
-#         )
 
 #         if not user_id:
 #             raise HTTPException(
 #                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
 #             )
 
-#         t1 = time.perf_counter()
-#         user_project_roles = (
-#             db.query(UserProjectRoleModel)
+#         # Perform a JOIN between UserProjectRoleModel and UserModel to get all users in the project
+#         user_roles = (
+#             db.query(
+#                 UserProjectRoleModel.user_id,
+#                 UserProjectRoleModel.project_id,
+#                 UserProjectRoleModel.role_id,
+#                 UserModel.username,
+#                 UserModel.password,  # Optional: consider excluding in production
+#                 UserModel.email,
+#                 UserModel.created_at,
+#             )
+#             .join(UserModel, UserProjectRoleModel.user_id == UserModel.id)
 #             .filter(UserProjectRoleModel.project_id == project_id)
 #             .all()
 #         )
-#         logger.info(
-#             f"[Time taken] Querying user-project-role mappings: {time.perf_counter() - t1:.6f}s"
-#         )
 
-#         users = []
-#         t2 = time.perf_counter()
-#         for upr in user_project_roles:
-#             t_loop = time.perf_counter()
-#             user = db.query(UserModel).filter(UserModel.id == upr.user_id).first()
-#             if user:
-#                 users.append(
-#                     {
-#                         "id": upr.user_id,
-#                         "user_id": upr.user_id,
-#                         "project_id": upr.project_id,
-#                         "role_id": upr.role_id,
-#                         "username": user.username,
-#                         "password": user.password,  # Consider removing this in production
-#                         "email": user.email,
-#                         "created_at": str(user.created_at),
-#                     }
-#                 )
-#             logger.info(
-#                 f"[Time taken] Loop iteration for user_id={upr.user_id}: {time.perf_counter() - t_loop:.6f}s"
-#             )
-#         logger.info(
-#             f"[Time taken] Building user response list: {time.perf_counter() - t2:.6f}s"
-#         )
-
-#         total_time = time.perf_counter() - start_time
-#         logger.info(f"[Total execution time] list_all_users_project: {total_time:.6f}s")
+#         users = [
+#             {
+#                 "id": row.user_id,
+#                 "user_id": row.user_id,
+#                 "project_id": row.project_id,
+#                 "role_id": row.role_id,
+#                 "username": row.username,
+#                 "password": row.password,  # Optional
+#                 "email": row.email,
+#                 "created_at": str(row.created_at),
+#             }
+#             for row in user_roles
+#         ]
 
 #         return {"message": "Users retrieved successfully", "users": users}
 
 #     except Exception as e:
-#         logger.exception("[Error] Exception occurred in list_all_users_project")
 #         raise HTTPException(
 #             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
 #         ) from e
@@ -904,3 +814,100 @@ async def get_favorites_service(db: Session, token_payload: dict):
         return {"message": "Favorites retrieved successfully", "dashboards": dashboards}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+async def list_all_users_project(project_id: UUID, db: Session, token_payload: dict):
+    """
+    Lists all users associated with a project by querying the user-project roles
+    and returning the users' details.
+    """
+    start_time = time.perf_counter()
+    try:
+        # ✅ Checkpoint 1: Token extraction
+        checkpoint1_start = time.perf_counter()
+        user_id = UUID(token_payload.get("sub"))
+        checkpoint1_time = time.perf_counter() - checkpoint1_start
+        logger.info(
+            f"[CHECKPOINT 1] Extracting user_id from token took: {checkpoint1_time:.6f}s"
+        )
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
+            )
+
+        # ✅ Checkpoint 2: Query user-project-role with JOIN
+        # Optimize by using a JOIN operation to fetch all data at once
+        t1 = time.perf_counter()
+
+        # Using a JOIN query instead of separate queries per user
+        query_results = (
+            db.query(
+                UserProjectRoleModel.user_id,
+                UserProjectRoleModel.project_id,
+                UserProjectRoleModel.role_id,
+                UserModel.username,
+                UserModel.password,  # Optional: consider excluding in production
+                UserModel.email,
+                UserModel.created_at,
+            )
+            .join(UserModel, UserProjectRoleModel.user_id == UserModel.id)
+            .filter(UserProjectRoleModel.project_id == project_id)
+            .all()
+        )
+
+        query_time = time.perf_counter() - t1
+        logger.info(
+            f"[CHECKPOINT 2] Query user-project-role mappings with JOIN: {query_time:.6f}s"
+        )
+
+        # ✅ Checkpoint 3: Building response
+        t2 = time.perf_counter()
+        users = [
+            {
+                "id": user_id,
+                "user_id": user_id,
+                "project_id": project_id,
+                "role_id": role_id,
+                "username": username,
+                "password": password,  # Optional: consider excluding in production
+                "email": email,
+                "created_at": str(created_at),
+            }
+            for user_id, project_id, role_id, username, password, email, created_at in query_results
+        ]
+
+        build_time = time.perf_counter() - t2
+        logger.info(f"[CHECKPOINT 3] Build response list: {build_time:.6f}s")
+
+        # ✅ Total execution time
+        total_time = time.perf_counter() - start_time
+        logger.info(f"[CHECKPOINT 4] Total execution time: {total_time:.6f}s")
+
+        return {"message": "Users retrieved successfully", "users": users}
+
+    except HTTPException as he:
+        # Re-raise HTTP exceptions without wrapping
+        raise he
+    except Exception as e:
+        logger.exception("[ERROR] Exception in list_all_users_project")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
+
+
+# Configure logger
+def setup_logging():
+    """Configure the logger for the module"""
+    logging_handler = logging.FileHandler("project_user_log.log")
+    logging_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)  # Change to DEBUG for more verbosity
+    logger.addHandler(logging_handler)
+    return logger
+
+
+logger = setup_logging()
