@@ -1,6 +1,16 @@
-from sqlalchemy import create_engine,inspect
-from sqlalchemy.orm import sessionmaker, declarative_base
+"""
+This module initializes the SQLAlchemy engine, creates database tables from ORM models,
+and provides a generator function for dependency injection of database sessions.
+
+Features:
+- Configures SQLAlchemy engine with connection pooling options.
+- Automatically creates tables defined in ORM models.
+- Provides `get_db` generator for use in FastAPI or other frameworks.
+"""
+
 from typing import Generator
+from sqlalchemy import create_engine,inspect
+from sqlalchemy.orm import sessionmaker
 from app.core.settings import settings
 from app.core.base import Base
 from app.utils.constants import POOL_SIZE, MAX_OVERFLOW, POOL_RECYCLE

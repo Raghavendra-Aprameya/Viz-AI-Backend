@@ -1,75 +1,77 @@
+"""
+Middleware to measure and record API response times in FastAPI.
+
+This module defines a middleware that captures the processing time for each request,
+stores or updates the response time in the database, and attaches the time to a response header.
+"""
+
 import time
 import uuid
-from starlette.middleware.base import BaseHTTPMiddleware
-from typing import Callable
-from fastapi import Request
-from sqlalchemy.orm import Session
+import logging
 from datetime import datetime
+from typing import Callable
+
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.db import get_db
 from app.models.schema_models import ResponseTimeModel
 
+logger = logging.getLogger(__name__)
+
+
 class ResponseTimeMiddleware(BaseHTTPMiddleware):
     """
-    FastAPI middleware to calculate response time.
-    
-    This middleware measures the time difference between when a request is received
-    and when the response is sent, adding this information to response headers and
-    storing the data in the database for performance tracking.
+    Middleware to track and log API response times and store metrics in the database.
     """
-    
-    async def dispatch(self, request: Request, call_next: Callable):
-        # Record start time
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
         start_time = time.time()
-        
-        # Process the request
         response = await call_next(request)
-        
-        # Calculate processing time
         process_time = time.time() - start_time
-        
-        # Get the request path
         path = request.url.path
-        
-        # Store the processing time in the database
+
+        response.headers["X-Response-Time"] = f"{process_time:.4f} seconds"
+
         try:
-            # Get database session
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
             try:
-                # Check if there's an existing record for this path
-                existing_record = db.query(ResponseTimeModel).filter(
-                    ResponseTimeModel.url == path
-                ).first()
-                
-                if existing_record:
-                    # Update the average time
-                    new_avg = ((existing_record.avg_process_time * existing_record.request_count) + process_time) / (existing_record.request_count + 1)
-                    existing_record.avg_process_time = new_avg
-                    existing_record.request_count += 1
-                    existing_record.last_process_time = process_time
-                    existing_record.updated_at = datetime.utcnow()
+                record = (
+                    db.query(ResponseTimeModel)
+                    .filter(ResponseTimeModel.url == path)
+                    .first()
+                )
+
+                if record:
+                    total_time = record.avg_process_time * record.request_count
+                    new_avg = (total_time + process_time) / (record.request_count + 1)
+
+                    record.avg_process_time = new_avg
+                    record.last_process_time = process_time
+                    record.request_count += 1
+                    record.updated_at = datetime.utcnow()
                 else:
-                    # Create new record with UUID
                     new_record = ResponseTimeModel(
-                        id=uuid.uuid4(),  # Generate a UUID for the new record
+                        id=uuid.uuid4(),
                         url=path,
                         avg_process_time=process_time,
                         last_process_time=process_time,
-                        request_count=1
+                        request_count=1,
                     )
                     db.add(new_record)
-                
+
                 db.commit()
-                print(f"Request URL: {path}, Processing Time: {process_time:.4f} seconds")
-            except Exception as e:
+                logger.info("Request URL: %s, Processing Time: %.4f seconds", path, process_time)
+
+            except SQLAlchemyError as db_err:
                 db.rollback()
-                print(f"Failed to store response time: {e}")
+                logger.exception("Database operation failed for %s: %s", path, db_err)
             finally:
                 db.close()
-        except Exception as e:
-            print(f"Database error in middleware: {e}")
-        
-        # Add custom header with processing time in milliseconds
-        response.headers["X-Response-Time"] = f"{process_time:.4f} seconds"
-        
+
+        except StopIteration:
+            logger.exception("Failed to get DB session generator.")
+
         return response
