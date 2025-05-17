@@ -47,9 +47,6 @@ from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
 from app.utils.sample_data import get_sample_data
 
 
-LLM_SERVICE_URL = "http://localhost:8002/queries/"
-
-
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 async def post_to_llm(url: str, payload: dict) -> Any:

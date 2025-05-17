@@ -53,5 +53,5 @@ ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*"]
 
-LLM_SERVICE_URL = "http://localhost:8002/queries/"
-LLM_SPREADSHEET_URL = "http://localhost:8002/generate-sheet-queries/"
+LLM_SERVICE_URL = "http://localhost:8001/queries/"
+LLM_SPREADSHEET_URL = "http://localhost:8001/generate-sheet-queries/"
