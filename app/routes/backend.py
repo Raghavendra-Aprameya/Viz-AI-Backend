@@ -61,6 +61,8 @@ from app.schemas import (
     BusinessInsightsRequest,
     BusinessInsightsResponse,
     ProjectInsightsResponse,
+    ConnectionStatsResponse,
+    ConnectionCheckResponse,
 )
 
 # Service imports
@@ -90,6 +92,8 @@ from app.services.db_connection import (
     get_connections,
     update_db_connection,
     delete_db_connection,
+    get_connection_stats,
+    check_and_update_connections,
 )
 
 from app.services.userService import (
@@ -195,6 +199,66 @@ async def get_connections_route(
         dict: The connections for the project.
     """
     return await get_connections(project_id, db, token_payload)
+
+
+@backend_router.get(
+    "/connections/{project_id}/stats",
+    status_code=status.HTTP_200_OK,
+    response_model=ConnectionStatsResponse,
+)
+async def get_connection_stats_route(
+    project_id: UUID = Path(..., description="Project ID to get connection stats for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Get database connection statistics for a project.
+    
+    This endpoint provides statistics about database connections including:
+    - Total number of connections
+    - Number of active connections (status=True)
+    - Number of inactive connections (status=False)
+    
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+        
+    Returns:
+        ConnectionStatsResponse: Statistics about database connections.
+    """
+    return await get_connection_stats(project_id, db, token_payload)
+
+
+@backend_router.post(
+    "/connections/{project_id}/check",
+    status_code=status.HTTP_200_OK,
+    response_model=ConnectionCheckResponse,
+)
+async def check_connections_route(
+    project_id: UUID = Path(..., description="Project ID to check connections for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Check all database connections for a project and update their status.
+    
+    This endpoint tests each database connection by attempting to connect to it.
+    For each connection, it:
+    - Tests if the connection can be established
+    - Updates the 'status' field (True if successful, False if failed)
+    - Updates the 'last_checked' timestamp with the current time
+    - Returns detailed results for each connection including error messages if any
+    
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+        
+    Returns:
+        ConnectionCheckResponse: Results of connection checks with updated status.
+    """
+    return await check_and_update_connections(project_id, db, token_payload)
 
 
 @backend_router.get("/projects", status_code=status.HTTP_200_OK)

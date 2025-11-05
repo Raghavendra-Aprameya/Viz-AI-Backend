@@ -375,6 +375,8 @@ class DatabaseConnectionModel(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
     db_type = Column(String, nullable=True)
     consent_given = Column(Boolean, nullable=True, default=False)
+    status = Column(Boolean, nullable=True,default=False)
+    last_checked = Column(DateTime, nullable=True)
 
     project = relationship("ProjectModel", back_populates="database_connections")
 

@@ -1244,3 +1244,33 @@ class ProjectInsightsResponse(BaseModel):
     successful_analyses: int
     database_insights: List[DatabaseInsightSummary]
     consolidated_insights: ConsolidatedInsights
+
+
+class ConnectionStatsResponse(BaseModel):
+    """Response model for database connection statistics"""
+    
+    total_connections: int
+    active_connections: int
+    inactive_connections: int
+    project_id: str
+
+
+class ConnectionCheckResult(BaseModel):
+    """Result of a single connection check"""
+    
+    connection_id: str
+    connection_name: str
+    status: bool
+    last_checked: str
+    error_message: Optional[str] = None
+
+
+class ConnectionCheckResponse(BaseModel):
+    """Response model for connection check endpoint"""
+    
+    message: str
+    project_id: str
+    total_checked: int
+    successful_connections: int
+    failed_connections: int
+    results: List[ConnectionCheckResult]

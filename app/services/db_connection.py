@@ -45,9 +45,12 @@ users with the correct permissions to interact with these connections.
 from uuid import UUID, uuid4
 from urllib.parse import urlparse, quote_plus
 import json
+from datetime import datetime
+from typing import List, Dict, Any
 
 from fastapi import HTTPException, status, Depends, Request, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, text
 
 from app.core.db import get_db
 from app.models.schema_models import ConnectionTableNameModel, DatabaseConnectionModel
@@ -353,3 +356,239 @@ async def delete_db_connection(
     db.commit()
 
     return {"message": "Database connection deleted successfully"}
+
+
+async def get_connection_stats(
+    project_id: UUID,
+    db: Session,
+    token_payload: dict,
+):
+    """
+    Get statistics for database connections in a project.
+    
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+        
+    Returns:
+        dict: Statistics about database connections including:
+            - total_connections: Total number of connections
+            - active_connections: Number of connections with status=True
+            - inactive_connections: Number of connections with status=False
+            - project_id: The project ID
+    """
+    from app.models.schema_models import UserProjectRoleModel, UserModel, ProjectModel
+    
+    user_id = UUID(token_payload.get("sub"))
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User ID not found in token payload"
+        )
+    
+    # Verify project exists
+    project = db.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Verify user has access to this project
+    user_role = (
+        db.query(UserProjectRoleModel)
+        .filter(
+            UserProjectRoleModel.user_id == user_id,
+            UserProjectRoleModel.project_id == project_id,
+        )
+        .first()
+    )
+    
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    
+    if not user_role and not user.is_super:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User does not have access to this project"
+        )
+    
+    # Get all connections for the project
+    all_connections = (
+        db.query(DatabaseConnectionModel)
+        .filter(DatabaseConnectionModel.project_id == project_id)
+        .all()
+    )
+    
+    total_connections = len(all_connections)
+    active_connections = sum(1 for conn in all_connections if conn.status is True)
+    inactive_connections = sum(1 for conn in all_connections if conn.status is False or conn.status is None)
+    
+    return {
+        "total_connections": total_connections,
+        "active_connections": active_connections,
+        "inactive_connections": inactive_connections,
+        "project_id": str(project_id)
+    }
+
+
+async def check_and_update_connections(
+    project_id: UUID,
+    db: Session,
+    token_payload: dict,
+) -> Dict[str, Any]:
+    """
+    Check all database connections for a project and update their status.
+    
+    This function attempts to connect to each database, updates the status field
+    (True if connection succeeds, False if it fails), and updates the last_checked
+    timestamp.
+    
+    Args:
+        project_id (UUID): The project ID.
+        db (Session): The database session.
+        token_payload (dict): The token payload.
+        
+    Returns:
+        dict: Results of connection checks including status updates.
+    """
+    from app.models.schema_models import UserProjectRoleModel, UserModel, ProjectModel
+    
+    user_id = UUID(token_payload.get("sub"))
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User ID not found in token payload"
+        )
+    
+    # Verify project exists
+    project = db.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    
+    # Verify user has access to this project
+    user_role = (
+        db.query(UserProjectRoleModel)
+        .filter(
+            UserProjectRoleModel.user_id == user_id,
+            UserProjectRoleModel.project_id == project_id,
+        )
+        .first()
+    )
+    
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    
+    if not user_role and not user.is_super:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User does not have access to this project"
+        )
+    
+    # Get all connections for the project
+    connections = (
+        db.query(DatabaseConnectionModel)
+        .filter(DatabaseConnectionModel.project_id == project_id)
+        .all()
+    )
+    
+    if not connections:
+        return {
+            "message": "No database connections found for this project",
+            "project_id": str(project_id),
+            "total_checked": 0,
+            "successful_connections": 0,
+            "failed_connections": 0,
+            "results": []
+        }
+    
+    results = []
+    successful = 0
+    failed = 0
+    
+    for connection in connections:
+        check_result = await _test_single_connection(connection, db)
+        results.append(check_result)
+        
+        if check_result["status"]:
+            successful += 1
+        else:
+            failed += 1
+    
+    return {
+        "message": "Connection check completed",
+        "project_id": str(project_id),
+        "total_checked": len(connections),
+        "successful_connections": successful,
+        "failed_connections": failed,
+        "results": results
+    }
+
+
+async def _test_single_connection(
+    connection: DatabaseConnectionModel,
+    db: Session,
+) -> Dict[str, Any]:
+    """
+    Test a single database connection and update its status.
+    
+    Args:
+        connection (DatabaseConnectionModel): The database connection to test.
+        db (Session): The database session for updating the record.
+        
+    Returns:
+        dict: Result of the connection test.
+    """
+    connection_id = str(connection.id)
+    connection_name = connection.connection_name
+    current_time = datetime.utcnow()
+    
+    try:
+        # Decrypt the connection string
+        decrypted_connection_string = decrypt_string(connection.db_connection_string)
+        
+        # Create a test engine
+        test_engine = create_engine(
+            decrypted_connection_string,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": 10}
+        )
+        
+        # Attempt to connect and execute a simple query
+        with test_engine.connect() as conn:
+            # Execute a simple query to verify the connection works
+            conn.execute(text("SELECT 1"))
+        
+        # Connection successful - update status to True
+        connection.status = True
+        connection.last_checked = current_time
+        db.commit()
+        
+        return {
+            "connection_id": connection_id,
+            "connection_name": connection_name,
+            "status": True,
+            "last_checked": current_time.isoformat(),
+            "error_message": None
+        }
+        
+    except Exception as e:
+        # Connection failed - update status to False
+        connection.status = False
+        connection.last_checked = current_time
+        db.commit()
+        
+        error_msg = str(e)
+        # Truncate long error messages
+        if len(error_msg) > 200:
+            error_msg = error_msg[:200] + "..."
+        
+        return {
+            "connection_id": connection_id,
+            "connection_name": connection_name,
+            "status": False,
+            "last_checked": current_time.isoformat(),
+            "error_message": error_msg
+        }

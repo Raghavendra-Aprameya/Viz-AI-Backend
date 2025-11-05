@@ -1,0 +1,4 @@
+[2025-11-05 17:01:31,007: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2025-11-05 17:01:31,010: INFO/MainProcess] mingle: searching for neighbors
+[2025-11-05 17:01:32,019: INFO/MainProcess] mingle: all alone
+[2025-11-05 17:01:32,036: INFO/MainProcess] celery@Aprameyas-MacBook-Air.local ready.
