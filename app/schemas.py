@@ -724,8 +724,8 @@ class RequestAccess(BaseModel):
         title: Title of the chart
         query: SQL query for the chart
         report: Optional report context for the chart
-        type: Type of the chart or data access
-        relevance: Optional relevance score or description
+        type: Type of the chart or data access (e.g., 'insight', 'metric', 'analysis')
+        relevance: Relevance score (0.0 to 1.0)
         is_time_based: Optional flag indicating if the chart is time-based
         chart_type: Visual type of the chart
     """
@@ -733,8 +733,8 @@ class RequestAccess(BaseModel):
     title: str
     query: str
     report: Optional[str] = None
-    type: str
-    relevance: Optional[str] = None
+    type: Optional[str] = "insight"
+    relevance: float = 0.5
     is_time_based: Optional[bool] = None
     chart_type: str
     data_connection_id: UUID = None
@@ -833,8 +833,8 @@ class SaveChartRequest(BaseModel):
         title: Title of the chart
         query: SQL query for the chart
         report: Optional report context for the chart
-        type: Type of the chart
-        relevance: Optional relevance score or description
+        type: Type of the chart (e.g., 'insight', 'metric', 'analysis')
+        relevance: Relevance score (0.0 to 1.0)
         is_time_based: Optional flag indicating if the chart is time-based
         chart_type: Visual type of the chart
     """
@@ -842,8 +842,8 @@ class SaveChartRequest(BaseModel):
     title: str
     query: str
     report: Optional[str] = None
-    type: str
-    relevance: Optional[str] = None
+    type: Optional[str] = "insight"
+    relevance: float = 0.5
     is_time_based: Optional[bool] = None
     chart_type: str
     data_connection_id: UUID = None
@@ -857,18 +857,19 @@ class SaveChartToDashboardRequest(BaseModel):
         title: Title of the chart
         query: SQL query for the chart
         report: Optional report context for the chart
-        type: Type of the chart
-        relevance: Optional relevance score or description
+        type: Type of the chart (e.g., 'insight', 'metric', 'analysis')
+        relevance: Relevance score (0.0 to 1.0)
         is_time_based: Optional flag indicating if the chart is time-based
         chart_type: Visual type of the chart
         dashboard_id: UUID of the dashboard to save the chart to
+        data_connection_id: UUID of the database connection
     """
 
     title: str
     query: str
     report: Optional[str] = None
-    type: str
-    relevance: Optional[str] = None
+    type: Optional[str] = "insight"
+    relevance: float = 0.5
     is_time_based: Optional[bool] = None
     chart_type: str
     dashboard_id: UUID
