@@ -729,3 +729,80 @@ async def get_favorites_service(
         }
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+async def get_dashboard_stats_service(
+    db: Session,
+    token_payload: dict
+):
+    """
+    Retrieves dashboard statistics for the current user including:
+    - Total projects user is part of
+    - Active dashboards user has access to
+    - Total data sources across user's projects
+    - Total team members across user's projects
+    
+    Args:
+        db (Session): The database session.
+        token_payload (dict): The token payload containing the current user's info.
+        
+    Returns:
+        dict: The response containing dashboard statistics.
+        
+    Raises:
+        HTTPException: If an error occurs during retrieval.
+    """
+    try:
+        user_id_str = token_payload.get("sub")
+        if not user_id_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, 
+                detail="Invalid token payload"
+            )
+        
+        user_id = UUID(user_id_str)
+        
+        # Get all projects the user is part of
+        user_projects = db.query(UserProjectRoleModel).filter(
+            UserProjectRoleModel.user_id == user_id
+        ).all()
+        
+        project_ids = [up.project_id for up in user_projects]
+        total_projects = len(project_ids)
+        
+        # Get active dashboards for the user
+        # Count dashboards the user has access to via UserDashboardModel
+        active_dashboards_count = db.query(UserDashboardModel).filter(
+            UserDashboardModel.user_id == user_id
+        ).count()
+        
+        # Get total data sources (database connections) across all user's projects
+        total_data_sources = 0
+        if project_ids:
+            from app.models.schema_models import DatabaseConnectionModel
+            total_data_sources = db.query(DatabaseConnectionModel).filter(
+                DatabaseConnectionModel.project_id.in_(project_ids)
+            ).count()
+        
+        # Get total team members across all user's projects
+        # Count distinct users across all projects the user is part of
+        total_team_members = 0
+        if project_ids:
+            total_team_members = db.query(UserProjectRoleModel.user_id).filter(
+                UserProjectRoleModel.project_id.in_(project_ids)
+            ).distinct().count()
+        
+        return {
+            "total_projects": total_projects,
+            "active_dashboards": active_dashboards_count,
+            "total_data_sources": total_data_sources,
+            "total_team_members": total_team_members
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving dashboard statistics: {str(e)}"
+        ) from e

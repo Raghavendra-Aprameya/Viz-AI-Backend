@@ -3,13 +3,12 @@ This module contains a decorator for checking access to permforming operations.
 """
 
 from functools import wraps
-import imp
+
 import inspect
 import logging
 from uuid import UUID
 from typing import Optional
 
-from sqlalchemy import true
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -19,12 +18,9 @@ from app.models.schema_models import (
     UserProjectRoleModel,
     RolePermissionModel,
     UserModel,
-    RoleTableNameModel
 )
 
-from app.schemas import (
-    ValidateChartAccessRequest
-)
+from app.schemas import ValidateChartAccessRequest
 
 from app.utils.constants import Permissions as Permission
 
@@ -36,7 +32,7 @@ async def check_access(
     db: Session,
     token_payload: dict,
     project_id: Optional[UUID] = None,
-    permission_key: str = None
+    permission_key: str = None,
 ):
     """
     Check if a user has access to a project and a specific permission.
@@ -51,82 +47,99 @@ async def check_access(
     try:
         if not token_payload:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing token payload"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token payload"
             )
 
         user_id_str = token_payload.get("sub")
         if not user_id_str:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
             )
 
         try:
             user_id = UUID(user_id_str)
-        except ValueError:
+        except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid UUID format in token"
-            )
+                detail="Invalid UUID format in token",
+            ) from exc
 
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         if user.is_super:
             return True
 
         # Special case: CREATE_PROJECT or DELETE_PROJECT permission
-        if permission_key in [Permission.CREATE_PROJECT.value, Permission.DELETE_PROJECT.value,Permission.DELETE_DATASOURCE.value,Permission.EDIT_DATASOURCE.value]:
-            roles = db.query(UserProjectRoleModel).filter(
-                UserProjectRoleModel.user_id == user_id
-            ).all()
+        if permission_key in [
+            Permission.CREATE_PROJECT.value,
+            Permission.DELETE_PROJECT.value,
+            Permission.DELETE_DATASOURCE.value,
+            Permission.EDIT_DATASOURCE.value,
+        ]:
+            roles = (
+                db.query(UserProjectRoleModel)
+                .filter(UserProjectRoleModel.user_id == user_id)
+                .all()
+            )
 
             if not roles:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User does not have access to create projects"
+                    detail="User does not have access to create projects",
                 )
 
             for role in roles:
-                has_permission = db.query(RolePermissionModel).filter(
-                    RolePermissionModel.role_id == role.role_id,
-                    RolePermissionModel.permission_id == Permission.CREATE_PROJECT.value
-                ).first()
+                has_permission = (
+                    db.query(RolePermissionModel)
+                    .filter(
+                        RolePermissionModel.role_id == role.role_id,
+                        RolePermissionModel.permission_id
+                        == Permission.CREATE_PROJECT.value,
+                    )
+                    .first()
+                )
 
                 if has_permission:
                     return True
 
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="User does not have permission to create projects"
+                detail="User does not have permission to create projects",
             )
 
         # General permissions: require project_id and check specific permission
-        role = db.query(UserProjectRoleModel).filter(
-            UserProjectRoleModel.user_id == user_id,
-            UserProjectRoleModel.project_id == project_id
-        ).first()
+        role = (
+            db.query(UserProjectRoleModel)
+            .filter(
+                UserProjectRoleModel.user_id == user_id,
+                UserProjectRoleModel.project_id == project_id,
+            )
+            .first()
+        )
 
         if not role:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="User does not have access to this project"
+                detail="User does not have access to this project",
             )
 
-        has_permission = db.query(RolePermissionModel).filter(
-            RolePermissionModel.role_id == role.role_id,
-            RolePermissionModel.permission_id == Permission.ADD_DATASOURCE.value
-        ).first()
+        has_permission = (
+            db.query(RolePermissionModel)
+            .filter(
+                RolePermissionModel.role_id == role.role_id,
+                RolePermissionModel.permission_id == Permission.ADD_DATASOURCE.value,
+            )
+            .first()
+        )
 
         if not has_permission:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="User does not have access to perform this operation"
+                detail="User does not have access to perform this operation",
             )
 
         return True
@@ -136,9 +149,9 @@ async def check_access(
     except Exception as e:
         logger.exception("Error in access control")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
+
 
 def require_permission(permission_key: str):
     """
@@ -148,6 +161,7 @@ def require_permission(permission_key: str):
     Returns:
         Callable: The decorated function.
     """
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -162,13 +176,13 @@ def require_permission(permission_key: str):
                 if not db:
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Database session not provided"
+                        detail="Database session not provided",
                     )
 
                 if not token_payload:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Authentication required"
+                        detail="Authentication required",
                     )
 
                 if permission_key == Permission.CREATE_PROJECT.value:
@@ -184,23 +198,24 @@ def require_permission(permission_key: str):
                 logger.exception("Error during permission check")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Authorization error: {str(e)}"
+                    detail=f"Authorization error: {str(e)}",
                 ) from e
 
         return wrapper
 
     return decorator
 
+
 # def validate_chart_access(data:ValidateChartAccessRequest,db:Session,user_id:dict):
 #     """
-#     Validate access to a chart.     
+#     Validate access to a chart.
 #     """
 #     try:
 #         user_id = UUID(user_id.get("sub"))
 #         if not user_id:
 #             raise HTTPException(
 #                 status_code=status.HTTP_401_UNAUTHORIZED,
-#                 detail="Invalid token payload"  
+#                 detail="Invalid token payload"
 #             )
 #         for table_name in data.table_names:
 #             blacklist_data = db.query(BlacklistModel).filter(
@@ -210,7 +225,7 @@ def require_permission(permission_key: str):
 #             if blacklist_data:
 #                 raise HTTPException(
 #                     status_code=status.HTTP_403_FORBIDDEN,
-#                     detail="Access denied to this table"        
+#                     detail="Access denied to this table"
 #                 )
 #         return true
 #     except Exception as e:
@@ -225,22 +240,26 @@ def validate_chart_access(data: ValidateChartAccessRequest, db: Session, user_id
     try:
         # Ensure user_id is valid and properly converted to UUID from the token
         user_id = UUID(user_id.get("sub"))
-        
+
         # Loop through all table names provided in the request data
         for table_name in data.table_names:
             # Query the blacklist to check if the user has been denied access to this table
-            blacklist_data = db.query(RoleTableNameModel).filter(
-                RoleTableNameModel.role_id == data.role_id,
-                RoleTableNameModel.table_name == table_name
-            ).first()
+            blacklist_data = (
+                db.query(RoleTableNameModel)
+                .filter(
+                    RoleTableNameModel.role_id == data.role_id,
+                    RoleTableNameModel.table_name == table_name,
+                )
+                .first()
+            )
 
             # If there is an entry in the blacklist for this table, deny access
             if blacklist_data:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied to table: {table_name}"
+                    detail=f"Access denied to table: {table_name}",
                 )
-        
+
         # If no blacklist entries are found, return True indicating access is validated
         return True
 
@@ -251,6 +270,5 @@ def validate_chart_access(data: ValidateChartAccessRequest, db: Session, user_id
     except Exception as e:
         # Handle unexpected errors by raising a 400 error with the exception message
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error occurred: {str(e)}"
-        )
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error occurred: {str(e)}"
+        ) from e
