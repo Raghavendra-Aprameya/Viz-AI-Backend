@@ -941,6 +941,32 @@ async def delete_chart_from_dashboard_service(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _serialize_favorite_charts(user_chart_records):
+    """Serialize a list of UserChartModel records into API response format."""
+
+    serialized_charts = []
+
+    for user_chart in user_chart_records:
+        chart = user_chart.chart
+        serialized_charts.append(
+            {
+                "id": str(user_chart.chart_id),
+                "title": chart.title if chart else None,
+                "created_at": chart.created_at if chart else None,
+                "connection_id": (
+                    str(user_chart.database_connection_id)
+                    if getattr(user_chart, "database_connection_id", None)
+                    else None
+                ),
+                "query": chart.query if chart else None,
+                "chart_type": chart.chart_type if chart else None,
+                "is_favorite": user_chart.is_favorite,
+            }
+        )
+
+    return serialized_charts
+
+
 async def update_favorite_chart_service(
     data: UpdateFavoriteChartRequest, db: Session, token_payload: dict
 ):
@@ -1007,22 +1033,14 @@ async def get_favorite_charts_service(db: Session, token_payload: dict):
         favorite_charts = (
             db.query(UserChartModel)
             .filter(
-                UserChartModel.user_id == user_id, UserChartModel.is_favorite is True
+                UserChartModel.user_id == user_id, UserChartModel.is_favorite == True
             )
             .all()
         )
+
         return {
             "message": "Favorite charts retrieved successfully",
-            "favorite_charts": [
-                {
-                    "id": str(chart.chart_id),
-                    "title": chart.chart.title,
-                    "created_at": chart.chart.created_at,
-                    "connection_id": chart.data_connection_id,
-                    "query": chart.chart.query,
-                }
-                for chart in favorite_charts
-            ],
+            "favorite_charts": _serialize_favorite_charts(favorite_charts),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1052,7 +1070,7 @@ async def get_pinned_charts_count_service(db: Session, token_payload: dict):
             db.query(UserChartModel)
             .filter(
                 UserChartModel.user_id == user_id,
-                UserChartModel.is_favorite is True
+                UserChartModel.is_favorite == True
             )
             .count()
         )
@@ -1061,6 +1079,60 @@ async def get_pinned_charts_count_service(db: Session, token_payload: dict):
             "message": "Pinned charts count retrieved successfully",
             "pinned_charts_count": pinned_charts_count
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+async def get_user_favorite_charts_service(
+     db: Session, token_payload: dict
+):
+    """Retrieve favorite charts for a specific user, with authorization checks."""
+
+    try:
+        requester_id_str = token_payload.get("sub")
+        if not requester_id_str:
+            raise ValueError("User ID not found in token payload")
+        target_user_id = UUID(token_payload.get("sub"))
+
+        requester_id = UUID(requester_id_str)
+
+        if requester_id != target_user_id:
+            requester = (
+                db.query(UserModel).filter(UserModel.id == requester_id).first()
+            )
+
+            if not requester:
+                raise HTTPException(status_code=404, detail="Requesting user not found")
+
+            if not requester.is_super:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not authorized to view favorite charts for this user",
+                )
+
+        target_user = (
+            db.query(UserModel).filter(UserModel.id == target_user_id).first()
+        )
+
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        favorite_charts = (
+            db.query(UserChartModel)
+            .filter(
+                UserChartModel.user_id == target_user_id,
+                UserChartModel.is_favorite == True,
+            )
+            .all()
+        )
+
+        return {
+            "message": "Favorite charts retrieved successfully",
+            "favorite_charts": _serialize_favorite_charts(favorite_charts),
+            "user_id": str(target_user_id),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

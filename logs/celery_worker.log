@@ -2,3 +2,92 @@
 [2025-11-05 17:01:31,010: INFO/MainProcess] mingle: searching for neighbors
 [2025-11-05 17:01:32,019: INFO/MainProcess] mingle: all alone
 [2025-11-05 17:01:32,036: INFO/MainProcess] celery@Aprameyas-MacBook-Air.local ready.
+[2025-11-06 05:39:04,343: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[210febe2-ba07-449f-8a74-dc86f2aaae52] received
+[2025-11-06 05:39:04,344: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-06 05:39:11,029: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-06 05:39:11,307: INFO/MainProcess] No connections found for project project1
+[2025-11-06 05:39:11,307: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-06 05:39:11,572: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-06 05:39:11,572: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-06 05:39:11,836: INFO/MainProcess] No connections found for project projectC
+[2025-11-06 05:39:11,836: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-06 05:39:17,830: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-06 05:39:22,713: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-06 06:02:42,468: WARNING/MainProcess] ❌ My Postgres DBB: Connection failed - (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: 
+[2025-11-06 06:19:01,289: ERROR/MainProcess] ❌ Error in check_all_database_connections task: (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+[SQL: UPDATE database_connection SET last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
+[parameters: [{'last_checked': datetime.datetime(2025, 11, 6, 0, 9, 17, 830617), 'database_connection_id': UUID('4c7fbf8b-8d20-498b-9c4d-fe1ecb2f0a3a')}, {'last_checked': datetime.datetime(2025, 11, 6, 0, 9, 22, 714335), 'database_connection_id': UUID('622ad42a-03f3-4093-bc6d-e3b52906c03e')}, {'last_checked': datetime.datetime(2025, 11, 6, 0, 9, 12, 363921), 'database_connection_id': UUID('b063758c-c577-4b51-a2a3-37e14509e1dc')}]]
+(Background on this error at: https://sqlalche.me/e/20/4xp6)
+[2025-11-06 06:19:01,297: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[210febe2-ba07-449f-8a74-dc86f2aaae52] succeeded in 87.44181316699996s: {'status': 'error', 'message': 'Failed to check database connections: (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+[SQL: UPDATE database_connection SET last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
+[parameters: [{\'last_checked\': datetime.datetime(2025, 11, 6, 0, 9, 17, 830617), \'database_connection_id\': UUID(\'4c7fbf8b-8d20-498b-9c4d-fe1ecb2f0a3a\')}, {\'last_checked\': datetime.datetime(2025, 11, 6, 0, 9, 22, 714335), \'database_connection_id\': UUID(\'622ad42a-03f3-4093-bc6d-e3b52906c03e\')}, {\'last_checked\': datetime.datetime(2025, 11, 6, 0, 9, 12, 363921), \'database_connection_id\': UUID(\'b063758c-c577-4b51-a2a3-37e14509e1dc\')}]]
+(Background on this error at: https://sqlalche.me/e/20/4xp6)', 'timestamp': '2025-11-06T00:49:01.290550'}
+[2025-11-07 09:03:39,832: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[0cdcfe24-bc74-4c44-9436-26e17422a34a] received
+[2025-11-07 09:03:39,841: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-07 09:03:39,862: ERROR/MainProcess] ❌ Error in check_all_database_connections task: (psycopg2.OperationalError) could not translate host name "ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech" to address: nodename nor servname provided, or not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2025-11-07 09:03:39,866: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[0cdcfe24-bc74-4c44-9436-26e17422a34a] succeeded in 0.03041958399990108s: {'status': 'error', 'message': 'Failed to check database connections: (psycopg2.OperationalError) could not translate host name "ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech" to address: nodename nor servname provided, or not known
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)', 'timestamp': '2025-11-07T03:33:39.862474'}
+[2025-11-08 05:41:46,479: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[61d00e8e-a48d-435f-b2f5-6683d19231c7] received
+[2025-11-08 05:41:46,482: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-08 05:41:49,982: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-08 05:41:50,282: INFO/MainProcess] No connections found for project project1
+[2025-11-08 05:41:50,282: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-08 05:41:50,557: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-08 05:41:50,558: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-08 05:41:50,832: INFO/MainProcess] No connections found for project projectC
+[2025-11-08 05:41:50,833: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-08 05:41:56,585: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-08 06:13:24,607: WARNING/MainProcess] ❌ My Postgres DB2: Connection failed - (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: 
+[2025-11-08 06:13:30,208: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-08 06:29:37,715: ERROR/MainProcess] ❌ Error in check_all_database_connections task: (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+[SQL: UPDATE database_connection SET status=%(status)s, last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
+[parameters: [{'status': False, 'last_checked': datetime.datetime(2025, 11, 8, 0, 11, 56, 586765), 'database_connection_id': UUID('4c7fbf8b-8d20-498b-9c4d-fe1ecb2f0a3a')}, {'status': True, 'last_checked': datetime.datetime(2025, 11, 8, 0, 43, 24, 608611), 'database_connection_id': UUID('622ad42a-03f3-4093-bc6d-e3b52906c03e')}]]
+(Background on this error at: https://sqlalche.me/e/20/4xp6)
+[2025-11-08 06:29:37,721: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[61d00e8e-a48d-435f-b2f5-6683d19231c7] succeeded in 108.1765595830002s: {'status': 'error', 'message': 'Failed to check database connections: (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+[SQL: UPDATE database_connection SET status=%(status)s, last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
+[parameters: [{\'status\': False, \'last_checked\': datetime.datetime(2025, 11, 8, 0, 11, 56, 586765), \'database_connection_id\': UUID(\'4c7fbf8b-8d20-498b-9c4d-fe1ecb2f0a3a\')}, {\'status\': True, \'last_checked\': datetime.datetime(2025, 11, 8, 0, 43, 24, 608611), \'database_connection_id\': UUID(\'622ad42a-03f3-4093-bc6d-e3b52906c03e\')}]]
+(Background on this error at: https://sqlalche.me/e/20/4xp6)', 'timestamp': '2025-11-08T00:59:37.715896'}
+[2025-11-09 05:42:23,882: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[59f2af1c-3b93-455f-9783-7a188e1bc2d9] received
+[2025-11-09 05:42:23,885: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-09 05:42:26,319: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-09 05:42:26,600: INFO/MainProcess] No connections found for project project1
+[2025-11-09 05:42:26,600: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-09 05:42:26,852: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-09 05:42:26,853: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-09 05:42:27,103: INFO/MainProcess] No connections found for project projectC
+[2025-11-09 05:42:27,104: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-09 05:42:32,585: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-09 05:42:37,389: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-09 05:42:42,250: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-09 05:42:44,047: INFO/MainProcess] Checking connections for project: yrs (72489c07-b88f-4212-991d-87f7e43a8798)
+[2025-11-09 05:42:44,299: INFO/MainProcess] No connections found for project yrs
+[2025-11-09 05:42:44,550: INFO/MainProcess] Checking connections for project: projectD (62abe5d2-71fc-4728-a6f9-d026ec669d87)
+[2025-11-09 06:14:30,986: WARNING/MainProcess] ❌ My test: Connection failed - (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: 
+[2025-11-09 06:14:35,567: INFO/MainProcess] ✅ GLR: Connection successful
+[2025-11-09 06:14:40,623: INFO/MainProcess] ✅ My: Connection successful
+[2025-11-09 06:31:57,692: ERROR/MainProcess] ❌ Error in check_all_database_connections task: (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+[SQL: UPDATE database_connection SET status=%(status)s, last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
+[parameters: {'status': False, 'last_checked': datetime.datetime(2025, 11, 9, 0, 12, 45, 481134), 'database_connection_id': UUID('7d2d2308-b229-44ac-81c8-8b8081e3fe3c')}]
+(Background on this error at: https://sqlalche.me/e/20/4xp6)
+[2025-11-09 06:31:57,697: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[59f2af1c-3b93-455f-9783-7a188e1bc2d9] succeeded in 130.6252624580011s: {'status': 'error', 'message': 'Failed to check database connections: (psycopg2.DatabaseError) could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+[SQL: UPDATE database_connection SET status=%(status)s, last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
+[parameters: {\'status\': False, \'last_checked\': datetime.datetime(2025, 11, 9, 0, 12, 45, 481134), \'database_connection_id\': UUID(\'7d2d2308-b229-44ac-81c8-8b8081e3fe3c\')}]
+(Background on this error at: https://sqlalche.me/e/20/4xp6)', 'timestamp': '2025-11-09T01:01:57.693130'}

@@ -1,1 +1,5 @@
 [2025-11-05 17:01:30,963: INFO/MainProcess] beat: Starting...
+[2025-11-06 05:39:04,324: INFO/MainProcess] Scheduler: Sending due task check-database-connections-daily (app.utils.tasks.check_all_database_connections)
+[2025-11-07 09:03:39,791: INFO/MainProcess] Scheduler: Sending due task check-database-connections-daily (app.utils.tasks.check_all_database_connections)
+[2025-11-08 05:41:46,465: INFO/MainProcess] Scheduler: Sending due task check-database-connections-daily (app.utils.tasks.check_all_database_connections)
+[2025-11-09 05:42:23,868: INFO/MainProcess] Scheduler: Sending due task check-database-connections-daily (app.utils.tasks.check_all_database_connections)

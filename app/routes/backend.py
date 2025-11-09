@@ -121,6 +121,7 @@ from app.services.chart import (
     delete_chart_from_dashboard_service,
     update_favorite_chart_service,
     get_favorite_charts_service,
+    get_user_favorite_charts_service,
     get_pinned_charts_count_service,
     filter_charts_service,
 )
@@ -1191,6 +1192,19 @@ async def get_favorite_charts(
         list: A list of favorite charts for the authenticated user.
     """
     return await get_favorite_charts_service(db, token_payload)
+
+
+@backend_router.get(
+    "/users/charts/favorite", status_code=status.HTTP_200_OK
+)
+async def get_user_favorite_charts(
+    
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """Retrieve favorite charts for the specified user."""
+
+    return await get_user_favorite_charts_service(db, token_payload)
 
 
 @backend_router.get(
