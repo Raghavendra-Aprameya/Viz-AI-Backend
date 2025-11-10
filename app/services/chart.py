@@ -178,6 +178,7 @@ async def generate_charts_service(
                     else None
                 ),
                 "data": chart.data if hasattr(chart, "data") else None,
+                "status": getattr(chart, "status", None),
                 # Add other relevant chart fields here
             }
             for chart in chart_models
@@ -500,6 +501,7 @@ async def update_request_access_service(
                 chart_type=access_request.chart_type,
                 created_by=access_request.created_by,
                 is_user_generated=access_request.is_user_generated,
+                status="draft",
             )
 
             db.add(new_chart)
@@ -657,6 +659,7 @@ async def get_charts_service(db: Session, token_payload: dict):
                     "type": chart.chart.chart_type,
                     "isFavorite": chart.is_favorite,
                     "datasourceConnectionId": chart.database_connection_id,
+                    "status": chart.chart.status if hasattr(chart.chart, "status") else None,
                 }
                 for chart in user_charts
             ],
@@ -736,6 +739,12 @@ async def save_chart_service(
             can_write = True
             can_delete = True
 
+        status_value = (
+            data.status.value
+            if hasattr(data, "status") and data.status is not None
+            else "draft"
+        )
+
         # Create the new chart
         new_chart = ChartModel(
             title=data.title,
@@ -755,6 +764,7 @@ async def save_chart_service(
             chart_type=data.chart_type,
             created_by=user_id,
             is_user_generated=True,
+            status=status_value,
         )
         db.add(new_chart)
         db.flush()  # Get the ID without committing
@@ -804,6 +814,11 @@ async def save_chart_to_dashboard_service(
         if not dashboard:
             raise HTTPException(status_code=404, detail="Dashboard not found")
         # Check if user has permission to write to the dashboard
+        status_value = (
+            data.status.value
+            if hasattr(data, "status") and data.status is not None
+            else "published"
+        )
         new_chart = ChartModel(
             title=data.title,
             query=data.query,
@@ -826,6 +841,7 @@ async def save_chart_to_dashboard_service(
             chart_type=data.chart_type,
             created_by=user_id,
             is_user_generated=True,
+            status=status_value,
         )
         db.add(new_chart)
         db.flush()
@@ -887,6 +903,7 @@ async def get_charts_for_dashboard_service(
                     "title": chart.chart.title,
                     "created_at": chart.chart.created_at,
                     "connection_id": chart.database_connection_id,
+                    "status": chart.chart.status if hasattr(chart.chart, "status") else None,
                 }
                 for chart in charts
             ],
@@ -924,7 +941,7 @@ async def delete_chart_from_dashboard_service(
         if not dashboard:
             raise HTTPException(status_code=404, detail="Dashboard not found")
 
-        chart = (
+        dashboard_chart = (
             db.query(DashboardChartsModel)
             .filter(
                 DashboardChartsModel.dashboard_id == dashboard_id,
@@ -932,9 +949,21 @@ async def delete_chart_from_dashboard_service(
             )
             .first()
         )
-        if not chart:
+        if not dashboard_chart:
             raise HTTPException(status_code=404, detail="Chart not found")
-        db.delete(chart)
+        chart_record = (
+            db.query(ChartModel).filter(ChartModel.id == chart_id).first()
+        )
+        db.delete(dashboard_chart)
+        db.flush()
+        if chart_record:
+            remaining = (
+                db.query(DashboardChartsModel)
+                .filter(DashboardChartsModel.chart_id == chart_id)
+                .count()
+            )
+            if remaining == 0:
+                chart_record.status = "draft"
         db.commit()
         return {"message": "Chart deleted successfully"}
     except Exception as e:
@@ -961,6 +990,7 @@ def _serialize_favorite_charts(user_chart_records):
                 "query": chart.query if chart else None,
                 "chart_type": chart.chart_type if chart else None,
                 "is_favorite": user_chart.is_favorite,
+                "status": getattr(chart, "status", None) if chart else None,
             }
         )
 
@@ -1208,11 +1238,16 @@ async def filter_charts_service(
                 if not in_dashboard:
                     continue
             
+            # Determine chart status using stored value with fallback
+            chart_status = (
+                chart.status.lower()
+                if getattr(chart, "status", None)
+                else ("published" if is_published else "draft")
+            )
+
             # Apply status filter
             if status:
-                if status.lower() == "draft" and is_published:
-                    continue
-                elif status.lower() == "published" and not is_published:
+                if chart_status != status.lower():
                     continue
             # If status is None/omitted, include all charts
             
@@ -1229,9 +1264,6 @@ async def filter_charts_service(
                         "id": str(dashboard.id),
                         "title": dashboard.title
                     })
-            
-            # Determine chart status
-            chart_status = "published" if is_published else "draft"
             
             # Get database connection info
             db_connection = (

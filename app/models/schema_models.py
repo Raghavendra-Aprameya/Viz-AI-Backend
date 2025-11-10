@@ -39,6 +39,9 @@ from sqlalchemy.orm import relationship
 from app.core.base import Base
 
 
+ChartStatusEnum = SqlEnum("draft", "published", name="chart_status")
+
+
 class UserModel(Base):
     """
     Represents a user in the system.
@@ -196,6 +199,8 @@ class ProjectModel(Base):
     name = Column(String, nullable=False)
     super_user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"))
     description = Column(Text)
+    kpi_info = Column(String, nullable=True)
+    prod_desc = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     project_roles = relationship(
@@ -291,6 +296,7 @@ class DashboardModel(Base):
     title = Column(String, nullable=False)
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
     description = Column(Text)
+    kpi_info = Column(String, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     user = relationship("UserModel", back_populates="dashboards")
     project = relationship("ProjectModel", back_populates="dashboards")
@@ -323,6 +329,7 @@ class ChartModel(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     is_user_generated = Column(Boolean, nullable=False, default=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
+    status = Column(ChartStatusEnum, nullable=False, server_default="draft")
 
     user = relationship("UserModel", back_populates="charts")
     users = relationship(

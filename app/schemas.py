@@ -127,6 +127,8 @@ class ProjectRequest(BaseModel):
 
     name: str
     description: Optional[str] = None
+    kpi_info: Optional[str] = None
+    prod_desc: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -148,6 +150,8 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str] = None
+    kpi_info: Optional[str] = None
+    prod_desc: Optional[str] = None
     super_user_id: UUID
     created_at: datetime
 
@@ -345,6 +349,7 @@ class CreateDashboardRequest(BaseModel):
 
     title: str
     description: Optional[str] = None
+    kpi_info: Optional[str] = None
 
 
 class DashboardResponse(BaseModel):
@@ -362,6 +367,7 @@ class DashboardResponse(BaseModel):
     id: UUID
     title: str
     description: Optional[str] = None
+    kpi_info: Optional[str] = None
     project_id: UUID
     created_by: UUID
 
@@ -579,6 +585,8 @@ class UpdateProjectRequest(BaseModel):
 
     name: Optional[str] = None
     description: Optional[str] = None
+    kpi_info: Optional[str] = None
+    prod_desc: Optional[str] = None
 
 
 class UpdateDashboardRequest(BaseModel):
@@ -592,6 +600,7 @@ class UpdateDashboardRequest(BaseModel):
 
     title: Optional[str] = None
     description: Optional[str] = None
+    kpi_info: Optional[str] = None
 
 
 class UpdateRoleRequest(BaseModel):
@@ -814,6 +823,13 @@ class AccessStatus(str, Enum):
     REJECTED = "REJECTED"
 
 
+class ChartStatus(str, Enum):
+    """Enumeration of possible chart publication statuses."""
+
+    DRAFT = "draft"
+    PUBLISHED = "published"
+
+
 class UpdateRequestAccess(BaseModel):
     """
     Request model for updating the status of an access request.
@@ -846,6 +862,7 @@ class SaveChartRequest(BaseModel):
     relevance: float = 0.5
     is_time_based: Optional[bool] = None
     chart_type: str
+    status: ChartStatus = ChartStatus.DRAFT
     data_connection_id: UUID = None
 
 
@@ -872,6 +889,7 @@ class SaveChartToDashboardRequest(BaseModel):
     relevance: Optional[float] = None
     is_time_based: Optional[bool] = None
     chart_type: str
+    status: ChartStatus = ChartStatus.PUBLISHED
     dashboard_id: UUID
     data_connection_id: UUID
 

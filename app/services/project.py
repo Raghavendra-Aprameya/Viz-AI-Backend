@@ -82,7 +82,11 @@ async def create_project(
             )
         # Create new project
         new_project = ProjectModel(
-            name=project.name, description=project.description, super_user_id=user_id
+            name=project.name,
+            description=project.description,
+            kpi_info=project.kpi_info,
+            prod_desc=project.prod_desc,
+            super_user_id=user_id,
         )
 
         db.add(new_project)
@@ -108,6 +112,8 @@ async def create_project(
                 "id": new_project.id,
                 "name": new_project.name,
                 "description": new_project.description,
+                "kpi_info": new_project.kpi_info,
+                "prod_desc": new_project.prod_desc,
                 "super_user_id": new_project.super_user_id,
                 "created_at": new_project.created_at,
             },
@@ -229,6 +235,8 @@ async def get_projects(
                     "id": str(project.id),
                     "name": project.name,
                     "description": project.description,
+                    "kpi_info": project.kpi_info,
+                    "prod_desc": project.prod_desc,
                     "super_user_id": str(project.super_user_id),
                     "created_at": project.created_at.isoformat(),
                     "created_at_relative": time_ago_str,
@@ -372,6 +380,7 @@ async def create_dashboard(
         new_dashboard = DashboardModel(
             title=data.title,
             description=data.description,
+            kpi_info=data.kpi_info,
             project_id=project_id,
             created_by=user_id,
         )
@@ -529,6 +538,7 @@ async def list_users_all_dashboard(
                     "id": dashboard.id,
                     "title": dashboard.title,
                     "description": dashboard.description,
+                    "kpi_info": dashboard.kpi_info,
                     "project_id": dashboard.project_id,
                     "created_by": dashboard.created_by,
                     "is_favorite": user_dashboard.is_favorite,
@@ -639,6 +649,10 @@ async def update_project(
             project.name = data.name
         if data.description is not None:
             project.description = data.description
+        if data.kpi_info is not None:
+            project.kpi_info = data.kpi_info
+        if data.prod_desc is not None:
+            project.prod_desc = data.prod_desc
 
         db.commit()
         db.refresh(project)
@@ -745,6 +759,8 @@ async def update_dashboard(
             dashboard.title = data.title
         if data.description is not None:
             dashboard.description = data.description
+        if data.kpi_info is not None:
+            dashboard.kpi_info = data.kpi_info
 
         db.commit()
         db.refresh(dashboard)
