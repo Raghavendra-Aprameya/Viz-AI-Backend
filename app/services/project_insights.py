@@ -10,6 +10,7 @@ import logging
 from typing import Dict, List, Any
 from uuid import UUID
 
+import redis
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 import google.generativeai as genai
@@ -30,6 +31,26 @@ from app.services.business_insights import (
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+REDIS_TTL_SECONDS = 3600  # 1 hour
+REDIS_PREFIX = "project_business_insights"
+redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+
+
+def _make_cache_key(project_id: UUID) -> str:
+    """Construct Redis cache key for project-level insights."""
+    return f"{REDIS_PREFIX}:{str(project_id)}"
+
+
+def _serialize_for_cache(payload: Dict[str, Any]) -> str:
+    """Serialize payload into JSON, coercing non-JSON types to string."""
+
+    def default_serializer(value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    return json.dumps(payload, default=default_serializer)
 
 
 async def generate_project_insights_service(
@@ -88,6 +109,20 @@ async def generate_project_insights_service(
                 detail="User does not have access to this project"
             )
         
+        cache_key = _make_cache_key(project_id)
+        try:
+            cached_insights = redis_client.get(cache_key)
+            if cached_insights:
+                logger.info(
+                    "Returning cached project business insights for project %s",
+                    project_id,
+                )
+                return json.loads(cached_insights)
+        except redis.RedisError as redis_err:
+            logger.warning(
+                "Redis unavailable while fetching project insights cache: %s", redis_err
+            )
+
         logger.info(f"Generating project-wide insights for project: {project.name}")
         
         # Get all database connections for this project
@@ -173,7 +208,7 @@ async def generate_project_insights_service(
             database_insights=all_database_insights,
         )
         
-        return {
+        result = {
             "message": "Project-wide business insights generated successfully",
             "project_id": str(project_id),
             "project_name": project.name,
@@ -182,6 +217,22 @@ async def generate_project_insights_service(
             "database_insights": all_database_insights,
             "consolidated_insights": consolidated_insights
         }
+
+        try:
+            redis_client.setex(cache_key, REDIS_TTL_SECONDS, _serialize_for_cache(result))
+            logger.info(
+                "Stored project business insights in cache for project %s with TTL %s seconds",
+                project_id,
+                REDIS_TTL_SECONDS,
+            )
+        except redis.RedisError as redis_err:
+            logger.warning(
+                "Failed to cache project business insights for project %s: %s",
+                project_id,
+                redis_err,
+            )
+
+        return result
         
     except HTTPException:
         raise

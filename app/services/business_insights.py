@@ -16,6 +16,7 @@ import logging
 from typing import Dict, List, Any
 from uuid import UUID
 
+import redis
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
@@ -31,6 +32,9 @@ from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+REDIS_TTL_SECONDS = 3600  # 1 hour
+redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
 
 async def generate_business_insights_service(
@@ -95,7 +99,21 @@ async def generate_business_insights_service(
                 detail="User does not have access to this project"
             )
         
-        logger.info(f"Generating business insights for database: {db_connection.connection_name}")
+        cache_key = f"business_insights:{db_connection.project_id}"
+        try:
+            cached_insights = redis_client.get(cache_key)
+            if cached_insights:
+                logger.info(
+                    "Returning cached business insights for project %s",
+                    db_connection.project_id,
+                )
+                return json.loads(cached_insights)
+        except redis.RedisError as redis_err:
+            logger.warning("Redis unavailable, proceeding without cache: %s", redis_err)
+
+        logger.info(
+            "Generating business insights for database: %s", db_connection.connection_name
+        )
         
         # Step 1: Get database schema from stored schema (already extracted during connection creation)
         if not db_connection.db_schema:
@@ -135,7 +153,7 @@ async def generate_business_insights_service(
             query_results=query_results,
         )
         
-        return {
+        result = {
             "message": "Business insights generated successfully",
             "database_name": db_connection.connection_name,
             "database_type": db_connection.db_type or "postgres",
@@ -144,6 +162,18 @@ async def generate_business_insights_service(
             "query_results": query_results,
             "insights": business_insights,
         }
+        
+        try:
+            redis_client.set(cache_key, json.dumps(result), ex=REDIS_TTL_SECONDS)
+            logger.info(
+                "Stored business insights in cache for project %s with TTL %s seconds",
+                db_connection.project_id,
+                REDIS_TTL_SECONDS,
+            )
+        except redis.RedisError as redis_err:
+            logger.warning("Failed to cache business insights: %s", redis_err)
+
+        return result
         
     except HTTPException:
         raise

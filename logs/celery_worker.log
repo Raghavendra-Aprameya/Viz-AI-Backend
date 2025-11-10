@@ -91,3 +91,25 @@ SSL SYSCALL error: Operation timed out
 [SQL: UPDATE database_connection SET status=%(status)s, last_checked=%(last_checked)s WHERE database_connection.id = %(database_connection_id)s::UUID]
 [parameters: {\'status\': False, \'last_checked\': datetime.datetime(2025, 11, 9, 0, 12, 45, 481134), \'database_connection_id\': UUID(\'7d2d2308-b229-44ac-81c8-8b8081e3fe3c\')}]
 (Background on this error at: https://sqlalche.me/e/20/4xp6)', 'timestamp': '2025-11-09T01:01:57.693130'}
+[2025-11-10 07:15:35,619: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[dbd4513b-6b38-492f-98c9-25967cfda854] received
+[2025-11-10 07:15:35,622: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-10 07:15:38,021: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-10 07:15:38,281: INFO/MainProcess] No connections found for project project1
+[2025-11-10 07:15:38,282: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-10 07:15:38,584: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-10 07:15:38,585: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-10 07:15:38,827: INFO/MainProcess] No connections found for project projectC
+[2025-11-10 07:15:38,828: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-10 07:15:43,662: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-10 07:15:47,827: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-10 07:15:52,200: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-10 07:15:54,064: INFO/MainProcess] Checking connections for project: yrs (72489c07-b88f-4212-991d-87f7e43a8798)
+[2025-11-10 07:15:54,302: INFO/MainProcess] No connections found for project yrs
+[2025-11-10 07:15:54,545: INFO/MainProcess] Checking connections for project: projectD (62abe5d2-71fc-4728-a6f9-d026ec669d87)
+[2025-11-10 07:16:00,638: INFO/MainProcess] ✅ My test: Connection successful
+[2025-11-10 07:16:04,656: INFO/MainProcess] ✅ GLR: Connection successful
+[2025-11-10 07:16:09,132: INFO/MainProcess] ✅ My: Connection successful
+[2025-11-10 07:16:10,890: INFO/MainProcess] Checking connections for project: test1234 (3b2f4ea2-ef84-4749-82ce-9cb9aecb5daa)
+[2025-11-10 07:16:11,129: INFO/MainProcess] No connections found for project test1234
+[2025-11-10 07:16:11,415: INFO/MainProcess] ✅ Connection check completed: 6 successful, 0 failed out of 6 total
+[2025-11-10 07:16:11,422: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[dbd4513b-6b38-492f-98c9-25967cfda854] succeeded in 35.806495832999644s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-10T01:46:11.415582', 'projects_checked': 7, 'total_connections_checked': 6, 'successful_connections': 6, 'failed_connections': 0, 'project_results': [{'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 3, 'successful': 3, 'failed': 0}]}
