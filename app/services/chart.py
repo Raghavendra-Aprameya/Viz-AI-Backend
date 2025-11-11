@@ -845,7 +845,10 @@ async def save_chart_to_dashboard_service(
         )
         db.add(new_chart)
         db.flush()
-        db.refresh(new_chart)
+
+        # Ensure chart status reflects publication when attached to a dashboard
+        new_chart.status = "published"
+
         new_chart_to_dashboard = DashboardChartsModel(
             dashboard_id=data.dashboard_id,
             chart_id=new_chart.id,
@@ -853,6 +856,7 @@ async def save_chart_to_dashboard_service(
         )
         db.add(new_chart_to_dashboard)
         db.commit()
+        db.refresh(new_chart)
         db.refresh(new_chart_to_dashboard)
         return {
             "message": "Chart added to dashboard successfully",

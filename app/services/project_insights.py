@@ -288,33 +288,51 @@ Insights from {len(databases_summary)} Databases:
 Provide a consolidated strategic analysis including:
 
 1. **Overall Business Health**: High-level assessment across all data sources (1-2 sentences)
-2. **Cross-Database Patterns**: Identify patterns or correlations across different databases
-3. **Strategic Priorities**: Top 5 strategic priorities based on all insights
-4. **Risk Assessment**: Key risks identified across all data sources
-5. **Opportunities**: Growth and optimization opportunities
+2. **Cross-Database Patterns**: Identify patterns or correlations across different databases with reasoning
+3. **Strategic Priorities**: Top 5 strategic priorities based on all insights with reasoning
+4. **Risk Assessment**: Key risks identified across all data sources with reasoning
+5. **Opportunities**: Growth and optimization opportunities with reasoning
 
 Return the response as a JSON object with this structure:
 {{
   "overall_health_score": "excellent|good|fair|poor",
   "health_assessment": "string",
-  "cross_database_patterns": ["string"],
+  "reasoning": "string (explain your analytical approach and key cross-database insights that informed this assessment)",
+  "cross_database_patterns": [
+    {{
+      "pattern": "string",
+      "reasoning": "string (explain what data from which databases led to identifying this pattern)"
+    }}
+  ],
   "strategic_priorities": [
     {{
       "rank": 1,
       "title": "string",
       "description": "string",
-      "impact": "high|medium|low"
+      "impact": "high|medium|low",
+      "reasoning": "string (explain which insights from which databases justify this priority)"
     }}
   ],
   "risk_assessment": {{
-    "critical_risks": ["string"],
-    "moderate_risks": ["string"]
+    "critical_risks": [
+      {{
+        "risk": "string",
+        "reasoning": "string (explain what data points across databases indicate this risk)"
+      }}
+    ],
+    "moderate_risks": [
+      {{
+        "risk": "string",
+        "reasoning": "string (explain what data points indicate this risk)"
+      }}
+    ]
   }},
   "opportunities": [
     {{
       "title": "string",
       "description": "string",
-      "potential_impact": "string"
+      "potential_impact": "string",
+      "reasoning": "string (explain which metrics or patterns suggest this opportunity)"
     }}
   ]
 }}
@@ -370,6 +388,7 @@ Just the raw JSON object starting with {{ and ending with }}.
         return {
             "overall_health_score": "unknown",
             "health_assessment": "Unable to generate consolidated insights",
+            "reasoning": "Failed to parse LLM response",
             "cross_database_patterns": [],
             "strategic_priorities": [],
             "risk_assessment": {
@@ -384,6 +403,7 @@ Just the raw JSON object starting with {{ and ending with }}.
         return {
             "overall_health_score": "unknown",
             "health_assessment": f"Error: {str(e)}",
+            "reasoning": f"Error generating insights: {str(e)}",
             "cross_database_patterns": [],
             "strategic_priorities": [],
             "risk_assessment": {

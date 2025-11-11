@@ -26,6 +26,7 @@ from app.utils.token_parser import get_current_user
 from app.schemas import (
     ProjectRequest,
     UpdateProjectRequest,
+    UpdateProjectKpiInfoRequest,
     UpdateUserRequest,
     CreateSuperUserRequest,
     DBConnectionRequest,
@@ -76,6 +77,7 @@ from app.services.project import (
     list_users_all_dashboard,
     delete_dashboard,
     update_project,
+    update_project_kpi_info,
     delete_project,
     update_dashboard,
     update_role,
@@ -515,6 +517,24 @@ async def update(
         dict: The updated project.
     """
     return await update_project(project_id, data, db, token_payload)
+
+
+@backend_router.patch(
+    "/projects/{project_id}/kpi-info",
+    status_code=status.HTTP_200_OK,
+)
+async def update_project_kpi_info_route(
+    project_id: UUID = Path(..., description="Project ID to update KPI info for"),
+    data: UpdateProjectKpiInfoRequest = Body(
+        ..., description="Payload containing KPI information for the project"
+    ),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Update the KPI information for a project.
+    """
+    return await update_project_kpi_info(project_id, data, db, token_payload)
 
 
 @backend_router.delete("/projects/{project_id}", status_code=status.HTTP_200_OK)
