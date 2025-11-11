@@ -143,12 +143,26 @@ async def create_database_connection(
         if not db_name:
             raise HTTPException(status_code=400, detail="Database name is required")
 
+        # Parse host and port from host string (format: "host:port" or just "host")
+        # SQLAlchemy connection strings support port in the format: scheme://user:pass@host:port/db
+        if ":" in host and not host.startswith("["):  # IPv6 addresses start with [
+            # Host already contains port (e.g., "localhost:3306")
+            host_part = host
+        else:
+            # Host doesn't contain port, use default ports
+            if db_type == "postgres":
+                host_part = f"{host}:5432"
+            elif db_type == "mysql":
+                host_part = f"{host}:3306"
+            else:
+                host_part = host
+
         if db_type == "postgres":
             connection_string = (
-                f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
+                f"postgresql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
             )
         elif db_type == "mysql":
-            connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
+            connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
         else:
             raise HTTPException(status_code=400, detail="Unsupported database type.")
 

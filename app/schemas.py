@@ -894,7 +894,7 @@ class SaveChartToDashboardRequest(BaseModel):
     query: str
     report: Optional[str] = None
     type: Optional[str] = "insight"
-    relevance: float = 0.5
+    relevance: Optional[float] = None
     is_time_based: Optional[bool] = None
     chart_type: str
     status: ChartStatus = ChartStatus.PUBLISHED
