@@ -11,7 +11,7 @@ from typing import Dict, List, Any
 from uuid import UUID
 
 import redis
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status 
 from sqlalchemy.orm import Session
 import google.generativeai as genai
 
