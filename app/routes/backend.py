@@ -120,6 +120,7 @@ from app.services.chart import (
     save_chart_service,
     save_chart_to_dashboard_service,
     get_charts_for_dashboard_service,
+    get_user_dashboard_charts_service,
     delete_chart_from_dashboard_service,
     update_favorite_chart_service,
     get_favorite_charts_service,
@@ -1129,6 +1130,17 @@ async def save_chart_to_dashboard(
         dict: The response indicating the chart has been saved to the dashboard.
     """
     return await save_chart_to_dashboard_service(data, db, token_payload)
+
+
+@backend_router.get("/dashboards/user/charts", status_code=status.HTTP_200_OK)
+async def get_user_dashboard_charts(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Get all charts from dashboards that the current user is a member of.
+    """
+    return await get_user_dashboard_charts_service(db, token_payload)
 
 
 @backend_router.get("/dashboards/{dashboard_id}/charts", status_code=status.HTTP_200_OK)
