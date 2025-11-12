@@ -1,5 +1,7 @@
 # Standard library imports
 from uuid import UUID
+import secrets
+import string
 
 # Third-party imports
 from fastapi import (
@@ -215,8 +217,17 @@ async def create_user_project(
         else:
             # User doesn't exist, create a new one
             try:
+                # Generate a temporary password if not provided (for invitations)
+                if data.password is None:
+                    # Generate a secure temporary password
+                    alphabet = string.ascii_letters + string.digits + string.punctuation
+                    temp_password = ''.join(secrets.choice(alphabet) for i in range(16))
+                    password_to_hash = temp_password
+                else:
+                    password_to_hash = data.password
+                
                 # Hash password before saving
-                password = bcrypt.hashpw(data.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                password = bcrypt.hashpw(password_to_hash.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 
                 # Create the new user
                 new_user = UserModel(

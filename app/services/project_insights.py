@@ -263,6 +263,12 @@ async def generate_consolidated_insights(
     """
     try:
         # Configure Gemini API from environment
+        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
+            raise HTTPException(
+                status_code=500,
+                detail="GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your .env file."
+            )
+        
         genai.configure(api_key=settings.GEMINI_API_KEY)
         
         model = genai.GenerativeModel('gemini-2.5-flash')
