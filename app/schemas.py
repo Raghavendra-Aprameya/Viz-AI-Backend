@@ -208,13 +208,13 @@ class CreateUserProjectRequest(BaseModel):
     Attributes:
         username: Username of the new user
         email: Email address of the new user
-        password: Password for the new user
+        password: Optional password for the new user. If not provided, a temporary password will be generated.
         role_id: UUID of the role to assign to the user
     """
 
     username: str
     email: str
-    password: str
+    password: Optional[str] = None
     role_id: UUID
 
 

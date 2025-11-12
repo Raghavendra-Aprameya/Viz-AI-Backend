@@ -308,6 +308,12 @@ async def generate_kpi_queries_with_llm(
             logger.warning("Database type not specified, defaulting to postgres")
         
         # Configure Gemini API from environment
+        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
+            raise HTTPException(
+                status_code=500,
+                detail="GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your .env file."
+            )
+        
         genai.configure(api_key=settings.GEMINI_API_KEY)
         
         model = genai.GenerativeModel('gemini-2.5-flash')
@@ -520,6 +526,12 @@ async def generate_insights_from_results(
     """
     try:
         # Configure Gemini API from environment
+        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
+            raise HTTPException(
+                status_code=500,
+                detail="GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your .env file."
+            )
+        
         genai.configure(api_key=settings.GEMINI_API_KEY)
         
         model = genai.GenerativeModel('gemini-2.5-flash')
