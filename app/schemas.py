@@ -589,6 +589,14 @@ class UpdateProjectRequest(BaseModel):
     prod_desc: Optional[str] = None
 
 
+class UpdateProjectKpiInfoRequest(BaseModel):
+    """
+    Request model for updating only the project KPI info.
+    """
+
+    kpi_info: Optional[str] = None
+
+
 class UpdateDashboardRequest(BaseModel):
     """
     Request model for updating a dashboard.
@@ -1092,6 +1100,7 @@ class Recommendation(BaseModel):
     priority: str
     title: str
     description: str
+    reasoning: Optional[str] = None
 
 
 class KeyMetricAnalysis(BaseModel):
@@ -1107,6 +1116,25 @@ class KeyMetricAnalysis(BaseModel):
     kpi_name: str
     value_interpretation: str
     business_impact: str
+    reasoning: Optional[str] = None
+
+
+class InsightPattern(BaseModel):
+    """
+    Model representing an identified insight or pattern with reasoning.
+    """
+
+    insight: str
+    reasoning: Optional[str] = None
+
+
+class Concern(BaseModel):
+    """
+    Model representing an area of concern with supporting reasoning.
+    """
+
+    concern: str
+    reasoning: Optional[str] = None
 
 
 class BusinessInsights(BaseModel):
@@ -1122,10 +1150,11 @@ class BusinessInsights(BaseModel):
     """
 
     executive_summary: str
+    reasoning: Optional[str] = None
     key_metrics: List[KeyMetricAnalysis]
-    insights_and_patterns: List[str]
+    insights_and_patterns: List[InsightPattern]
     recommendations: List[Recommendation]
-    areas_of_concern: List[str]
+    areas_of_concern: List[Concern]
 
 
 class BusinessInsightsResponse(BaseModel):
@@ -1166,6 +1195,16 @@ class StrategicPriority(BaseModel):
     title: str
     description: str
     impact: str
+    reasoning: Optional[str] = None
+
+
+class RiskDetail(BaseModel):
+    """
+    Model representing a risk entry with reasoning.
+    """
+
+    risk: str
+    reasoning: Optional[str] = None
 
 
 class RiskAssessment(BaseModel):
@@ -1177,8 +1216,8 @@ class RiskAssessment(BaseModel):
         moderate_risks: List of moderate risks
     """
 
-    critical_risks: List[str]
-    moderate_risks: List[str]
+    critical_risks: List[RiskDetail]
+    moderate_risks: List[RiskDetail]
 
 
 class Opportunity(BaseModel):
@@ -1194,6 +1233,16 @@ class Opportunity(BaseModel):
     title: str
     description: str
     potential_impact: str
+    reasoning: Optional[str] = None
+
+
+class PatternDetail(BaseModel):
+    """
+    Model representing a cross-database pattern with reasoning.
+    """
+
+    pattern: str
+    reasoning: Optional[str] = None
 
 
 class ConsolidatedInsights(BaseModel):
@@ -1211,10 +1260,13 @@ class ConsolidatedInsights(BaseModel):
 
     overall_health_score: str
     health_assessment: str
-    cross_database_patterns: List[str]
+    reasoning: Optional[str] = None
+    cross_database_patterns: List[PatternDetail]
     strategic_priorities: List[StrategicPriority]
     risk_assessment: RiskAssessment
     opportunities: List[Opportunity]
+
+
 
 
 class DatabaseInsightSummary(BaseModel):

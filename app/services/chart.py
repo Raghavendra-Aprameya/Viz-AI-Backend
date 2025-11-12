@@ -67,6 +67,7 @@ from app.models.schema_models import (
     RoleModel,
     RolePermissionModel,
     UserChartModel,
+    UserDashboardModel,
     UserModel,
     UserProjectRoleModel,
 )
@@ -845,7 +846,10 @@ async def save_chart_to_dashboard_service(
         )
         db.add(new_chart)
         db.flush()
-        db.refresh(new_chart)
+
+        # Ensure chart status reflects publication when attached to a dashboard
+        new_chart.status = "published"
+
         new_chart_to_dashboard = DashboardChartsModel(
             dashboard_id=data.dashboard_id,
             chart_id=new_chart.id,
@@ -853,6 +857,7 @@ async def save_chart_to_dashboard_service(
         )
         db.add(new_chart_to_dashboard)
         db.commit()
+        db.refresh(new_chart)
         db.refresh(new_chart_to_dashboard)
         return {
             "message": "Chart added to dashboard successfully",
@@ -907,6 +912,88 @@ async def get_charts_for_dashboard_service(
                 }
                 for chart in charts
             ],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+async def get_user_dashboard_charts_service(
+    db: Session, token_payload: dict
+):
+    """
+    Retrieve charts from all dashboards that the authenticated user is part of.
+
+    Returns:
+        dict: Dashboards and their associated charts.
+    """
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise ValueError("User ID not found in token payload")
+
+        user_dashboards = (
+            db.query(DashboardModel)
+            .join(
+                UserDashboardModel,
+                UserDashboardModel.dashboard_id == DashboardModel.id,
+            )
+            .filter(UserDashboardModel.user_id == user_id)
+            .all()
+        )
+
+        if not user_dashboards:
+            return {
+                "message": "No dashboards found for user",
+                "dashboards": [],
+            }
+
+        dashboard_ids = [dashboard.id for dashboard in user_dashboards]
+
+        dashboard_chart_map = {dashboard.id: [] for dashboard in user_dashboards}
+
+        dashboard_charts = (
+            db.query(DashboardChartsModel)
+            .filter(DashboardChartsModel.dashboard_id.in_(dashboard_ids))
+            .all()
+        )
+
+        for dashboard_chart in dashboard_charts:
+            chart = dashboard_chart.chart
+            if chart:
+                dashboard_chart_map[dashboard_chart.dashboard_id].append(
+                    {
+                        "id": str(chart.id),
+                        "title": chart.title,
+                        "created_at": (
+                            chart.created_at.isoformat()
+                            if chart.created_at
+                            else None
+                        ),
+                        "chart_type": chart.chart_type,
+                        "type": chart.type,
+                        "status": getattr(chart, "status", None),
+                        "database_connection_id": str(
+                            dashboard_chart.database_connection_id
+                        )
+                        if dashboard_chart.database_connection_id
+                        else None,
+                    }
+                )
+
+        dashboards_response = []
+        for dashboard in user_dashboards:
+            dashboards_response.append(
+                {
+                    "dashboard_id": str(dashboard.id),
+                    "dashboard_title": dashboard.title,
+                    "project_id": str(dashboard.project_id),
+                    "charts": dashboard_chart_map.get(dashboard.id, []),
+                }
+            )
+
+        return {
+            "message": "Dashboard charts retrieved successfully",
+            "dashboards": dashboards_response,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

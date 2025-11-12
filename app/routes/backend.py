@@ -26,6 +26,7 @@ from app.utils.token_parser import get_current_user
 from app.schemas import (
     ProjectRequest,
     UpdateProjectRequest,
+    UpdateProjectKpiInfoRequest,
     UpdateUserRequest,
     CreateSuperUserRequest,
     DBConnectionRequest,
@@ -76,6 +77,7 @@ from app.services.project import (
     list_users_all_dashboard,
     delete_dashboard,
     update_project,
+    update_project_kpi_info,
     delete_project,
     update_dashboard,
     update_role,
@@ -118,6 +120,7 @@ from app.services.chart import (
     save_chart_service,
     save_chart_to_dashboard_service,
     get_charts_for_dashboard_service,
+    get_user_dashboard_charts_service,
     delete_chart_from_dashboard_service,
     update_favorite_chart_service,
     get_favorite_charts_service,
@@ -515,6 +518,24 @@ async def update(
         dict: The updated project.
     """
     return await update_project(project_id, data, db, token_payload)
+
+
+@backend_router.patch(
+    "/projects/{project_id}/kpi-info",
+    status_code=status.HTTP_200_OK,
+)
+async def update_project_kpi_info_route(
+    project_id: UUID = Path(..., description="Project ID to update KPI info for"),
+    data: UpdateProjectKpiInfoRequest = Body(
+        ..., description="Payload containing KPI information for the project"
+    ),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Update the KPI information for a project.
+    """
+    return await update_project_kpi_info(project_id, data, db, token_payload)
 
 
 @backend_router.delete("/projects/{project_id}", status_code=status.HTTP_200_OK)
@@ -1109,6 +1130,17 @@ async def save_chart_to_dashboard(
         dict: The response indicating the chart has been saved to the dashboard.
     """
     return await save_chart_to_dashboard_service(data, db, token_payload)
+
+
+@backend_router.get("/dashboards/user/charts", status_code=status.HTTP_200_OK)
+async def get_user_dashboard_charts(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Get all charts from dashboards that the current user is a member of.
+    """
+    return await get_user_dashboard_charts_service(db, token_payload)
 
 
 @backend_router.get("/dashboards/{dashboard_id}/charts", status_code=status.HTTP_200_OK)

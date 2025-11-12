@@ -561,11 +561,13 @@ Provide a detailed analysis including:
    - What the numbers mean
    - Whether they indicate positive or negative trends
    - Potential business implications
+   - The reasoning behind your interpretation (what data points led to this conclusion)
 
 3. **Insights & Patterns**: Identify:
    - Notable trends or patterns
    - Anomalies or unexpected results
    - Correlations between different metrics
+   - The analytical reasoning that led to these insights
 
 4. **Recommendations**: Provide 3-5 actionable recommendations based on the data
 
@@ -574,25 +576,34 @@ Provide a detailed analysis including:
 Return the response as a JSON object with this structure:
 {{
   "executive_summary": "string",
+  "reasoning": "string (explain your overall analytical approach and key data points that informed your analysis)",
   "key_metrics": [
     {{
       "kpi_name": "string",
       "value_interpretation": "string",
-      "business_impact": "string"
+      "business_impact": "string",
+      "reasoning": "string (explain what specific data points or patterns led to this interpretation)"
     }}
   ],
   "insights_and_patterns": [
-    "string"
+    {{
+      "insight": "string",
+      "reasoning": "string (explain the analytical process and data evidence supporting this insight)"
+    }}
   ],
   "recommendations": [
     {{
       "priority": "high|medium|low",
       "title": "string",
-      "description": "string"
+      "description": "string",
+      "reasoning": "string (explain which metrics or insights led to this recommendation)"
     }}
   ],
   "areas_of_concern": [
-    "string"
+    {{
+      "concern": "string",
+      "reasoning": "string (explain what data points indicate this is a concern)"
+    }}
   ]
 }}
 
