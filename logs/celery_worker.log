@@ -156,3 +156,13 @@ SSL SYSCALL error: Operation timed out
 [2025-11-11 05:30:55,398: INFO/MainProcess] No connections found for project cruncho
 [2025-11-11 05:30:55,677: INFO/MainProcess] ✅ Connection check completed: 8 successful, 0 failed out of 8 total
 [2025-11-11 05:30:55,683: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[5c579890-25d2-4826-bb72-edae139b91ac] succeeded in 55.64339983300306s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-11T00:00:55.677059', 'projects_checked': 17, 'total_connections_checked': 8, 'successful_connections': 8, 'failed_connections': 0, 'project_results': [{'project_id': 'c529b69a-b08c-4fdd-bc35-d58b012093a1', 'project_name': 'project1', 'connections_checked': 1, 'successful': 1, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 4, 'successful': 4, 'failed': 0}, {'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}]}
+[2025-11-12 06:10:13,741: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[44ffa08a-0ca1-4f44-a47e-d68af5ceddc3] received
+[2025-11-12 06:10:13,747: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-12 06:41:57,308: ERROR/MainProcess] ❌ Error in check_all_database_connections task: (psycopg2.OperationalError) connection to server at "ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech" (3.143.47.40), port 5432 failed: could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2025-11-12 06:41:57,317: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[44ffa08a-0ca1-4f44-a47e-d68af5ceddc3] succeeded in 53.76476483298757s: {'status': 'error', 'message': 'Failed to check database connections: (psycopg2.OperationalError) connection to server at "ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech" (3.143.47.40), port 5432 failed: could not receive data from server: Operation timed out
+SSL SYSCALL error: Operation timed out
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)', 'timestamp': '2025-11-12T01:11:57.310404'}
