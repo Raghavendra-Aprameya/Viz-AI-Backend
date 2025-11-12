@@ -35,3 +35,8 @@ app.include_router(backend_router)
 app.include_router(llm_router)  # Include backend-related endpoints
 
 app.add_middleware(ResponseTimeMiddleware)
+
+
+@app.get("/")
+async def root():
+    return {"message": "hello"}
