@@ -959,26 +959,38 @@ async def get_user_dashboard_charts_service(
 
         for dashboard_chart in dashboard_charts:
             chart = dashboard_chart.chart
-            if chart:
-                dashboard_chart_map[dashboard_chart.dashboard_id].append(
-                    {
-                        "id": str(chart.id),
-                        "title": chart.title,
-                        "created_at": (
-                            chart.created_at.isoformat()
-                            if chart.created_at
+            if not chart:
+                continue
+
+            connection = dashboard_chart.database_connection
+
+            dashboard_chart_map[dashboard_chart.dashboard_id].append(
+                {
+                    "id": str(chart.id),
+                    "title": chart.title,
+                    "query": chart.query,
+                    "report": chart.report,
+                    "type": chart.type,
+                    "chart_type": chart.chart_type,
+                    "relevance": chart.relevance,
+                    "is_time_based": chart.is_time_based,
+                    "status": getattr(chart, "status", None),
+                    "is_user_generated": chart.is_user_generated,
+                    "created_by": str(chart.created_by) if chart.created_by else None,
+                    "created_at": (
+                        chart.created_at.isoformat() if chart.created_at else None
+                    ),
+                    "database_connection": {
+                        "id": (
+                            str(dashboard_chart.database_connection_id)
+                            if dashboard_chart.database_connection_id
                             else None
                         ),
-                        "chart_type": chart.chart_type,
-                        "type": chart.type,
-                        "status": getattr(chart, "status", None),
-                        "database_connection_id": str(
-                            dashboard_chart.database_connection_id
-                        )
-                        if dashboard_chart.database_connection_id
-                        else None,
-                    }
-                )
+                        "name": connection.connection_name if connection else None,
+                        "type": connection.db_type if connection else None,
+                    },
+                }
+            )
 
         dashboards_response = []
         for dashboard in user_dashboards:

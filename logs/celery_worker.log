@@ -166,3 +166,48 @@ SSL SYSCALL error: Operation timed out
 SSL SYSCALL error: Operation timed out
 
 (Background on this error at: https://sqlalche.me/e/20/e3q8)', 'timestamp': '2025-11-12T01:11:57.310404'}
+[2025-11-13 10:37:52,332: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[2cb6d7d1-257e-48f7-b94b-63c0f76f7933] received
+[2025-11-13 10:37:52,339: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-13 10:37:57,337: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-13 10:38:04,881: INFO/MainProcess] ✅ viz-ai-test: Connection successful
+[2025-11-13 10:38:06,236: INFO/MainProcess] Checking connections for project: projectD (62abe5d2-71fc-4728-a6f9-d026ec669d87)
+[2025-11-13 10:38:15,835: INFO/MainProcess] ✅ My test: Connection successful
+[2025-11-13 10:38:21,657: INFO/MainProcess] ✅ GLR: Connection successful
+[2025-11-13 10:38:27,404: INFO/MainProcess] ✅ my-test: Connection successful
+[2025-11-13 10:38:33,227: INFO/MainProcess] ✅ My: Connection successful
+[2025-11-13 10:38:35,393: INFO/MainProcess] Checking connections for project: WebSocket Test Project V1 (01626cad-c74e-4412-8c7b-13cc0daa47c2)
+[2025-11-13 10:38:35,670: INFO/MainProcess] No connections found for project WebSocket Test Project V1
+[2025-11-13 10:38:35,969: INFO/MainProcess] Checking connections for project: WebSocket Test Project w1 (bd2910c0-3dba-4672-a0bc-23daa54223bd)
+[2025-11-13 10:38:36,266: INFO/MainProcess] No connections found for project WebSocket Test Project w1
+[2025-11-13 10:38:36,538: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-13 10:38:36,865: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-13 10:38:37,168: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-13 10:38:37,452: INFO/MainProcess] No connections found for project projectC
+[2025-11-13 10:38:37,719: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-13 10:38:43,518: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-13 10:38:48,851: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-13 10:38:54,221: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-13 10:38:56,069: INFO/MainProcess] Checking connections for project: yrs (72489c07-b88f-4212-991d-87f7e43a8798)
+[2025-11-13 10:38:56,333: INFO/MainProcess] No connections found for project yrs
+[2025-11-13 10:38:56,598: INFO/MainProcess] Checking connections for project: test1234 (3b2f4ea2-ef84-4749-82ce-9cb9aecb5daa)
+[2025-11-13 10:38:56,866: INFO/MainProcess] No connections found for project test1234
+[2025-11-13 10:38:57,148: INFO/MainProcess] Checking connections for project: AI Insights Project (8bce81a2-7053-4878-b74d-b56ae2f64e1f)
+[2025-11-13 10:38:57,416: INFO/MainProcess] No connections found for project AI Insights Project
+[2025-11-13 10:38:57,678: INFO/MainProcess] Checking connections for project: AI Insights Project V2 (9b94c9e0-3631-4977-8b2f-e915b79ae99e)
+[2025-11-13 10:38:57,943: INFO/MainProcess] No connections found for project AI Insights Project V2
+[2025-11-13 10:38:58,213: INFO/MainProcess] Checking connections for project: AI Insights Project V3 (d381c839-5cdd-4c5a-af06-dd19375d0746)
+[2025-11-13 10:38:58,477: INFO/MainProcess] No connections found for project AI Insights Project V3
+[2025-11-13 10:38:58,784: INFO/MainProcess] Checking connections for project: AI Insights Project V4 (eb788ee6-c22c-4c4e-8e9a-0e0b5dceb2ef)
+[2025-11-13 10:38:59,047: INFO/MainProcess] No connections found for project AI Insights Project V4
+[2025-11-13 10:38:59,308: INFO/MainProcess] Checking connections for project: AI Insights Project V5 (ceb96f9f-693b-403d-9970-1b8bbf79c708)
+[2025-11-13 10:38:59,570: INFO/MainProcess] No connections found for project AI Insights Project V5
+[2025-11-13 10:38:59,835: INFO/MainProcess] Checking connections for project: AI Insights Project V6 (52263049-23b4-493c-820c-1eb01a94344c)
+[2025-11-13 10:39:00,115: INFO/MainProcess] No connections found for project AI Insights Project V6
+[2025-11-13 10:39:00,423: INFO/MainProcess] Checking connections for project: AI Insights Project V25 (1dd85081-2a3a-413c-b4ed-734966fbc2f9)
+[2025-11-13 10:39:00,731: INFO/MainProcess] No connections found for project AI Insights Project V25
+[2025-11-13 10:39:00,996: INFO/MainProcess] Checking connections for project: AI Insights Project V35 (9ed89086-d2db-4953-be11-d5a8ec151a59)
+[2025-11-13 10:39:01,266: INFO/MainProcess] No connections found for project AI Insights Project V35
+[2025-11-13 10:39:01,552: INFO/MainProcess] Checking connections for project: cruncho (a08b3c9c-18e0-4973-a665-2a4f850a5a25)
+[2025-11-13 10:39:01,814: INFO/MainProcess] No connections found for project cruncho
+[2025-11-13 10:39:02,074: INFO/MainProcess] ✅ Connection check completed: 8 successful, 0 failed out of 8 total
+[2025-11-13 10:39:02,080: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[2cb6d7d1-257e-48f7-b94b-63c0f76f7933] succeeded in 69.75135204099934s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-13T05:09:02.074746', 'projects_checked': 18, 'total_connections_checked': 8, 'successful_connections': 8, 'failed_connections': 0, 'project_results': [{'project_id': 'c529b69a-b08c-4fdd-bc35-d58b012093a1', 'project_name': 'project1', 'connections_checked': 1, 'successful': 1, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 4, 'successful': 4, 'failed': 0}, {'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}]}
