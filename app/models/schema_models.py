@@ -1,5 +1,4 @@
 
-from telnetlib import STATUS
 from sqlalchemy import (
     Column,
     String,

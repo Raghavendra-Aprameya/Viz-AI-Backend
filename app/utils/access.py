@@ -3,7 +3,6 @@ This module contains a decorator for checking access to permforming operations.
 """
 
 from functools import wraps
-import imp
 import inspect
 import logging
 from uuid import UUID

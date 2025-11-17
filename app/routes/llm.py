@@ -2,6 +2,7 @@ from fastapi import APIRouter, status, Response, Depends, Request, Path, HTTPExc
 from uuid import UUID
 from sqlalchemy.orm import Session
 from app.services.spreadsheet import get_spreadsheet_data, generate_chart_data, add_spreadsheet_datasource_service
+from app.services.llm_client import call_llm_simple_endpoint
 from app.core.db import get_db
 from app.utils.token_parser import get_current_user
 from app.schemas import AddSpreadsheetRequest
@@ -28,3 +29,14 @@ def add_spreadsheet_datasource(
     token_payload: dict = Depends(get_current_user)
 ):
     return add_spreadsheet_datasource_service(project_id, data, db, token_payload)
+
+@llm_router.get("/simple")
+def get_simple_from_llm():
+    """
+    Endpoint to call the simple API from LLM service
+    """
+    try:
+        result = call_llm_simple_endpoint()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
