@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.middleware.response_time import ResponseTimeMiddleware
+from app.middleware.request_logging import RequestResponseLoggingMiddleware
 
 # Import routers and constants
 from app.routes.auth import auth_router
@@ -34,6 +35,7 @@ app.include_router(auth_router)  # Include auth-related endpoints
 app.include_router(backend_router)
 app.include_router(llm_router)  # Include backend-related endpoints
 
+app.add_middleware(RequestResponseLoggingMiddleware)
 app.add_middleware(ResponseTimeMiddleware)
 
 

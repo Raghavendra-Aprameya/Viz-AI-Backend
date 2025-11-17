@@ -906,6 +906,7 @@ async def get_charts_for_dashboard_service(
                 {
                     "id": str(chart.chart_id),
                     "title": chart.chart.title,
+                    "query": chart.chart.query,
                     "created_at": chart.chart.created_at,
                     "connection_id": chart.database_connection_id,
                     "status": chart.chart.status if hasattr(chart.chart, "status") else None,

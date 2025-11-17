@@ -211,3 +211,237 @@ SSL SYSCALL error: Operation timed out
 [2025-11-13 10:39:01,814: INFO/MainProcess] No connections found for project cruncho
 [2025-11-13 10:39:02,074: INFO/MainProcess] ✅ Connection check completed: 8 successful, 0 failed out of 8 total
 [2025-11-13 10:39:02,080: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[2cb6d7d1-257e-48f7-b94b-63c0f76f7933] succeeded in 69.75135204099934s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-13T05:09:02.074746', 'projects_checked': 18, 'total_connections_checked': 8, 'successful_connections': 8, 'failed_connections': 0, 'project_results': [{'project_id': 'c529b69a-b08c-4fdd-bc35-d58b012093a1', 'project_name': 'project1', 'connections_checked': 1, 'successful': 1, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 4, 'successful': 4, 'failed': 0}, {'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}]}
+[2025-11-14 10:18:08,580: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[67271735-8f14-4cf2-9027-728ff35f2264] received
+[2025-11-14 10:18:08,592: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-14 10:18:11,289: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-14 10:18:16,998: INFO/MainProcess] ✅ viz-ai-test: Connection successful
+[2025-11-14 10:18:18,502: INFO/MainProcess] Checking connections for project: projectD (62abe5d2-71fc-4728-a6f9-d026ec669d87)
+[2025-11-14 10:18:25,292: INFO/MainProcess] ✅ My test: Connection successful
+[2025-11-14 10:18:31,350: INFO/MainProcess] ✅ GLR: Connection successful
+[2025-11-14 10:18:36,694: INFO/MainProcess] ✅ My: Connection successful
+[2025-11-14 10:18:42,000: INFO/MainProcess] ✅ viz-ai: Connection successful
+[2025-11-14 10:18:47,208: INFO/MainProcess] ✅ my-test: Connection successful
+[2025-11-14 10:18:49,646: INFO/MainProcess] Checking connections for project: WebSocket Test Project V1 (01626cad-c74e-4412-8c7b-13cc0daa47c2)
+[2025-11-14 10:18:49,908: INFO/MainProcess] No connections found for project WebSocket Test Project V1
+[2025-11-14 10:18:50,193: INFO/MainProcess] Checking connections for project: WebSocket Test Project w1 (bd2910c0-3dba-4672-a0bc-23daa54223bd)
+[2025-11-14 10:18:50,453: INFO/MainProcess] No connections found for project WebSocket Test Project w1
+[2025-11-14 10:18:50,713: INFO/MainProcess] Checking connections for project: Test Project via Script (49b206b2-75ac-45d7-83f8-9669a0456b7d)
+[2025-11-14 10:18:50,974: INFO/MainProcess] No connections found for project Test Project via Script
+[2025-11-14 10:18:51,319: INFO/MainProcess] Checking connections for project: Test Project 2 (2102e83c-8582-46d0-b563-389a981e148e)
+[2025-11-14 10:18:51,626: INFO/MainProcess] No connections found for project Test Project 2
+[2025-11-14 10:18:51,934: INFO/MainProcess] Checking connections for project: Test Project_id (b6326f69-79a7-4f50-8bbf-cf1f60f6c3c7)
+[2025-11-14 10:18:52,242: INFO/MainProcess] No connections found for project Test Project_id
+[2025-11-14 10:18:52,501: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-14 10:18:52,855: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-14 10:18:53,764: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-14 10:18:54,024: INFO/MainProcess] No connections found for project projectC
+[2025-11-14 10:18:54,284: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-14 10:18:59,819: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-14 10:19:04,974: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-14 10:19:09,928: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-14 10:19:12,059: INFO/MainProcess] Checking connections for project: yrs (72489c07-b88f-4212-991d-87f7e43a8798)
+[2025-11-14 10:19:12,320: INFO/MainProcess] No connections found for project yrs
+[2025-11-14 10:19:12,586: INFO/MainProcess] Checking connections for project: test1234 (3b2f4ea2-ef84-4749-82ce-9cb9aecb5daa)
+[2025-11-14 10:19:12,850: INFO/MainProcess] No connections found for project test1234
+[2025-11-14 10:19:13,111: INFO/MainProcess] Checking connections for project: AI Insights Project (8bce81a2-7053-4878-b74d-b56ae2f64e1f)
+[2025-11-14 10:19:13,371: INFO/MainProcess] No connections found for project AI Insights Project
+[2025-11-14 10:19:13,630: INFO/MainProcess] Checking connections for project: AI Insights Project V2 (9b94c9e0-3631-4977-8b2f-e915b79ae99e)
+[2025-11-14 10:19:13,890: INFO/MainProcess] No connections found for project AI Insights Project V2
+[2025-11-14 10:19:14,151: INFO/MainProcess] Checking connections for project: AI Insights Project V3 (d381c839-5cdd-4c5a-af06-dd19375d0746)
+[2025-11-14 10:19:14,411: INFO/MainProcess] No connections found for project AI Insights Project V3
+[2025-11-14 10:19:14,670: INFO/MainProcess] Checking connections for project: AI Insights Project V4 (eb788ee6-c22c-4c4e-8e9a-0e0b5dceb2ef)
+[2025-11-14 10:19:14,929: INFO/MainProcess] No connections found for project AI Insights Project V4
+[2025-11-14 10:19:15,188: INFO/MainProcess] Checking connections for project: AI Insights Project V5 (ceb96f9f-693b-403d-9970-1b8bbf79c708)
+[2025-11-14 10:19:15,448: INFO/MainProcess] No connections found for project AI Insights Project V5
+[2025-11-14 10:19:15,794: INFO/MainProcess] Checking connections for project: AI Insights Project V6 (52263049-23b4-493c-820c-1eb01a94344c)
+[2025-11-14 10:19:16,053: INFO/MainProcess] No connections found for project AI Insights Project V6
+[2025-11-14 10:19:16,313: INFO/MainProcess] Checking connections for project: AI Insights Project V25 (1dd85081-2a3a-413c-b4ed-734966fbc2f9)
+[2025-11-14 10:19:16,614: INFO/MainProcess] No connections found for project AI Insights Project V25
+[2025-11-14 10:19:16,874: INFO/MainProcess] Checking connections for project: AI Insights Project V35 (9ed89086-d2db-4953-be11-d5a8ec151a59)
+[2025-11-14 10:19:17,210: INFO/MainProcess] No connections found for project AI Insights Project V35
+[2025-11-14 10:19:17,469: INFO/MainProcess] Checking connections for project: cruncho (a08b3c9c-18e0-4973-a665-2a4f850a5a25)
+[2025-11-14 10:19:17,730: INFO/MainProcess] No connections found for project cruncho
+[2025-11-14 10:19:18,047: INFO/MainProcess] Checking connections for project: Test Proj (504d03f7-2da6-43e8-986d-0dffb5a9b038)
+[2025-11-14 10:19:18,306: INFO/MainProcess] No connections found for project Test Proj
+[2025-11-14 10:19:18,566: INFO/MainProcess] Checking connections for project: Testing_project (46f13824-8492-4b4c-a93a-c2434f7f94a9)
+[2025-11-14 10:19:18,826: INFO/MainProcess] No connections found for project Testing_project
+[2025-11-14 10:19:19,086: INFO/MainProcess] Checking connections for project: Testing_project_efefea (5ddf8027-1593-4163-aa9b-00403ef76c4c)
+[2025-11-14 10:19:19,379: INFO/MainProcess] No connections found for project Testing_project_efefea
+[2025-11-14 10:19:19,685: INFO/MainProcess] Checking connections for project: Testing_project_3b4d81 (8239f1cd-2191-4e84-a85f-6d9b32628014)
+[2025-11-14 10:19:19,992: INFO/MainProcess] No connections found for project Testing_project_3b4d81
+[2025-11-14 10:19:20,252: INFO/MainProcess] Checking connections for project: Testing_project_945651 (22f04ff9-b553-4711-8a22-fe593b0e2c6d)
+[2025-11-14 10:19:20,607: INFO/MainProcess] No connections found for project Testing_project_945651
+[2025-11-14 10:19:20,914: INFO/MainProcess] Checking connections for project: Project_f274af (647c7c79-3c63-4507-a396-0da6eae51ce1)
+[2025-11-14 10:19:21,222: INFO/MainProcess] No connections found for project Project_f274af
+[2025-11-14 10:19:21,483: INFO/MainProcess] ✅ Connection check completed: 9 successful, 0 failed out of 9 total
+[2025-11-14 10:19:21,499: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[67271735-8f14-4cf2-9027-728ff35f2264] succeeded in 72.91370050000842s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-14T04:49:21.483268', 'projects_checked': 27, 'total_connections_checked': 9, 'successful_connections': 9, 'failed_connections': 0, 'project_results': [{'project_id': 'c529b69a-b08c-4fdd-bc35-d58b012093a1', 'project_name': 'project1', 'connections_checked': 1, 'successful': 1, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 5, 'successful': 5, 'failed': 0}, {'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}]}
+[2025-11-15 06:43:52,005: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[7c5833ff-bb53-4f25-b53c-18cff1e3e433] received
+[2025-11-15 06:43:52,008: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-17 12:14:09,813: ERROR/MainProcess] ❌ Error in check_all_database_connections task: (psycopg2.OperationalError) connection to server at "ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech" (3.23.186.13), port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2025-11-17 12:14:09,838: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[7c5833ff-bb53-4f25-b53c-18cff1e3e433] succeeded in 7202.330419042002s: {'status': 'error', 'message': 'Failed to check database connections: (psycopg2.OperationalError) connection to server at "ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech" (3.23.186.13), port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)', 'timestamp': '2025-11-17T06:44:09.821300'}
+[2025-11-17 12:14:09,850: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[5dff0de4-5449-43e0-9aa3-234945b20164] received
+[2025-11-17 12:14:09,851: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-17 12:14:12,613: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-17 12:14:17,808: INFO/MainProcess] ✅ viz-ai-test: Connection successful
+[2025-11-17 12:14:19,228: INFO/MainProcess] Checking connections for project: projectD (62abe5d2-71fc-4728-a6f9-d026ec669d87)
+[2025-11-17 12:14:25,420: INFO/MainProcess] ✅ My test: Connection successful
+[2025-11-17 12:14:30,552: INFO/MainProcess] ✅ GLR: Connection successful
+[2025-11-17 12:14:35,364: INFO/MainProcess] ✅ viz-ai: Connection successful
+[2025-11-17 12:14:40,298: INFO/MainProcess] ✅ My: Connection successful
+[2025-11-17 12:14:45,190: INFO/MainProcess] ✅ my-test: Connection successful
+[2025-11-17 12:14:47,479: INFO/MainProcess] Checking connections for project: WebSocket Test Project V1 (01626cad-c74e-4412-8c7b-13cc0daa47c2)
+[2025-11-17 12:14:47,732: INFO/MainProcess] No connections found for project WebSocket Test Project V1
+[2025-11-17 12:14:47,988: INFO/MainProcess] Checking connections for project: WebSocket Test Project w1 (bd2910c0-3dba-4672-a0bc-23daa54223bd)
+[2025-11-17 12:14:48,233: INFO/MainProcess] No connections found for project WebSocket Test Project w1
+[2025-11-17 12:14:48,478: INFO/MainProcess] Checking connections for project: Test Project via Script (49b206b2-75ac-45d7-83f8-9669a0456b7d)
+[2025-11-17 12:14:48,720: INFO/MainProcess] No connections found for project Test Project via Script
+[2025-11-17 12:14:48,966: INFO/MainProcess] Checking connections for project: Test Project 2 (2102e83c-8582-46d0-b563-389a981e148e)
+[2025-11-17 12:14:49,207: INFO/MainProcess] No connections found for project Test Project 2
+[2025-11-17 12:14:49,446: INFO/MainProcess] Checking connections for project: Test Project_id (b6326f69-79a7-4f50-8bbf-cf1f60f6c3c7)
+[2025-11-17 12:14:49,708: INFO/MainProcess] No connections found for project Test Project_id
+[2025-11-17 12:14:49,951: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-17 12:14:50,190: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-17 12:14:50,431: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-17 12:14:50,675: INFO/MainProcess] No connections found for project projectC
+[2025-11-17 12:14:50,935: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-17 12:14:56,698: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-17 12:15:01,151: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-17 12:15:05,779: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-17 12:15:07,663: INFO/MainProcess] Checking connections for project: yrs (72489c07-b88f-4212-991d-87f7e43a8798)
+[2025-11-17 12:15:07,905: INFO/MainProcess] No connections found for project yrs
+[2025-11-17 12:15:08,147: INFO/MainProcess] Checking connections for project: test1234 (3b2f4ea2-ef84-4749-82ce-9cb9aecb5daa)
+[2025-11-17 12:15:08,387: INFO/MainProcess] No connections found for project test1234
+[2025-11-17 12:15:08,627: INFO/MainProcess] Checking connections for project: AI Insights Project (8bce81a2-7053-4878-b74d-b56ae2f64e1f)
+[2025-11-17 12:15:08,871: INFO/MainProcess] No connections found for project AI Insights Project
+[2025-11-17 12:15:09,112: INFO/MainProcess] Checking connections for project: AI Insights Project V2 (9b94c9e0-3631-4977-8b2f-e915b79ae99e)
+[2025-11-17 12:15:09,353: INFO/MainProcess] No connections found for project AI Insights Project V2
+[2025-11-17 12:15:09,596: INFO/MainProcess] Checking connections for project: AI Insights Project V3 (d381c839-5cdd-4c5a-af06-dd19375d0746)
+[2025-11-17 12:15:09,841: INFO/MainProcess] No connections found for project AI Insights Project V3
+[2025-11-17 12:15:10,087: INFO/MainProcess] Checking connections for project: AI Insights Project V4 (eb788ee6-c22c-4c4e-8e9a-0e0b5dceb2ef)
+[2025-11-17 12:15:10,328: INFO/MainProcess] No connections found for project AI Insights Project V4
+[2025-11-17 12:15:10,569: INFO/MainProcess] Checking connections for project: AI Insights Project V5 (ceb96f9f-693b-403d-9970-1b8bbf79c708)
+[2025-11-17 12:15:10,807: INFO/MainProcess] No connections found for project AI Insights Project V5
+[2025-11-17 12:15:11,045: INFO/MainProcess] Checking connections for project: AI Insights Project V6 (52263049-23b4-493c-820c-1eb01a94344c)
+[2025-11-17 12:15:11,284: INFO/MainProcess] No connections found for project AI Insights Project V6
+[2025-11-17 12:15:11,528: INFO/MainProcess] Checking connections for project: AI Insights Project V25 (1dd85081-2a3a-413c-b4ed-734966fbc2f9)
+[2025-11-17 12:15:11,768: INFO/MainProcess] No connections found for project AI Insights Project V25
+[2025-11-17 12:15:12,008: INFO/MainProcess] Checking connections for project: AI Insights Project V35 (9ed89086-d2db-4953-be11-d5a8ec151a59)
+[2025-11-17 12:15:12,248: INFO/MainProcess] No connections found for project AI Insights Project V35
+[2025-11-17 12:15:12,487: INFO/MainProcess] Checking connections for project: cruncho (a08b3c9c-18e0-4973-a665-2a4f850a5a25)
+[2025-11-17 12:15:12,726: INFO/MainProcess] No connections found for project cruncho
+[2025-11-17 12:15:12,971: INFO/MainProcess] Checking connections for project: Test Proj (504d03f7-2da6-43e8-986d-0dffb5a9b038)
+[2025-11-17 12:15:13,213: INFO/MainProcess] No connections found for project Test Proj
+[2025-11-17 12:15:13,455: INFO/MainProcess] Checking connections for project: Testing_project (46f13824-8492-4b4c-a93a-c2434f7f94a9)
+[2025-11-17 12:15:13,700: INFO/MainProcess] No connections found for project Testing_project
+[2025-11-17 12:15:13,940: INFO/MainProcess] Checking connections for project: Testing_project_efefea (5ddf8027-1593-4163-aa9b-00403ef76c4c)
+[2025-11-17 12:15:14,188: INFO/MainProcess] No connections found for project Testing_project_efefea
+[2025-11-17 12:15:14,430: INFO/MainProcess] Checking connections for project: Testing_project_3b4d81 (8239f1cd-2191-4e84-a85f-6d9b32628014)
+[2025-11-17 12:15:14,670: INFO/MainProcess] No connections found for project Testing_project_3b4d81
+[2025-11-17 12:15:14,913: INFO/MainProcess] Checking connections for project: Testing_project_945651 (22f04ff9-b553-4711-8a22-fe593b0e2c6d)
+[2025-11-17 12:15:15,155: INFO/MainProcess] No connections found for project Testing_project_945651
+[2025-11-17 12:15:15,395: INFO/MainProcess] Checking connections for project: Project_f274af (647c7c79-3c63-4507-a396-0da6eae51ce1)
+[2025-11-17 12:15:15,700: INFO/MainProcess] No connections found for project Project_f274af
+[2025-11-17 12:15:15,968: INFO/MainProcess] Checking connections for project: blinkit (1620b31f-1fbe-4cc8-aa3e-8b0e1859d507)
+[2025-11-17 12:15:16,209: INFO/MainProcess] No connections found for project blinkit
+[2025-11-17 12:15:16,452: INFO/MainProcess] Checking connections for project: earthco (211f46d9-a5a5-43c7-97fe-7fc80ecb4fba)
+[2025-11-17 12:15:21,979: INFO/MainProcess] ✅ viz-ai-dat: Connection successful
+[2025-11-17 12:15:26,316: INFO/MainProcess] ✅ viz-ai-dock: Connection successful
+[2025-11-17 12:15:27,786: INFO/MainProcess] Checking connections for project: Fast API (bf704213-c511-418c-aa5f-a8d5bf1ddb72)
+[2025-11-17 12:15:32,839: INFO/MainProcess] ✅ viz-ai-demo: Connection successful
+[2025-11-17 12:15:34,057: INFO/MainProcess] Checking connections for project: GLR (7ded8820-d8b0-4074-b751-9a1c65ae39f6)
+[2025-11-17 12:15:34,298: INFO/MainProcess] No connections found for project GLR
+[2025-11-17 12:15:34,538: INFO/MainProcess] ✅ Connection check completed: 12 successful, 0 failed out of 12 total
+[2025-11-17 12:15:34,548: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[5dff0de4-5449-43e0-9aa3-234945b20164] succeeded in 84.69725491700228s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-17T06:45:34.538797', 'projects_checked': 31, 'total_connections_checked': 12, 'successful_connections': 12, 'failed_connections': 0, 'project_results': [{'project_id': 'c529b69a-b08c-4fdd-bc35-d58b012093a1', 'project_name': 'project1', 'connections_checked': 1, 'successful': 1, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 5, 'successful': 5, 'failed': 0}, {'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}, {'project_id': '211f46d9-a5a5-43c7-97fe-7fc80ecb4fba', 'project_name': 'earthco', 'connections_checked': 2, 'successful': 2, 'failed': 0}, {'project_id': 'bf704213-c511-418c-aa5f-a8d5bf1ddb72', 'project_name': 'Fast API', 'connections_checked': 1, 'successful': 1, 'failed': 0}]}
+[2025-11-17 12:15:34,564: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[dac1ffe3-761b-42a7-a1df-9de5fa629920] received
+[2025-11-17 12:15:34,565: INFO/MainProcess] 🔄 Starting scheduled database connection check...
+[2025-11-17 12:15:35,524: INFO/MainProcess] Checking connections for project: project1 (c529b69a-b08c-4fdd-bc35-d58b012093a1)
+[2025-11-17 12:15:40,485: INFO/MainProcess] ✅ viz-ai-test: Connection successful
+[2025-11-17 12:15:41,767: INFO/MainProcess] Checking connections for project: projectD (62abe5d2-71fc-4728-a6f9-d026ec669d87)
+[2025-11-17 12:15:47,481: INFO/MainProcess] ✅ My test: Connection successful
+[2025-11-17 12:15:52,051: INFO/MainProcess] ✅ GLR: Connection successful
+[2025-11-17 12:15:56,615: INFO/MainProcess] ✅ my-test: Connection successful
+[2025-11-17 12:16:01,040: INFO/MainProcess] ✅ viz-ai: Connection successful
+[2025-11-17 12:16:05,588: INFO/MainProcess] ✅ My: Connection successful
+[2025-11-17 12:16:07,981: INFO/MainProcess] Checking connections for project: WebSocket Test Project V1 (01626cad-c74e-4412-8c7b-13cc0daa47c2)
+[2025-11-17 12:16:08,251: INFO/MainProcess] No connections found for project WebSocket Test Project V1
+[2025-11-17 12:16:08,543: INFO/MainProcess] Checking connections for project: WebSocket Test Project w1 (bd2910c0-3dba-4672-a0bc-23daa54223bd)
+[2025-11-17 12:16:08,803: INFO/MainProcess] No connections found for project WebSocket Test Project w1
+[2025-11-17 12:16:09,047: INFO/MainProcess] Checking connections for project: Test Project via Script (49b206b2-75ac-45d7-83f8-9669a0456b7d)
+[2025-11-17 12:16:09,289: INFO/MainProcess] No connections found for project Test Project via Script
+[2025-11-17 12:16:09,529: INFO/MainProcess] Checking connections for project: Test Project 2 (2102e83c-8582-46d0-b563-389a981e148e)
+[2025-11-17 12:16:09,769: INFO/MainProcess] No connections found for project Test Project 2
+[2025-11-17 12:16:10,009: INFO/MainProcess] Checking connections for project: Test Project_id (b6326f69-79a7-4f50-8bbf-cf1f60f6c3c7)
+[2025-11-17 12:16:10,247: INFO/MainProcess] No connections found for project Test Project_id
+[2025-11-17 12:16:10,484: INFO/MainProcess] Checking connections for project: Webtrak (2f96eace-5738-4c9f-afba-155203ee1434)
+[2025-11-17 12:16:10,723: INFO/MainProcess] No connections found for project Webtrak
+[2025-11-17 12:16:10,963: INFO/MainProcess] Checking connections for project: projectC (1f55f152-85a3-4c39-9157-b5db05a782b0)
+[2025-11-17 12:16:11,208: INFO/MainProcess] No connections found for project projectC
+[2025-11-17 12:16:11,448: INFO/MainProcess] Checking connections for project: Test (50a1f9e0-d273-4249-9327-dd32835a25ed)
+[2025-11-17 12:16:16,240: INFO/MainProcess] ✅ My Postgres DB3: Connection successful
+[2025-11-17 12:16:21,094: INFO/MainProcess] ✅ My Postgres DB2: Connection successful
+[2025-11-17 12:16:25,426: INFO/MainProcess] ✅ My Postgres DBB: Connection successful
+[2025-11-17 12:16:28,736: INFO/MainProcess] Checking connections for project: yrs (72489c07-b88f-4212-991d-87f7e43a8798)
+[2025-11-17 12:16:29,073: INFO/MainProcess] No connections found for project yrs
+[2025-11-17 12:16:29,928: INFO/MainProcess] Checking connections for project: test1234 (3b2f4ea2-ef84-4749-82ce-9cb9aecb5daa)
+[2025-11-17 12:16:31,175: INFO/MainProcess] No connections found for project test1234
+[2025-11-17 12:16:32,584: INFO/MainProcess] Checking connections for project: AI Insights Project (8bce81a2-7053-4878-b74d-b56ae2f64e1f)
+[2025-11-17 12:16:33,454: INFO/MainProcess] No connections found for project AI Insights Project
+[2025-11-17 12:16:35,367: INFO/MainProcess] Checking connections for project: AI Insights Project V2 (9b94c9e0-3631-4977-8b2f-e915b79ae99e)
+[2025-11-17 12:16:35,701: INFO/MainProcess] No connections found for project AI Insights Project V2
+[2025-11-17 12:16:36,036: INFO/MainProcess] Checking connections for project: AI Insights Project V3 (d381c839-5cdd-4c5a-af06-dd19375d0746)
+[2025-11-17 12:16:36,906: INFO/MainProcess] No connections found for project AI Insights Project V3
+[2025-11-17 12:16:37,240: INFO/MainProcess] Checking connections for project: AI Insights Project V4 (eb788ee6-c22c-4c4e-8e9a-0e0b5dceb2ef)
+[2025-11-17 12:16:37,972: INFO/MainProcess] No connections found for project AI Insights Project V4
+[2025-11-17 12:16:38,308: INFO/MainProcess] Checking connections for project: AI Insights Project V5 (ceb96f9f-693b-403d-9970-1b8bbf79c708)
+[2025-11-17 12:16:38,641: INFO/MainProcess] No connections found for project AI Insights Project V5
+[2025-11-17 12:16:41,165: INFO/MainProcess] Checking connections for project: AI Insights Project V6 (52263049-23b4-493c-820c-1eb01a94344c)
+[2025-11-17 12:16:41,533: INFO/MainProcess] No connections found for project AI Insights Project V6
+[2025-11-17 12:16:41,870: INFO/MainProcess] Checking connections for project: AI Insights Project V25 (1dd85081-2a3a-413c-b4ed-734966fbc2f9)
+[2025-11-17 12:16:42,205: INFO/MainProcess] No connections found for project AI Insights Project V25
+[2025-11-17 12:16:42,542: INFO/MainProcess] Checking connections for project: AI Insights Project V35 (9ed89086-d2db-4953-be11-d5a8ec151a59)
+[2025-11-17 12:16:43,977: INFO/MainProcess] No connections found for project AI Insights Project V35
+[2025-11-17 12:16:44,873: INFO/MainProcess] Checking connections for project: cruncho (a08b3c9c-18e0-4973-a665-2a4f850a5a25)
+[2025-11-17 12:16:46,153: INFO/MainProcess] No connections found for project cruncho
+[2025-11-17 12:16:46,551: INFO/MainProcess] Checking connections for project: Test Proj (504d03f7-2da6-43e8-986d-0dffb5a9b038)
+[2025-11-17 12:16:46,962: INFO/MainProcess] No connections found for project Test Proj
+[2025-11-17 12:16:47,882: INFO/MainProcess] Checking connections for project: Testing_project (46f13824-8492-4b4c-a93a-c2434f7f94a9)
+[2025-11-17 12:16:49,192: INFO/MainProcess] No connections found for project Testing_project
+[2025-11-17 12:16:49,529: INFO/MainProcess] Checking connections for project: Testing_project_efefea (5ddf8027-1593-4163-aa9b-00403ef76c4c)
+[2025-11-17 12:16:49,863: INFO/MainProcess] No connections found for project Testing_project_efefea
+[2025-11-17 12:16:50,835: INFO/MainProcess] Checking connections for project: Testing_project_3b4d81 (8239f1cd-2191-4e84-a85f-6d9b32628014)
+[2025-11-17 12:16:53,770: INFO/MainProcess] No connections found for project Testing_project_3b4d81
+[2025-11-17 12:16:54,130: INFO/MainProcess] Checking connections for project: Testing_project_945651 (22f04ff9-b553-4711-8a22-fe593b0e2c6d)
+[2025-11-17 12:16:54,467: INFO/MainProcess] No connections found for project Testing_project_945651
+[2025-11-17 12:16:55,917: INFO/MainProcess] Checking connections for project: Project_f274af (647c7c79-3c63-4507-a396-0da6eae51ce1)
+[2025-11-17 12:16:56,267: INFO/MainProcess] No connections found for project Project_f274af
+[2025-11-17 12:16:56,943: INFO/MainProcess] Checking connections for project: blinkit (1620b31f-1fbe-4cc8-aa3e-8b0e1859d507)
+[2025-11-17 12:16:57,833: INFO/MainProcess] No connections found for project blinkit
+[2025-11-17 12:16:59,274: INFO/MainProcess] Checking connections for project: earthco (211f46d9-a5a5-43c7-97fe-7fc80ecb4fba)
+[2025-11-17 12:17:55,920: INFO/MainProcess] ✅ viz-ai-dat: Connection successful
+[2025-11-17 12:18:23,991: INFO/MainProcess] ✅ viz-ai-dock: Connection successful
+[2025-11-17 12:18:25,475: INFO/MainProcess] Checking connections for project: Fast API (bf704213-c511-418c-aa5f-a8d5bf1ddb72)
+[2025-11-17 12:18:32,325: INFO/MainProcess] ✅ viz-ai-demo: Connection successful
+[2025-11-17 12:18:33,539: INFO/MainProcess] Checking connections for project: GLR (7ded8820-d8b0-4074-b751-9a1c65ae39f6)
+[2025-11-17 12:18:33,779: INFO/MainProcess] No connections found for project GLR
+[2025-11-17 12:18:34,018: INFO/MainProcess] ✅ Connection check completed: 12 successful, 0 failed out of 12 total
+[2025-11-17 12:18:34,029: INFO/MainProcess] Task app.utils.tasks.check_all_database_connections[dac1ffe3-761b-42a7-a1df-9de5fa629920] succeeded in 179.4628727499803s: {'status': 'success', 'message': 'Database connection check completed successfully', 'timestamp': '2025-11-17T06:48:34.018014', 'projects_checked': 31, 'total_connections_checked': 12, 'successful_connections': 12, 'failed_connections': 0, 'project_results': [{'project_id': 'c529b69a-b08c-4fdd-bc35-d58b012093a1', 'project_name': 'project1', 'connections_checked': 1, 'successful': 1, 'failed': 0}, {'project_id': '62abe5d2-71fc-4728-a6f9-d026ec669d87', 'project_name': 'projectD', 'connections_checked': 5, 'successful': 5, 'failed': 0}, {'project_id': '50a1f9e0-d273-4249-9327-dd32835a25ed', 'project_name': 'Test', 'connections_checked': 3, 'successful': 3, 'failed': 0}, {'project_id': '211f46d9-a5a5-43c7-97fe-7fc80ecb4fba', 'project_name': 'earthco', 'connections_checked': 2, 'successful': 2, 'failed': 0}, {'project_id': 'bf704213-c511-418c-aa5f-a8d5bf1ddb72', 'project_name': 'Fast API', 'connections_checked': 1, 'successful': 1, 'failed': 0}]}
