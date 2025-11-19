@@ -1262,19 +1262,22 @@ async def get_pinned_charts_count(
 
 @backend_router.get("/charts", status_code=status.HTTP_200_OK)
 async def get_charts(
-    db: Session = Depends(get_db), token_payload: dict = Depends(get_current_user)
+    project_id: UUID = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user)
 ):
     """
-    Get all charts for the authenticated user.
+    Get all charts for the authenticated user, optionally filtered by project.
 
     Args:
+        project_id (UUID): Optional project ID to filter charts by.
         db (Session): The database session.
         token_payload (dict): The payload of the current authenticated user.
 
     Returns:
-        list: A list of all charts for the authenticated user.
+        dict: A dictionary containing charts for the authenticated user.
     """
-    return await get_charts_service(db, token_payload)
+    return await get_charts_service(db, token_payload, project_id)
 
 
 @backend_router.get("/charts/filter", status_code=status.HTTP_200_OK)

@@ -636,21 +636,40 @@ async def get_access_requests_service(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-async def get_charts_service(db: Session, token_payload: dict):
+async def get_charts_service(db: Session, token_payload: dict, project_id: UUID = None):
     """
-    Get all charts for the user.(Currently retrieves all charts, in userCharts table)
+    Get all charts for the user, optionally filtered by project.
+    
+    Args:
+        db (Session): Database session
+        token_payload (dict): User authentication token payload
+        project_id (UUID): Optional project ID to filter charts by
+    
+    Returns:
+        dict: Charts retrieved for the user, optionally filtered by project
     """
     try:
         user_id = UUID(token_payload.get("sub"))
         if not user_id:
             raise ValueError("User ID not found in token payload")
-        # Fetch all charts for the user
-        user_charts = (
-            db.query(UserChartModel).filter(UserChartModel.user_id == user_id).all()
-        )
+        
+        # Base query for user's charts
+        query = db.query(UserChartModel).filter(UserChartModel.user_id == user_id)
+        
+        # If project_id is provided, join with DatabaseConnectionModel and filter by project
+        if project_id:
+            query = query.join(
+                DatabaseConnectionModel,
+                UserChartModel.database_connection_id == DatabaseConnectionModel.id
+            ).filter(
+                DatabaseConnectionModel.project_id == project_id
+            )
+        
+        user_charts = query.all()
 
         return {
             "message": "Charts retrieved successfully",
+            "project_id": str(project_id) if project_id else None,
             "charts": [
                 {
                     "id": str(chart.chart_id),
@@ -659,7 +678,7 @@ async def get_charts_service(db: Session, token_payload: dict):
                     "query": chart.chart.query,
                     "type": chart.chart.chart_type,
                     "isFavorite": chart.is_favorite,
-                    "datasourceConnectionId": chart.database_connection_id,
+                    "datasourceConnectionId": str(chart.database_connection_id) if chart.database_connection_id else None,
                     "status": chart.chart.status if hasattr(chart.chart, "status") else None,
                 }
                 for chart in user_charts
