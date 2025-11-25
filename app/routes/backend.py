@@ -5,6 +5,7 @@ use dependency injection for DB session and user authentication.
 """
 
 from uuid import UUID
+from typing import Optional
 import traceback
 from fastapi import (
     APIRouter,
@@ -15,6 +16,7 @@ from fastapi import (
     Path,
     HTTPException,
     Body,
+    Query,
     BackgroundTasks,
     WebSocket,
     WebSocketDisconnect
@@ -65,6 +67,7 @@ from app.schemas import (
     BusinessInsightsRequest,
     BusinessInsightsResponse,
     ProjectInsightsResponse,
+    LatestBusinessInsightResponse,
     ConnectionStatsResponse,
     ConnectionCheckResponse,
 )
@@ -134,7 +137,10 @@ from app.services.chart import (
 )
 
 from app.services.business_insights import generate_business_insights_service
-from app.services.project_insights import generate_project_insights_service
+from app.services.project_insights import (
+    generate_project_insights_service,
+    get_latest_business_insight_service,
+)
 
 from app.services.generate_queries import (
     generate_and_store_charts,
@@ -1499,6 +1505,30 @@ async def generate_project_business_insights(
         db=db,
         token_payload=token_payload,
         project_id=project_id,
+    )
+
+
+@backend_router.get(
+    "/business-insights/latest",
+    status_code=status.HTTP_200_OK,
+    response_model=LatestBusinessInsightResponse,
+)
+async def get_latest_business_insight_route(
+    project_id: UUID = Query(..., description="Project ID to filter business insights"),
+    user_id: Optional[UUID] = Query(
+        None, description="User ID to filter (defaults to current user)"
+    ),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Fetch the latest generated business insight for a specific user and project.
+    """
+    return await get_latest_business_insight_service(
+        db=db,
+        token_payload=token_payload,
+        project_id=project_id,
+        user_id=user_id,
     )
 
 

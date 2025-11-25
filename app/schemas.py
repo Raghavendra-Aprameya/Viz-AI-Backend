@@ -1271,6 +1271,31 @@ class ConsolidatedInsights(BaseModel):
     opportunities: List[Opportunity]
 
 
+class BusinessInsightRecord(BaseModel):
+    """
+    Serialized record for a persisted business insight.
+    """
+
+    id: UUID
+    project_id: UUID
+    user_id: UUID
+    executive_summary: str
+    key_metrics: Dict[str, Any]
+    insights_and_patterns: Any
+    recommendations: Any
+    areas_of_concern: Any
+    created_at: datetime
+
+
+class LatestBusinessInsightResponse(BaseModel):
+    """
+    Response model for fetching the latest business insight.
+    """
+
+    message: str
+    insight: BusinessInsightRecord
+
+
 
 
 class DatabaseInsightSummary(BaseModel):

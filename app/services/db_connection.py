@@ -294,7 +294,7 @@ async def create_database_connection(
     background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db, db_entry.id)
 
     # --- Return immediately ---
-    tables_count = len(extract_table_names(connection_string))  # can just list table names for count
+    tables_count = len(extract_table_names(connection_string))  
     return {"taskId": task_id, "tablesCount": tables_count}
 
 
