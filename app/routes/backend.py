@@ -984,6 +984,8 @@ def execute_query(
             datasource_connection_id=datasource_connection_id,
             query_input=request.query,
             token_payload=token_payload,
+            from_date=request.from_date,
+            to_date=request.to_date,
         )
     except SQLAlchemyError as e:
         # Explicitly re-raise the exception with context

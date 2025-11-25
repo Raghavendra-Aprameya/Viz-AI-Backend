@@ -800,9 +800,13 @@ class QueryExecutionRequest(BaseModel):
 
     Attributes:
         query: SQL query string to execute
+        from_date: Optional start date for filtering (YYYY-MM-DD format)
+        to_date: Optional end date for filtering (YYYY-MM-DD format)
     """
 
     query: str
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
 
 
 class Nl2SQLChatRequest(BaseModel):
