@@ -73,22 +73,34 @@ from uuid import uuid4
 import asyncio, json
 
 progress_queues: dict[str, asyncio.Queue] = {}
-
 async def extract_tables_in_background(task_id: str, connection_string: str, db: Session, db_entry_id):
+    # ensure the async queue exists and frontend can connect immediately
     queue = progress_queues.setdefault(task_id, asyncio.Queue())
 
-    # Extract schema with progress updates
-    schema_structure = get_schema_structure(connection_string, task_queue=queue)
+    loop = asyncio.get_running_loop()
 
-    # Save schema to DB
-    db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
-    db_entry.db_schema = json.dumps(schema_structure)
-    db.commit()
+    # Run blocking schema extraction in a thread pool
+    # get_schema_structure_sync will use loop.call_soon_threadsafe(queue.put_nowait, msg)
+    schema_structure = await loop.run_in_executor(
+        None,                       # use default ThreadPoolExecutor
+        get_schema_structure,  # blocking function
+        connection_string,
+        queue,
+        loop
+    )
 
-    # Mark task completed
+    # Save schema to DB (this is small DB update; run in event loop or executor depending on your ORM)
+    try:
+        db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
+        db_entry.db_schema = json.dumps(schema_structure)
+        db.commit()
+    except Exception as e:
+        # push DB save error
+        await queue.put({"type": "error", "message": f"Failed saving schema to DB: {e}"})
+
+    # notify completion and sentinel
     await queue.put({"type": "completed", "taskId": task_id})
-    await queue.put(None)  # sentinel for WebSocket
-
+    await queue.put(None)
 
 # @require_permission(Permission.ADD_DATASOURCE)
 # async def create_database_connection(
