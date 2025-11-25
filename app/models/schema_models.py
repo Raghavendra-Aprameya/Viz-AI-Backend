@@ -96,6 +96,9 @@ class UserModel(Base):
         foreign_keys="ChartAccessRequestModel.reviewer",
         cascade="all, delete-orphan",
     )
+    business_insights = relationship(
+        "BusinessInsightModel", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class RolePermissionModel(Base):
@@ -225,6 +228,9 @@ class ProjectModel(Base):
         "ChartAccessRequestModel",
         back_populates="project",
         cascade="all, delete-orphan",
+    )
+    business_insights = relationship(
+        "BusinessInsightModel", back_populates="project", cascade="all, delete-orphan"
     )
 
 
@@ -558,6 +564,31 @@ class ChartAccessRequestModel(Base):
         foreign_keys=[reviewer],
         back_populates="reviewed_chart_access_requests",
     )
+
+
+class BusinessInsightModel(Base):
+    """
+    Stores generated business insights per project and user.
+    """
+
+    __tablename__ = "business_insights"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    executive_summary = Column(String, nullable=False)
+    key_metrics = Column(String, nullable=False)
+    insights_and_patterns = Column(String, nullable=False)
+    recommendations = Column(String, nullable=False)
+    areas_of_concern = Column(String, nullable=False)
+    project_id = Column(
+        UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    project = relationship("ProjectModel", back_populates="business_insights")
+    user = relationship("UserModel", back_populates="business_insights")
 
 
 class ResponseTimeModel(Base):
