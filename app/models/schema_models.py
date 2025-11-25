@@ -204,7 +204,9 @@ class ProjectModel(Base):
     description = Column(Text)
     kpi_info = Column(String, nullable=True)
     prod_desc = Column(String, nullable=True)
+    summarised_desc=Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+
 
     project_roles = relationship(
         "UserProjectRoleModel", back_populates="project", cascade="all, delete-orphan"
