@@ -43,12 +43,18 @@
 #         schema_info["max_date"] = None
 
 #     return schema_info
+
+# blocking sync function — runs in a thread
 from sqlalchemy import create_engine, inspect
 from datetime import datetime
 from typing import Optional
-import asyncio
+import json
 
-def get_schema_structure(connection_string: str, task_queue: Optional[asyncio.Queue] = None):
+def get_schema_structure(connection_string: str, queue, loop):
+    """
+    Blocking schema extraction that runs in a thread.
+    Uses loop.call_soon_threadsafe(queue.put_nowait, msg) to push progress back to the async queue.
+    """
     engine = create_engine(connection_string)
     inspector = inspect(engine)
     schema_info = {"tables": []}
@@ -61,7 +67,15 @@ def get_schema_structure(connection_string: str, task_queue: Optional[asyncio.Qu
             table_names = inspector.get_table_names()
             total_tables = len(table_names)
 
+            # send an initial snapshot if you want
+            loop.call_soon_threadsafe(queue.put_nowait, {
+                "type": "started",
+                "totalTables": total_tables,
+                "message": f"Found {total_tables} tables"
+            })
+
             for idx, table_name in enumerate(table_names, start=1):
+                # Blocking inspector calls (these will execute in the thread)
                 columns = inspector.get_columns(table_name)
                 primary_keys = inspector.get_pk_constraint(table_name)
                 foreign_keys = [
@@ -76,25 +90,24 @@ def get_schema_structure(connection_string: str, task_queue: Optional[asyncio.Qu
                     "foreign_keys": foreign_keys
                 })
 
-                # Push progress to queue if available
-                if task_queue:
-                    # Use asyncio.create_task only in async context; here we are in sync, so use `asyncio.get_event_loop().create_task`
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(
-                        task_queue.put({
-                            "type": "progress",
-                            "completedTables": idx,
-                            "totalTables": total_tables,
-                            "tableName": table_name,
-                            "message": f"Extracting table {idx}/{total_tables}"
-                        })
-                    )
+                # thread-safely push a progress update into the asyncio.Queue
+                loop.call_soon_threadsafe(queue.put_nowait, {
+                    "type": "progress",
+                    "completedTables": idx,
+                    "totalTables": total_tables,
+                    "tableName": table_name,
+                    "message": f"Extracting table {idx}/{total_tables}"
+                })
 
-        schema_info["min_date"] = min_date.isoformat()
-        schema_info["max_date"] = max_date.isoformat()
+            schema_info["min_date"] = min_date.isoformat()
+            schema_info["max_date"] = max_date.isoformat()
 
     except Exception as e:
-        print(f"Error fetching schema information: {e}. Returning partial schema info.")
+        # push error to queue and return partial schema_info
+        loop.call_soon_threadsafe(queue.put_nowait, {
+            "type": "error",
+            "message": f"Error fetching schema information: {e}"
+        })
         schema_info["min_date"] = None
         schema_info["max_date"] = None
 
