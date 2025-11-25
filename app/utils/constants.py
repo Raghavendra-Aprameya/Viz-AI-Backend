@@ -30,10 +30,10 @@ class Permissions(str, Enum):
     DELETE_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb53"
 
 POOL_RECYCLE = 300
-POOL_SIZE = 10
-MAX_OVERFLOW = 5
+POOL_SIZE = 20
+MAX_OVERFLOW = 10
 
-ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io","*"]
+ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io"]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*", "Authorization"]

@@ -5,6 +5,7 @@ use dependency injection for DB session and user authentication.
 """
 
 from uuid import UUID
+from typing import Optional
 import traceback
 from fastapi import (
     APIRouter,
@@ -15,6 +16,10 @@ from fastapi import (
     Path,
     HTTPException,
     Body,
+    Query,
+    BackgroundTasks,
+    WebSocket,
+    WebSocketDisconnect
 )
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -62,6 +67,7 @@ from app.schemas import (
     BusinessInsightsRequest,
     BusinessInsightsResponse,
     ProjectInsightsResponse,
+    LatestBusinessInsightResponse,
     ConnectionStatsResponse,
     ConnectionCheckResponse,
 )
@@ -96,6 +102,7 @@ from app.services.db_connection import (
     delete_db_connection,
     get_connection_stats,
     check_and_update_connections,
+    progress_queues
 )
 
 from app.services.userService import (
@@ -130,7 +137,10 @@ from app.services.chart import (
 )
 
 from app.services.business_insights import generate_business_insights_service
-from app.services.project_insights import generate_project_insights_service
+from app.services.project_insights import (
+    generate_project_insights_service,
+    get_latest_business_insight_service,
+)
 
 from app.services.generate_queries import (
     generate_and_store_charts,
@@ -140,6 +150,8 @@ from app.services.generate_queries import (
 from app.services.nl2sql import generate_nl_sql
 
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
+
+
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
@@ -167,6 +179,7 @@ async def create_project_route(
 async def add_database_connection(
     project_id: UUID,
     data: DBConnectionRequest,
+    background_tasks:BackgroundTasks,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
@@ -180,7 +193,29 @@ async def add_database_connection(
     Returns:
         dict: The created database connection.
     """
-    return await create_database_connection(project_id, token_payload, data, db)
+    return await create_database_connection(project_id, token_payload, data, db,background_tasks)
+
+@backend_router.websocket("/ws/progress/{task_id}")
+async def ws_progress(ws: WebSocket, task_id: str):
+    await ws.accept()
+    queue = progress_queues.get(task_id)
+    if not queue:
+        await ws.send_json({"type": "error", "message": "Invalid taskId"})
+        await ws.close()
+        return
+    try:
+        while True:
+            msg = await queue.get()
+            if msg is None:
+                break  # worker finished
+            await ws.send_json(msg)
+    except WebSocketDisconnect:
+        print(f"Client disconnected from task {task_id}")
+    finally:
+        try:
+            await ws.close()
+        except:
+            pass
 
 
 @backend_router.get(
@@ -1472,6 +1507,30 @@ async def generate_project_business_insights(
         db=db,
         token_payload=token_payload,
         project_id=project_id,
+    )
+
+
+@backend_router.get(
+    "/business-insights/latest",
+    status_code=status.HTTP_200_OK,
+    response_model=LatestBusinessInsightResponse,
+)
+async def get_latest_business_insight_route(
+    project_id: UUID = Query(..., description="Project ID to filter business insights"),
+    user_id: Optional[UUID] = Query(
+        None, description="User ID to filter (defaults to current user)"
+    ),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Fetch the latest generated business insight for a specific user and project.
+    """
+    return await get_latest_business_insight_service(
+        db=db,
+        token_payload=token_payload,
+        project_id=project_id,
+        user_id=user_id,
     )
 
 

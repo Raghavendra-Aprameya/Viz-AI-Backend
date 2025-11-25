@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.middleware.response_time import ResponseTimeMiddleware
@@ -42,3 +42,10 @@ app.add_middleware(ResponseTimeMiddleware)
 @app.get("/")
 async def root():
     return {"message": "hello"}
+
+@app.websocket("/ws/test")
+async def ws_test(ws: WebSocket):
+    await ws.accept()
+    await ws.send_text("Hello WS!")
+    await ws.close()
+

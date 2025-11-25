@@ -7,12 +7,13 @@ within a project, providing a unified strategic view of the entire project's dat
 
 import json
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from uuid import UUID
 
 import redis
 from fastapi import HTTPException, status 
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 import google.generativeai as genai
 
 from app.models.schema_models import (
@@ -20,6 +21,7 @@ from app.models.schema_models import (
     UserProjectRoleModel,
     UserModel,
     ProjectModel,
+    BusinessInsightModel,
 )
 from app.core.settings import settings
 
@@ -217,6 +219,41 @@ async def generate_project_insights_service(
             "database_insights": all_database_insights,
             "consolidated_insights": consolidated_insights
         }
+
+        # Persist the latest insights for auditing and downstream consumption
+        try:
+            insight_record = BusinessInsightModel(
+                executive_summary=consolidated_insights.get("health_assessment", "No summary generated"),
+                key_metrics=json.dumps(
+                    {
+                        "overall_health_score": consolidated_insights.get("overall_health_score"),
+                        "total_databases_analyzed": result["total_databases_analyzed"],
+                        "successful_analyses": result["successful_analyses"],
+                    }
+                ),
+                insights_and_patterns=json.dumps(
+                    consolidated_insights.get("cross_database_patterns", [])
+                ),
+                recommendations=json.dumps(
+                    consolidated_insights.get("strategic_priorities", [])
+                ),
+                areas_of_concern=json.dumps(
+                    consolidated_insights.get("risk_assessment", {})
+                ),
+                project_id=project_id,
+                user_id=user_id,
+            )
+            db.add(insight_record)
+            db.commit()
+            db.refresh(insight_record)
+            logger.info(
+                "Stored business insight record %s for project %s",
+                insight_record.id,
+                project_id,
+            )
+        except Exception as db_err:
+            db.rollback()
+            logger.error("Failed to persist business insights for project %s: %s", project_id, db_err)
 
         try:
             redis_client.setex(cache_key, REDIS_TTL_SECONDS, _serialize_for_cache(result))
@@ -418,4 +455,79 @@ Just the raw JSON object starting with {{ and ending with }}.
             },
             "opportunities": []
         }
+
+
+async def get_latest_business_insight_service(
+    db: Session,
+    token_payload: dict,
+    project_id: UUID,
+    user_id: Optional[UUID] = None,
+) -> Dict[str, Any]:
+    """
+    Fetch the latest persisted business insight for a given user/project combination.
+    Falls back to the requesting user if user_id is not provided.
+    """
+    try:
+        requester_id = UUID(token_payload.get("sub"))
+        target_user_id = user_id or requester_id
+
+        if requester_id != target_user_id:
+            requester = db.query(UserModel).filter(UserModel.id == requester_id).first()
+            if not requester or not requester.is_super:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to view other users' insights",
+                )
+
+        insight = (
+            db.query(BusinessInsightModel)
+            .filter(
+                BusinessInsightModel.project_id == project_id,
+                BusinessInsightModel.user_id == target_user_id,
+            )
+            .order_by(desc(BusinessInsightModel.created_at))
+            .first()
+        )
+
+        if not insight:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No business insights found for the specified user and project",
+            )
+
+        def _parse_json_field(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, (dict, list)):
+                return value
+            if isinstance(value, str):
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    return value
+            return value
+
+        return {
+            "message": "Latest business insight fetched successfully",
+            "insight": {
+                "id": insight.id,
+                "project_id": insight.project_id,
+                "user_id": insight.user_id,
+                "executive_summary": insight.executive_summary,
+                "key_metrics": _parse_json_field(insight.key_metrics),
+                "insights_and_patterns": _parse_json_field(insight.insights_and_patterns),
+                "recommendations": _parse_json_field(insight.recommendations),
+                "areas_of_concern": _parse_json_field(insight.areas_of_concern),
+                "created_at": insight.created_at,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching latest business insight: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch business insight",
+        ) from e
 
