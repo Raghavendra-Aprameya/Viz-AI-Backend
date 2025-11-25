@@ -42,15 +42,19 @@ class DBConnectionRequest(BaseModel):
     consent_given: Optional[bool] = False
 
 
+# class DBConnectionResponse(BaseModel):
+#     """
+#     Response model for a database connection creation or update operation.
+
+#     Attributes:
+#         db_entry_id: UUID of the created or updated database connection
+#     """
+
+#     db_entry_id: UUID
+
 class DBConnectionResponse(BaseModel):
-    """
-    Response model for a database connection creation or update operation.
-
-    Attributes:
-        db_entry_id: UUID of the created or updated database connection
-    """
-
-    db_entry_id: UUID
+    taskId: str
+    tablesCount: int
 
 
 class DBConnectionListResponse(BaseModel):

@@ -67,147 +67,237 @@ from app.utils.constants import Permissions as Permission
 from app.utils.access import require_permission
 
 
-@require_permission(Permission.ADD_DATASOURCE)
+from fastapi import FastAPI, WebSocket, BackgroundTasks, HTTPException
+from urllib.parse import urlparse, quote_plus
+from uuid import uuid4
+import asyncio, json
+
+progress_queues: dict[str, asyncio.Queue] = {}
+
+async def extract_tables_in_background(task_id: str, connection_string: str, db: Session, db_entry_id):
+    queue = progress_queues.setdefault(task_id, asyncio.Queue())
+
+    # Extract schema with progress updates
+    schema_structure = get_schema_structure(connection_string, task_queue=queue)
+
+    # Save schema to DB
+    db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
+    db_entry.db_schema = json.dumps(schema_structure)
+    db.commit()
+
+    # Mark task completed
+    await queue.put({"type": "completed", "taskId": task_id})
+    await queue.put(None)  # sentinel for WebSocket
+
+
+# @require_permission(Permission.ADD_DATASOURCE)
+# async def create_database_connection(
+#     project_id: UUID,
+#     token_payload: dict,
+#     data: DBConnectionRequest,
+#     db: Session,
+# ):
+#     """
+#     Creates and stores a new database connection for a given project.
+
+#     Args:
+#         project_id (UUID): The project to which this DB connection belongs.
+#         token_payload (dict): Decoded token payload for permission checks.
+#         data (DBConnectionRequest): Input data for creating the DB connection.
+#         db (Session): SQLAlchemy DB session.
+
+#     Returns:
+#         DBConnectionResponse: Response containing the created DB connection ID.
+
+#     Raises:
+#         HTTPException: On invalid DB type or parsing errors.
+#     """
+#     if data.connection_string:
+#         parsed_url = urlparse(data.connection_string)
+#         # Normalize parsed components to safe strings
+#         raw_username = parsed_url.username or ""
+#         raw_password = parsed_url.password or ""
+#         raw_host = parsed_url.hostname or ""
+#         raw_port = parsed_url.port
+#         raw_path = parsed_url.path or ""
+#         raw_query = parsed_url.query or ""
+
+#         # Determine final database name: prefer path, else fallback to provided db_name
+#         parsed_db_name = raw_path.lstrip("/")
+#         final_db_name = parsed_db_name or (data.db_name or "")
+
+#         if not raw_host:
+#             raise HTTPException(
+#                 status_code=400, detail="Host is required in connection string"
+#             )
+#         if not final_db_name:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Database name is required (missing in URL and payload)",
+#             )
+
+#         # Ensure quote_plus always gets a string
+#         encoded_password = quote_plus(str(raw_password))
+
+#         connection_string = (
+#             f"{parsed_url.scheme}://{raw_username}:{encoded_password}@"
+#             f"{raw_host}{':' + str(raw_port) if raw_port else ''}"
+#             f"/{final_db_name}"
+#             f"{'?' + raw_query if raw_query else ''}"
+#         )
+
+#         db_type = data.db_type
+#         schema_structure = get_schema_structure(connection_string)
+
+#         username = raw_username
+#         password = str(raw_password)
+#         host = raw_host
+#         db_name = final_db_name
+
+#     else:
+#         db_type = (data.db_type or "").lower()
+#         username = data.name or ""
+#         password = data.password or ""
+#         host = data.host or ""
+#         db_name = data.db_name or ""
+
+#         if not host:
+#             raise HTTPException(status_code=400, detail="Host is required")
+#         if not db_name:
+#             raise HTTPException(status_code=400, detail="Database name is required")
+
+#         # Parse host and port from host string (format: "host:port" or just "host")
+#         # SQLAlchemy connection strings support port in the format: scheme://user:pass@host:port/db
+#         if ":" in host and not host.startswith("["):  # IPv6 addresses start with [
+#             # Host already contains port (e.g., "localhost:3306")
+#             host_part = host
+#         else:
+#             # Host doesn't contain port, use default ports
+#             if db_type == "postgres":
+#                 host_part = f"{host}:5432"
+#             elif db_type == "mysql":
+#                 host_part = f"{host}:3306"
+#             else:
+#                 host_part = host
+
+#         if db_type == "postgres":
+#             connection_string = (
+#                 f"postgresql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
+#             )
+#         elif db_type == "mysql":
+#             connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
+#         else:
+#             raise HTTPException(status_code=400, detail="Unsupported database type.")
+
+#         schema_structure = get_schema_structure(connection_string)
+
+#     existing = (
+#         db.query(DatabaseConnectionModel)
+#         .filter(DatabaseConnectionModel.connection_name == data.connection_name)
+#         .first()
+#     )
+#     if existing:
+#         raise HTTPException(status_code=400, detail="Connection already exists")
+
+#     db_entry = DatabaseConnectionModel(
+#         id=uuid4(),
+#         connection_name=data.connection_name,
+#         db_connection_string=encrypt_string(connection_string),
+#         db_schema=json.dumps(schema_structure),
+#         db_username=username,
+#         db_password=encrypt_string(password),
+#         db_host_link=host,
+#         db_name=db_name,
+#         project_id=project_id,
+#         consent_given=(
+#             bool(data.consent_given) if data.consent_given is not None else False
+#         ),
+#         # db_description=data.db_description,
+#         db_type=db_type,
+#     )
+
+#     db.add(db_entry)
+#     db.flush()
+
+#     table_names = extract_table_names(connection_string)
+#     for table_name in table_names:
+#         db.add(
+#             ConnectionTableNameModel(
+#                 table_name=table_name,
+#                 connection_id=db_entry.id,
+#             )
+#         )
+
+#     db.commit()
+
+#     return DBConnectionResponse(db_entry_id=db_entry.id)
+
 async def create_database_connection(
     project_id: UUID,
     token_payload: dict,
     data: DBConnectionRequest,
     db: Session,
+    background_tasks: BackgroundTasks
 ):
-    """
-    Creates and stores a new database connection for a given project.
-
-    Args:
-        project_id (UUID): The project to which this DB connection belongs.
-        token_payload (dict): Decoded token payload for permission checks.
-        data (DBConnectionRequest): Input data for creating the DB connection.
-        db (Session): SQLAlchemy DB session.
-
-    Returns:
-        DBConnectionResponse: Response containing the created DB connection ID.
-
-    Raises:
-        HTTPException: On invalid DB type or parsing errors.
-    """
+    # --- Parse connection string as before ---
     if data.connection_string:
         parsed_url = urlparse(data.connection_string)
-        # Normalize parsed components to safe strings
-        raw_username = parsed_url.username or ""
-        raw_password = parsed_url.password or ""
-        raw_host = parsed_url.hostname or ""
-        raw_port = parsed_url.port
-        raw_path = parsed_url.path or ""
-        raw_query = parsed_url.query or ""
-
-        # Determine final database name: prefer path, else fallback to provided db_name
-        parsed_db_name = raw_path.lstrip("/")
-        final_db_name = parsed_db_name or (data.db_name or "")
-
-        if not raw_host:
-            raise HTTPException(
-                status_code=400, detail="Host is required in connection string"
-            )
-        if not final_db_name:
-            raise HTTPException(
-                status_code=400,
-                detail="Database name is required (missing in URL and payload)",
-            )
-
-        # Ensure quote_plus always gets a string
-        encoded_password = quote_plus(str(raw_password))
-
+        username = parsed_url.username or ""
+        password = parsed_url.password or ""
+        host = parsed_url.hostname or ""
+        port = parsed_url.port
+        db_name = parsed_url.path.lstrip("/") or data.db_name or ""
+        if not host or not db_name:
+            raise HTTPException(status_code=400, detail="Host and database name are required")
         connection_string = (
-            f"{parsed_url.scheme}://{raw_username}:{encoded_password}@"
-            f"{raw_host}{':' + str(raw_port) if raw_port else ''}"
-            f"/{final_db_name}"
-            f"{'?' + raw_query if raw_query else ''}"
+            f"{parsed_url.scheme}://{username}:{quote_plus(str(password))}@"
+            f"{host}{':' + str(port) if port else ''}/{db_name}"
         )
-
         db_type = data.db_type
-        schema_structure = get_schema_structure(connection_string)
-
-        username = raw_username
-        password = str(raw_password)
-        host = raw_host
-        db_name = final_db_name
-
     else:
         db_type = (data.db_type or "").lower()
-        username = data.name or ""
-        password = data.password or ""
-        host = data.host or ""
-        db_name = data.db_name or ""
-
-        if not host:
-            raise HTTPException(status_code=400, detail="Host is required")
-        if not db_name:
-            raise HTTPException(status_code=400, detail="Database name is required")
-
-        # Parse host and port from host string (format: "host:port" or just "host")
-        # SQLAlchemy connection strings support port in the format: scheme://user:pass@host:port/db
-        if ":" in host and not host.startswith("["):  # IPv6 addresses start with [
-            # Host already contains port (e.g., "localhost:3306")
-            host_part = host
-        else:
-            # Host doesn't contain port, use default ports
-            if db_type == "postgres":
-                host_part = f"{host}:5432"
-            elif db_type == "mysql":
-                host_part = f"{host}:3306"
-            else:
-                host_part = host
-
+        username, password, host, db_name = data.name or "", data.password or "", data.host or "", data.db_name or ""
         if db_type == "postgres":
-            connection_string = (
-                f"postgresql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
-            )
+            connection_string = f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
         elif db_type == "mysql":
-            connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
+            connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
         else:
             raise HTTPException(status_code=400, detail="Unsupported database type.")
 
-        schema_structure = get_schema_structure(connection_string)
-
-    existing = (
-        db.query(DatabaseConnectionModel)
-        .filter(DatabaseConnectionModel.connection_name == data.connection_name)
-        .first()
-    )
+    # Check for duplicate connection
+    existing = db.query(DatabaseConnectionModel).filter(
+        DatabaseConnectionModel.connection_name == data.connection_name
+    ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Connection already exists")
 
+    # Create DB entry without schema
     db_entry = DatabaseConnectionModel(
         id=uuid4(),
         connection_name=data.connection_name,
         db_connection_string=encrypt_string(connection_string),
-        db_schema=json.dumps(schema_structure),
+        db_schema=None,  # schema will be filled in background
         db_username=username,
         db_password=encrypt_string(password),
         db_host_link=host,
         db_name=db_name,
         project_id=project_id,
-        consent_given=(
-            bool(data.consent_given) if data.consent_given is not None else False
-        ),
-        # db_description=data.db_description,
+        consent_given=bool(data.consent_given) if data.consent_given is not None else False,
         db_type=db_type,
     )
-
     db.add(db_entry)
-    db.flush()
-
-    table_names = extract_table_names(connection_string)
-    for table_name in table_names:
-        db.add(
-            ConnectionTableNameModel(
-                table_name=table_name,
-                connection_id=db_entry.id,
-            )
-        )
-
     db.commit()
+    db.refresh(db_entry)
 
-    return DBConnectionResponse(db_entry_id=db_entry.id)
+    # --- Create task ID and start background schema extraction ---
+    task_id = str(uuid4())
+    background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db, db_entry.id)
+
+    # --- Return immediately ---
+    tables_count = len(extract_table_names(connection_string))  # can just list table names for count
+    return {"taskId": task_id, "tablesCount": tables_count}
+
+
 
 
 @require_permission(Permission.VIEW_DATASOURCE)

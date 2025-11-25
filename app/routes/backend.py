@@ -15,6 +15,9 @@ from fastapi import (
     Path,
     HTTPException,
     Body,
+    BackgroundTasks,
+    WebSocket,
+    WebSocketDisconnect
 )
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -96,6 +99,7 @@ from app.services.db_connection import (
     delete_db_connection,
     get_connection_stats,
     check_and_update_connections,
+    progress_queues
 )
 
 from app.services.userService import (
@@ -142,6 +146,8 @@ from app.services.nl2sql import generate_nl_sql
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
 
 
+
+
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
 
 
@@ -167,6 +173,7 @@ async def create_project_route(
 async def add_database_connection(
     project_id: UUID,
     data: DBConnectionRequest,
+    background_tasks:BackgroundTasks,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
@@ -180,7 +187,29 @@ async def add_database_connection(
     Returns:
         dict: The created database connection.
     """
-    return await create_database_connection(project_id, token_payload, data, db)
+    return await create_database_connection(project_id, token_payload, data, db,background_tasks)
+
+@backend_router.websocket("/ws/progress/{task_id}")
+async def ws_progress(ws: WebSocket, task_id: str):
+    await ws.accept()
+    queue = progress_queues.get(task_id)
+    if not queue:
+        await ws.send_json({"type": "error", "message": "Invalid taskId"})
+        await ws.close()
+        return
+    try:
+        while True:
+            msg = await queue.get()
+            if msg is None:
+                break  # worker finished
+            await ws.send_json(msg)
+    except WebSocketDisconnect:
+        print(f"Client disconnected from task {task_id}")
+    finally:
+        try:
+            await ws.close()
+        except:
+            pass
 
 
 @backend_router.get(
