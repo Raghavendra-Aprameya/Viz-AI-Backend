@@ -94,7 +94,7 @@ async def create_project(
         db.flush()
 
         # Get role ID of "ALL role"
-        role_id = db.query(RoleModel).filter(RoleModel.name == "ALL role").first().id
+        role_id = db.query(RoleModel).filter(RoleModel.name == "Super Admin").first().id
 
         # Assign role to user in UserProjectRoleModel
         user_project_role = UserProjectRoleModel(
