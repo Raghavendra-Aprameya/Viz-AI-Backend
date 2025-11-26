@@ -148,14 +148,105 @@ async def generate_and_store_charts(
     return chart_models
 
 
+def add_date_filter_to_query(query: str, from_date: str = None, to_date: str = None) -> str:
+    """
+    Adds date filtering to a SQL query by detecting date columns and adding WHERE clauses.
+    
+    Args:
+        query: The original SQL query
+        from_date: Start date in YYYY-MM-DD format
+        to_date: End date in YYYY-MM-DD format
+    
+    Returns:
+        Modified SQL query with date filtering applied
+    """
+    if not from_date and not to_date:
+        return query
+    
+    import re
+    
+    # Common date column names to check for (in order of preference)
+    date_column_names = [
+        'date', 'created_at', 'updated_at', 'timestamp', 'created_date',
+        'updated_date', 'transaction_date', 'record_date', 'event_date', 'occurred_at'
+    ]
+    
+    # Normalize query for case-insensitive matching
+    query_upper = query.upper()
+    
+    # Find the first date column that appears in the query
+    date_column = None
+    for col_name in date_column_names:
+        # Look for the column name as a word boundary
+        pattern = r'\b' + re.escape(col_name) + r'\b'
+        if re.search(pattern, query_upper, re.IGNORECASE):
+            # Get the actual case from the original query
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                date_column = match.group()
+                break
+    
+    if not date_column:
+        # If no date column found, return original query without modification
+        return query
+    
+    # Build WHERE conditions
+    conditions = []
+    if from_date:
+        conditions.append(f"{date_column} >= '{from_date}'")
+    if to_date:
+        conditions.append(f"{date_column} <= '{to_date} 23:59:59'")
+    
+    where_clause = " AND ".join(conditions)
+    
+    # Check if query already has WHERE clause
+    if re.search(r'\bWHERE\b', query_upper):
+        # Add to existing WHERE clause - find the end of WHERE clause
+        # Look for WHERE and then find where it ends (before GROUP BY, ORDER BY, LIMIT, etc.)
+        where_match = re.search(r'\bWHERE\b', query_upper)
+        if where_match:
+            where_start = where_match.end()
+            # Find the end of the WHERE clause
+            where_end = len(query)
+            for keyword in ['GROUP BY', 'ORDER BY', 'LIMIT', 'HAVING']:
+                pos = query_upper.find(keyword, where_start)
+                if pos != -1:
+                    where_end = min(where_end, pos)
+            
+            # Insert the new condition
+            query = query[:where_end].rstrip() + f" AND {where_clause} " + query[where_end:]
+    else:
+        # Add new WHERE clause before GROUP BY, ORDER BY, LIMIT, HAVING
+        insert_pos = len(query)
+        for keyword in ['GROUP BY', 'ORDER BY', 'LIMIT', 'HAVING']:
+            pos = query_upper.find(keyword)
+            if pos != -1:
+                insert_pos = min(insert_pos, pos)
+        
+        # Insert WHERE clause
+        query = query[:insert_pos].rstrip() + f" WHERE {where_clause} " + query[insert_pos:]
+    
+    return query
+
+
 def execute_external_query(
     db: Session,
     datasource_connection_id: UUID,
     query_input: str,
-    token_payload: dict = Depends(get_current_user),
+    token_payload: dict,
+    from_date: str = None,
+    to_date: str = None,
 ):
     """
     Executes a SQL query on the external database.
+    
+    Args:
+        db: Database session
+        datasource_connection_id: Connection ID
+        query_input: SQL query to execute
+        token_payload: User authentication payload
+        from_date: Optional start date for filtering (YYYY-MM-DD format)
+        to_date: Optional end date for filtering (YYYY-MM-DD format)
     """
     user_id_str = token_payload.get("sub")
     if not user_id_str:
@@ -174,7 +265,9 @@ def execute_external_query(
     # generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
     # if not generated_query:
     #     raise HTTPException(status_code=404, detail="Query not found")
-    query = query_input
+    
+    # Apply date filtering if provided
+    query = add_date_filter_to_query(query_input, from_date, to_date) if (from_date or to_date) else query_input
 
     datasource_connection_id = (
         db.query(DatabaseConnectionModel).filter_by(id=datasource_connection_id).first()
