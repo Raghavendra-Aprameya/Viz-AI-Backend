@@ -910,7 +910,8 @@ class SaveChartToDashboardRequest(BaseModel):
     status: ChartStatus = ChartStatus.PUBLISHED
     dashboard_id: UUID
     data_connection_id: UUID
-
+    x_axis: Optional[str] = None
+    y_axis: Optional[str] = None
 
 class UpdateFavoriteChartRequest(BaseModel):
     """
