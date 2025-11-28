@@ -338,7 +338,8 @@ class ChartModel(Base):
     is_user_generated = Column(Boolean, nullable=False, default=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     status = Column(ChartStatusEnum, nullable=False, server_default="draft")
-
+    x_axis = Column(String, nullable=True)
+    y_axis = Column(String, nullable=True)
     user = relationship("UserModel", back_populates="charts")
     users = relationship(
         "UserChartModel", back_populates="chart", cascade="all, delete-orphan"

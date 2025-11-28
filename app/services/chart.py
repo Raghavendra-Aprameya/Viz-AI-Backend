@@ -785,6 +785,8 @@ async def save_chart_service(
             created_by=user_id,
             is_user_generated=True,
             status=status_value,
+            x_axis=data.x_axis,
+            y_axis=data.y_axis,
         )
         db.add(new_chart)
         db.flush()  # Get the ID without committing
@@ -862,6 +864,8 @@ async def save_chart_to_dashboard_service(
             created_by=user_id,
             is_user_generated=True,
             status=status_value,
+            x_axis=data.x_axis,
+            y_axis=data.y_axis,
         )
         db.add(new_chart)
         db.flush()
@@ -997,6 +1001,8 @@ async def get_user_dashboard_charts_service(
                     "is_time_based": chart.is_time_based,
                     "status": getattr(chart, "status", None),
                     "is_user_generated": chart.is_user_generated,
+                    "x_axis": chart.x_axis,
+                    "y_axis": chart.y_axis,
                     "created_by": str(chart.created_by) if chart.created_by else None,
                     "created_at": (
                         chart.created_at.isoformat() if chart.created_at else None
