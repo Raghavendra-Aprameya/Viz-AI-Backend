@@ -148,6 +148,66 @@ async def generate_and_store_charts(
     return chart_models
 
 
+def replace_dates_in_query(query: str, from_date: str = None, to_date: str = None) -> str:
+    """
+    Replaces date literals in a SQL query with provided from_date and to_date values.
+    If dates are not provided, keeps the original dates in the query.
+    
+    Args:
+        query: The original SQL query
+        from_date: Start date in YYYY-MM-DD format to replace the first date found
+        to_date: End date in YYYY-MM-DD format to replace the second date found
+    
+    Returns:
+        Modified SQL query with dates replaced if provided, otherwise original query
+    """
+    if not from_date and not to_date:
+        return query
+    
+    import re
+    
+    # Pattern to match date literals in SQL (handles both single and double quotes)
+    # Matches dates in format: 'YYYY-MM-DD' or "YYYY-MM-DD"
+    date_pattern = r"(['\"])(\d{4}-\d{2}-\d{2})\1"
+    
+    # Find all date matches in the query
+    matches = list(re.finditer(date_pattern, query))
+    
+    if not matches:
+        # No dates found in query, return as is
+        return query
+    
+    # Build list of replacements (position, new_value, quote_char)
+    # Replace from the end to preserve correct positions
+    replacements = []
+    
+    if len(matches) >= 2:
+        # Two or more dates found: first with from_date, second with to_date
+        if to_date:
+            last_match = matches[-1]
+            replacements.append((last_match.start(), last_match.end(), 
+                               f"{last_match.group(1)}{to_date}{last_match.group(1)}"))
+        if from_date:
+            first_match = matches[0]
+            replacements.append((first_match.start(), first_match.end(),
+                               f"{first_match.group(1)}{from_date}{first_match.group(1)}"))
+    elif len(matches) == 1:
+        # Only one date found
+        match = matches[0]
+        quote_char = match.group(1)
+        if from_date:
+            replacements.append((match.start(), match.end(), f"{quote_char}{from_date}{quote_char}"))
+        elif to_date:
+            replacements.append((match.start(), match.end(), f"{quote_char}{to_date}{quote_char}"))
+    
+    # Apply replacements from right to left (end to beginning) to preserve positions
+    modified_query = query
+    for start, end, replacement in sorted(replacements, reverse=True):
+        modified_query = modified_query[:start] + replacement + modified_query[end:]
+    
+    return modified_query
+
+
 def add_date_filter_to_query(query: str, from_date: str = None, to_date: str = None) -> str:
     """
     Adds date filtering to a SQL query by detecting date columns and adding WHERE clauses.
@@ -266,8 +326,8 @@ def execute_external_query(
     # if not generated_query:
     #     raise HTTPException(status_code=404, detail="Query not found")
     
-    # Apply date filtering if provided
-    query = add_date_filter_to_query(query_input, from_date, to_date) if (from_date or to_date) else query_input
+    # Replace dates in query if provided, otherwise use default dates in query
+    query = replace_dates_in_query(query_input, from_date, to_date)
 
     datasource_connection_id = (
         db.query(DatabaseConnectionModel).filter_by(id=datasource_connection_id).first()
