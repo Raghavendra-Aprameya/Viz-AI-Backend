@@ -820,7 +820,7 @@ class Nl2SQLChatRequest(BaseModel):
     Attributes:
         nl_query: Natural language query to translate to SQL
         api_key: Optional API key for authentication
-    """
+    """ 
 
     nl_query: str
     api_key: Optional[str]
@@ -880,6 +880,8 @@ class SaveChartRequest(BaseModel):
     chart_type: str
     status: ChartStatus = ChartStatus.DRAFT
     data_connection_id: UUID = None
+    x_axis: Optional[str] = None
+    y_axis: Optional[str] = None
 
 
 class SaveChartToDashboardRequest(BaseModel):
@@ -908,7 +910,8 @@ class SaveChartToDashboardRequest(BaseModel):
     status: ChartStatus = ChartStatus.PUBLISHED
     dashboard_id: UUID
     data_connection_id: UUID
-
+    x_axis: Optional[str] = None
+    y_axis: Optional[str] = None
 
 class UpdateFavoriteChartRequest(BaseModel):
     """

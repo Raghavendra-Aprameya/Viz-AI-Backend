@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int
     # LLM_URI: str
     ENCRYPTION_KEY: str
-    GEMINI_API_KEY: str
+    # GEMINI_API_KEY: str
 
     class Config:
         """
