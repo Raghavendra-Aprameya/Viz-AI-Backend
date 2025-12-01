@@ -50,11 +50,8 @@ from datetime import datetime
 from typing import Optional
 import json
 
+# ---- get_schema_structure (blocking; run in thread) ----
 def get_schema_structure(connection_string: str, queue, loop):
-    """
-    Blocking schema extraction that runs in a thread.
-    Uses loop.call_soon_threadsafe(queue.put_nowait, msg) to push progress back to the async queue.
-    """
     engine = create_engine(connection_string)
     inspector = inspect(engine)
     schema_info = {"tables": []}
@@ -67,7 +64,7 @@ def get_schema_structure(connection_string: str, queue, loop):
             table_names = inspector.get_table_names()
             total_tables = len(table_names)
 
-            # send an initial snapshot if you want
+            # Immediately inform WS of total tables (frontend can show ETA)
             loop.call_soon_threadsafe(queue.put_nowait, {
                 "type": "started",
                 "totalTables": total_tables,
@@ -75,7 +72,6 @@ def get_schema_structure(connection_string: str, queue, loop):
             })
 
             for idx, table_name in enumerate(table_names, start=1):
-                # Blocking inspector calls (these will execute in the thread)
                 columns = inspector.get_columns(table_name)
                 primary_keys = inspector.get_pk_constraint(table_name)
                 foreign_keys = [
@@ -90,7 +86,7 @@ def get_schema_structure(connection_string: str, queue, loop):
                     "foreign_keys": foreign_keys
                 })
 
-                # thread-safely push a progress update into the asyncio.Queue
+                # thread-safe progress push
                 loop.call_soon_threadsafe(queue.put_nowait, {
                     "type": "progress",
                     "completedTables": idx,
@@ -103,7 +99,6 @@ def get_schema_structure(connection_string: str, queue, loop):
             schema_info["max_date"] = max_date.isoformat()
 
     except Exception as e:
-        # push error to queue and return partial schema_info
         loop.call_soon_threadsafe(queue.put_nowait, {
             "type": "error",
             "message": f"Error fetching schema information: {e}"

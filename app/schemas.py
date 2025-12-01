@@ -1378,3 +1378,75 @@ class ConnectionCheckResponse(BaseModel):
     successful_connections: int
     failed_connections: int
     results: List[ConnectionCheckResult]
+
+
+class UpdateProfileRequest(BaseModel):
+    """
+    Request model for updating user profile information.
+    
+    Attributes:
+        username: Optional new username for the user
+        email: Optional new email for the user
+    """
+    
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    """
+    Request model for changing user password.
+    
+    Attributes:
+        current_password: Current password for verification
+        new_password: New password to set
+    """
+    
+    current_password: str
+    new_password: str
+
+
+class DeleteAccountRequest(BaseModel):
+    """
+    Request model for deleting user account.
+    
+    Attributes:
+        password: User password for confirmation
+    """
+    
+    password: str
+
+
+class UpdateProfileResponse(BaseModel):
+    """
+    Response model for profile update operation.
+    
+    Attributes:
+        message: Status message
+        user: Updated user information
+    """
+    
+    message: str
+    user: UserResponse
+
+
+class ChangePasswordResponse(BaseModel):
+    """
+    Response model for password change operation.
+    
+    Attributes:
+        message: Status message
+    """
+    
+    message: str
+
+
+class DeleteAccountResponse(BaseModel):
+    """
+    Response model for account deletion operation.
+    
+    Attributes:
+        message: Status message
+    """
+    
+    message: str
