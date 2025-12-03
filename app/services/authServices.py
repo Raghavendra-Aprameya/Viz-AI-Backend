@@ -8,10 +8,18 @@ import jwt
 from app.core.db import get_db
 from app.core.settings import settings
 from app.models.schema_models import UserModel  # SQLAlchemy ORM model
-from app.schemas import LoginData, UserRequest, UserResponse
+from app.schemas import (
+    LoginData, 
+    UserRequest, 
+    UserResponse,
+    UpdateProfileRequest,
+    ChangePasswordRequest,
+    DeleteAccountRequest
+)
 from app.utils.jwt import create_access_token, create_refresh_token
 from app.core.db import engine
 from app.models.schema_models import Base
+from app.utils.crypt import get_password_hash, verify_password
 
 
 async def register_user(user: UserRequest, response: Response, db: Session = None) -> dict:
@@ -177,3 +185,195 @@ async def refresh_token(refresh_token_str: str, db: Session = None) -> dict:
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+async def update_profile(
+    user_id: UUID,
+    data: UpdateProfileRequest,
+    db: Session
+) -> dict:
+    """
+    Update user profile information (username and/or email).
+    
+    Args:
+        user_id (UUID): ID of the user to update.
+        data (UpdateProfileRequest): Contains optional username and email to update.
+        db (Session): SQLAlchemy database session.
+    
+    Returns:
+        dict: Success message with updated user information.
+    
+    Raises:
+        HTTPException: If user not found, username/email already exists, or other error occurs.
+    """
+    try:
+        # Get the user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Update username if provided
+        if data.username is not None and data.username != user.username:
+            # Check if username already exists
+            existing_user = db.query(UserModel).filter(
+                UserModel.username == data.username,
+                UserModel.id != user_id
+            ).first()
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username already exists"
+                )
+            user.username = data.username
+        
+        # Update email if provided
+        if data.email is not None and data.email != user.email:
+            # Check if email already exists
+            existing_user = db.query(UserModel).filter(
+                UserModel.email == data.email,
+                UserModel.id != user_id
+            ).first()
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already exists"
+                )
+            user.email = data.email
+        
+        # Commit changes
+        db.commit()
+        db.refresh(user)
+        
+        return {
+            "message": "Profile updated successfully",
+            "user": UserResponse.from_orm(user)
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update profile: {str(e)}"
+        )
+
+
+async def change_password(
+    user_id: UUID,
+    data: ChangePasswordRequest,
+    db: Session
+) -> dict:
+    """
+    Change user password after verifying current password.
+    
+    Args:
+        user_id (UUID): ID of the user changing password.
+        data (ChangePasswordRequest): Contains current_password and new_password.
+        db (Session): SQLAlchemy database session.
+    
+    Returns:
+        dict: Success message.
+    
+    Raises:
+        HTTPException: If user not found, current password is incorrect, or other error occurs.
+    """
+    try:
+        # Get the user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Verify current password
+        if not bcrypt.checkpw(data.current_password.encode(), user.password.encode()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect"
+            )
+        
+        # Check if new password is different from current password
+        if bcrypt.checkpw(data.new_password.encode(), user.password.encode()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must be different from current password"
+            )
+        
+        # Hash and update password
+        salt = bcrypt.gensalt()
+        hashed_password = bcrypt.hashpw(data.new_password.encode(), salt).decode()
+        user.password = hashed_password
+        
+        # Commit changes
+        db.commit()
+        
+        return {
+            "message": "Password changed successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to change password: {str(e)}"
+        )
+
+
+async def delete_account(
+    user_id: UUID,
+    data: DeleteAccountRequest,
+    db: Session
+) -> dict:
+    """
+    Delete user account after verifying password.
+    
+    Args:
+        user_id (UUID): ID of the user to delete.
+        data (DeleteAccountRequest): Contains password for confirmation.
+        db (Session): SQLAlchemy database session.
+    
+    Returns:
+        dict: Success message.
+    
+    Raises:
+        HTTPException: If user not found, password is incorrect, or other error occurs.
+    """
+    try:
+        # Get the user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Verify password
+        if not bcrypt.checkpw(data.password.encode(), user.password.encode()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password is incorrect"
+            )
+        
+        # Delete the user (cascade will handle related records)
+        db.delete(user)
+        db.commit()
+        
+        return {
+            "message": "Account deleted successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to delete account: {str(e)}"
+        )
