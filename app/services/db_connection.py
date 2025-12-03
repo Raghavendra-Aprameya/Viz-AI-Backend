@@ -43,7 +43,7 @@ users with the correct permissions to interact with these connections.
 """
 
 from uuid import UUID, uuid4
-from urllib.parse import urlparse, quote_plus
+from urllib.parse import urlparse, quote_plus, parse_qs
 import json
 from datetime import datetime
 from typing import List, Dict, Any
@@ -68,7 +68,7 @@ from app.utils.access import require_permission
 
 
 from fastapi import FastAPI, WebSocket, BackgroundTasks, HTTPException
-from urllib.parse import urlparse, quote_plus
+from urllib.parse import urlparse, quote_plus, parse_qs
 from uuid import uuid4
 import asyncio, json
 
@@ -251,28 +251,74 @@ async def create_database_connection(
     db: Session,
     background_tasks: BackgroundTasks
 ):
-    # --- Parse connection string as before ---
+    # --- Parse connection string or construct from fields ---
     if data.connection_string:
+        # If connection string is provided, use it as-is
+        # For Oracle, expect format: oracle+oracledb://username:password@host:port/?service_name=service_name
         parsed_url = urlparse(data.connection_string)
         username = parsed_url.username or ""
         password = parsed_url.password or ""
         host = parsed_url.hostname or ""
         port = parsed_url.port
-        db_name = parsed_url.path.lstrip("/") or data.db_name or ""
-        if not host or not db_name:
-            raise HTTPException(status_code=400, detail="Host and database name are required")
-        connection_string = (
-            f"{parsed_url.scheme}://{username}:{quote_plus(str(password))}@"
-            f"{host}{':' + str(port) if port else ''}/{db_name}"
-        )
-        db_type = data.db_type
+        
+        # Check if it's Oracle
+        if parsed_url.scheme and "oracle" in parsed_url.scheme.lower():
+            db_type = "oracledb"
+            # Extract service_name from query params
+            query_params = parse_qs(parsed_url.query)
+            service_name = query_params.get("service_name", [None])[0] or parsed_url.path.lstrip("/") or data.db_name or ""
+            db_name = service_name
+            # Use username/password from URL if available, otherwise from data fields
+            username = username or data.username or data.name or ""
+            password = password or data.password or ""
+            connection_string = data.connection_string
+        else:
+            # Other database types
+            db_name = parsed_url.path.lstrip("/") or data.db_name or ""
+            if not host or not db_name:
+                raise HTTPException(status_code=400, detail="Host and database name are required")
+            # Use username/password from URL if available, otherwise from data fields
+            username = username or data.username or data.name or ""
+            password = password or data.password or ""
+            connection_string = (
+                f"{parsed_url.scheme}://{username}:{quote_plus(str(password))}@"
+                f"{host}{':' + str(port) if port else ''}/{db_name}"
+            )
+            db_type = data.db_type
     else:
+        # Construct connection string from individual fields
         db_type = (data.db_type or "").lower()
-        username, password, host, db_name = data.name or "", data.password or "", data.host or "", data.db_name or ""
+        password = data.password or ""
+        host = data.host or ""
+        db_name = data.db_name or ""
+        
         if db_type == "postgres":
+            username = data.username or data.name or ""
+            if not all([username, password, host, db_name]):
+                raise HTTPException(status_code=400, detail="PostgreSQL requires username (or name), password, host, and database name")
             connection_string = f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
         elif db_type == "mysql":
+            username = data.username or data.name or ""
+            if not all([username, password, host, db_name]):
+                raise HTTPException(status_code=400, detail="MySQL requires username (or name), password, host, and database name")
             connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
+        elif db_type == "oracledb":
+            # For Oracle, db_name is actually the service_name
+            service_name = db_name
+            username = data.username or data.name or ""
+            port = "1521"  # Default Oracle port
+            if ":" in host:
+                # Host contains port
+                host, port = host.split(":", 1)
+            
+            if not all([username, password, host, service_name]):
+                raise HTTPException(status_code=400, detail="Oracle requires username (or name), password, host, and service_name (db_name)")
+            
+            # Build Oracle connection string in the specified format
+            connection_string = (
+                f"oracle+oracledb://{username}:{quote_plus(str(password))}@{host}:{port}/"
+                f"?service_name={service_name}"
+            )
         else:
             raise HTTPException(status_code=400, detail="Unsupported database type.")
 

@@ -39,6 +39,7 @@ class DBConnectionRequest(BaseModel):
     host: Optional[str] = None
     db_name: Optional[str] = None
     name: Optional[str] = None
+    username: Optional[str] = None  # Optional username field for Oracle DB
     consent_given: Optional[bool] = False
 
 
