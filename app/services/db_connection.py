@@ -43,10 +43,11 @@ users with the correct permissions to interact with these connections.
 """
 
 from uuid import UUID, uuid4
-from urllib.parse import urlparse, quote_plus, parse_qs
+from urllib.parse import urlparse, quote_plus, parse_qs, urlencode, urlunparse
+import re
 import json
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 
 from fastapi import HTTPException, status, Depends, Request, Response
 from sqlalchemy.orm import Session
@@ -248,6 +249,127 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db:
 
 #     return DBConnectionResponse(db_entry_id=db_entry.id)
 
+def parse_and_encode_connection_string(connection_string: str) -> str:
+    """
+    Parse a connection string and reconstruct it with proper URL encoding for all components.
+    This handles special characters in passwords, usernames, and other URL components.
+    
+    The function manually parses the connection string to avoid issues with special characters
+    that break standard URL parsing (like #, @, :, etc. in passwords).
+    
+    Args:
+        connection_string: The raw connection string that may contain special characters
+        
+    Returns:
+        Properly URL-encoded connection string
+    """
+    # Pattern: scheme://[username[:password]@]host[:port][/path][?query][#fragment]
+    # We need to manually parse to handle special chars in password that break urlparse
+    
+    # Match scheme (e.g., "oracle+oracledb://", "postgresql://")
+    scheme_match = re.match(r'^([^:]+://)', connection_string)
+    if not scheme_match:
+        # Not a valid URL format, return as-is
+        return connection_string
+    
+    scheme = scheme_match.group(1)
+    rest = connection_string[len(scheme):]
+    
+    # Remove fragment if present (everything after #) - but preserve it if it's part of password
+    # We'll handle this by finding the last @ before / or ? to separate auth from host
+    # The fragment separator # should only be considered if it's after the host part
+    
+    # Find positions of key separators
+    at_positions = [i for i, char in enumerate(rest) if char == '@']
+    slash_pos = rest.find('/')
+    query_pos = rest.find('?')
+    hash_pos = rest.find('#')
+    
+    # Determine the boundary between auth and host
+    # Auth ends at the last @ before / or ? (whichever comes first)
+    boundary = len(rest)
+    if slash_pos != -1:
+        boundary = min(boundary, slash_pos)
+    if query_pos != -1:
+        boundary = min(boundary, query_pos)
+    
+    # Find the last @ before the boundary (this separates auth from host)
+    auth_end_pos = -1
+    for at_pos in reversed(at_positions):
+        if at_pos < boundary:
+            auth_end_pos = at_pos
+            break
+    
+    if auth_end_pos != -1:
+        # We have authentication part
+        auth_part = rest[:auth_end_pos]
+        host_part = rest[auth_end_pos + 1:]
+        
+        # Split username and password (password may contain :, @, #, etc.)
+        colon_pos = auth_part.find(':')
+        if colon_pos != -1:
+            username = auth_part[:colon_pos]
+            password = auth_part[colon_pos + 1:]
+            # URL encode username and password (quote_plus handles special chars)
+            username_encoded = quote_plus(username, safe='')
+            password_encoded = quote_plus(password, safe='')
+            auth_encoded = f"{username_encoded}:{password_encoded}"
+        else:
+            # Only username, no password
+            username_encoded = quote_plus(auth_part, safe='')
+            auth_encoded = username_encoded
+    else:
+        # No authentication
+        auth_encoded = ""
+        host_part = rest
+    
+    # Parse host_part: host[:port][/path][?query]
+    # Extract query string (before any # fragment)
+    if '?' in host_part:
+        query_start = host_part.find('?')
+        host_path = host_part[:query_start]
+        query_part = host_part[query_start + 1:]
+        # Remove fragment from query if present
+        if '#' in query_part:
+            query_part = query_part[:query_part.find('#')]
+        # Parse and re-encode query parameters
+        query_params = parse_qs(query_part)
+        encoded_query = urlencode(query_params, doseq=True)
+    else:
+        # Remove fragment if present
+        if '#' in host_part:
+            host_path = host_part[:host_part.find('#')]
+        else:
+            host_path = host_part
+        encoded_query = ""
+    
+    # Split host:port from path
+    if '/' in host_path:
+        host_port, path = host_path.split('/', 1)
+        path = '/' + path
+    else:
+        host_port = host_path
+        path = ""
+    
+    # Reconstruct URL
+    if auth_encoded:
+        netloc = f"{auth_encoded}@{host_port}"
+    else:
+        netloc = host_port
+    
+    # Reconstruct full URL
+    encoded_url = urlunparse((
+        scheme.rstrip('://'),
+        netloc,
+        path,
+        "",
+        encoded_query,
+        ""
+    ))
+    
+    return encoded_url
+
+
 async def create_database_connection(
     project_id: UUID,
     token_payload: dict,
@@ -257,9 +379,12 @@ async def create_database_connection(
 ):
     # --- Parse connection string or construct from fields ---
     if data.connection_string:
-        # If connection string is provided, use it as-is
+        # Parse and properly encode the connection string
+        connection_string = parse_and_encode_connection_string(data.connection_string)
+        
+        # If connection string is provided, parse it to extract components
         # For Oracle, expect format: oracle+oracledb://username:password@host:port/?service_name=service_name
-        parsed_url = urlparse(data.connection_string)
+        parsed_url = urlparse(connection_string)
         username = parsed_url.username or ""
         password = parsed_url.password or ""
         host = parsed_url.hostname or ""
@@ -275,7 +400,7 @@ async def create_database_connection(
             # Use username/password from URL if available, otherwise from data fields
             username = username or data.username or data.name or ""
             password = password or data.password or ""
-            connection_string = data.connection_string
+            # connection_string is already properly encoded by parse_and_encode_connection_string above
         else:
             # Other database types
             db_name = parsed_url.path.lstrip("/") or data.db_name or ""
@@ -468,7 +593,9 @@ async def update_db_connection(
     if data.connection_name:
         db_connection.connection_name = data.connection_name
     if data.db_connection_string:
-        db_connection.db_connection_string = data.db_connection_string
+        # Parse and encode the connection string to handle special characters
+        encoded_connection_string = parse_and_encode_connection_string(data.db_connection_string)
+        db_connection.db_connection_string = encrypt_string(encoded_connection_string)
     if data.db_schema:
         db_connection.db_schema = data.db_schema
     if data.db_username:
