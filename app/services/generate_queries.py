@@ -150,7 +150,7 @@ async def generate_and_store_charts(
 
 def replace_dates_in_query(query: str, from_date: str = None, to_date: str = None) -> str:
     """
-    Replaces date literals in a SQL query with provided from_date and to_date values.
+    Replaces date literals and bind parameters in a SQL query with provided from_date and to_date values.
     If dates are not provided, keeps the original dates in the query.
     
     Args:
@@ -161,12 +161,33 @@ def replace_dates_in_query(query: str, from_date: str = None, to_date: str = Non
     Returns:
         Modified SQL query with dates replaced if provided, otherwise original query
     """
+    import re
+    
+    # First, handle SQLAlchemy bind parameters (:from_date, :to_date)
+    if from_date:
+        # Replace :from_date bind parameter with actual date value
+        # Handle both :from_date and :from_date in TO_DATE functions
+        query = re.sub(
+            r':from_date',
+            f"'{from_date}'",
+            query,
+            flags=re.IGNORECASE
+        )
+    
+    if to_date:
+        # Replace :to_date bind parameter with actual date value
+        query = re.sub(
+            r':to_date',
+            f"'{to_date}'",
+            query,
+            flags=re.IGNORECASE
+        )
+    
+    # If no dates provided, return query (bind parameters will remain, but that's handled by error)
     if not from_date and not to_date:
         return query
     
-    import re
-    
-    # Pattern to match date literals in SQL (handles both single and double quotes)
+    # Then handle date literals in SQL (handles both single and double quotes)
     # Matches dates in format: 'YYYY-MM-DD' or "YYYY-MM-DD"
     date_pattern = r"(['\"])(\d{4}-\d{2}-\d{2})\1"
     
@@ -174,7 +195,7 @@ def replace_dates_in_query(query: str, from_date: str = None, to_date: str = Non
     matches = list(re.finditer(date_pattern, query))
     
     if not matches:
-        # No dates found in query, return as is
+        # No date literals found in query, return as is (bind params already handled)
         return query
     
     # Build list of replacements (position, new_value, quote_char)
@@ -325,6 +346,25 @@ def execute_external_query(
     # generated_query = db.query(ChartModel).filter(ChartModel.id == query_id).first()
     # if not generated_query:
     #     raise HTTPException(status_code=404, detail="Query not found")
+    
+    # Check if query contains bind parameters that require dates
+    import re
+    has_from_date_param = bool(re.search(r':from_date\b', query_input, re.IGNORECASE))
+    has_to_date_param = bool(re.search(r':to_date\b', query_input, re.IGNORECASE))
+    
+    # If query has bind parameters but dates are not provided, raise an error
+    if (has_from_date_param and not from_date) or (has_to_date_param and not to_date):
+        missing_params = []
+        if has_from_date_param and not from_date:
+            missing_params.append("from_date")
+        if has_to_date_param and not to_date:
+            missing_params.append("to_date")
+        raise ValueError(
+            f"Query contains bind parameters ({', '.join(missing_params)}) but corresponding date values were not provided. "
+            f"Please provide {'from_date' if has_from_date_param and not from_date else ''} "
+            f"{'and ' if has_from_date_param and not from_date and has_to_date_param and not to_date else ''}"
+            f"{'to_date' if has_to_date_param and not to_date else ''} in the request."
+        )
     
     # Replace dates in query if provided, otherwise use default dates in query
     query = replace_dates_in_query(query_input, from_date, to_date)
