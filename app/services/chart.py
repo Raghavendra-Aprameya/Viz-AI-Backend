@@ -680,6 +680,7 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
                     "isFavorite": chart.is_favorite,
                     "datasourceConnectionId": str(chart.database_connection_id) if chart.database_connection_id else None,
                     "status": chart.chart.status if hasattr(chart.chart, "status") else None,
+                    "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") else None,
                 }
                 for chart in user_charts
             ],
@@ -934,6 +935,7 @@ async def get_charts_for_dashboard_service(
                     "chart_type": getattr(chart.chart, "chart_type", None),
                     "connection_id": chart.database_connection_id,
                     "status": chart.chart.status if hasattr(chart.chart, "status") else None,
+                    "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") else None,
                 }
                 for chart in charts
             ],
