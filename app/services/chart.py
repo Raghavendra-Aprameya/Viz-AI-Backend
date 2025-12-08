@@ -667,23 +667,73 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
         
         user_charts = query.all()
 
+        # ====================================================================
+        # QUICK FIX: Deduplicate charts before sending to frontend
+        # TODO: DELETE THIS BLOCK once root cause is fixed
+        #
+        # WHY THIS EXISTS:
+        # The save_chart_to_dashboard_service() function creates a NEW chart
+        # entry every time a chart is saved to a dashboard, instead of reusing
+        # existing charts. This causes duplicate charts with same title+query
+        # but different IDs to appear in the charts API.
+        #
+        # PROPER FIX:
+        # Modify save_chart_to_dashboard_service() to:
+        # 1. Accept optional chart_id parameter
+        # 2. If chart_id provided, reuse existing chart (just create DashboardChartsModel)
+        # 3. If not provided, check for existing chart by query+title+user
+        # 4. Only create new chart if no existing chart found
+        #
+        # This deduplication filters out duplicates at the API level as a
+        # temporary workaround until the root cause is fixed.
+        # ====================================================================
+        seen_charts = {}  # key: (title_lower, query_normalized) -> chart_data
+        
+        for chart in user_charts:
+            # Normalize for comparison
+            title_key = chart.chart.title.lower().strip() if chart.chart.title else ""
+            query_key = chart.chart.query.strip() if chart.chart.query else ""
+            chart_key = (title_key, query_key)
+            
+            # Skip if empty title or query
+            if not title_key or not query_key:
+                continue
+            
+            chart_data = {
+                "id": str(chart.chart_id),
+                "title": chart.chart.title,
+                "created_at": chart.chart.created_at,
+                "query": chart.chart.query,
+                "type": chart.chart.chart_type,
+                "isFavorite": chart.is_favorite,
+                "datasourceConnectionId": str(chart.database_connection_id) if chart.database_connection_id else None,
+                "status": chart.chart.status if hasattr(chart.chart, "status") else None,
+                "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") else None,
+            }
+            
+            # If we haven't seen this chart, or if this one is newer, keep it
+            if chart_key not in seen_charts:
+                seen_charts[chart_key] = chart_data
+            else:
+                # Keep the one with the most recent created_at
+                existing_created_at = seen_charts[chart_key]["created_at"]
+                current_created_at = chart_data["created_at"]
+                if current_created_at and existing_created_at:
+                    if current_created_at > existing_created_at:
+                        seen_charts[chart_key] = chart_data
+                elif current_created_at:
+                    # Prefer the one with a date
+                    seen_charts[chart_key] = chart_data
+        
+        deduplicated_charts = list(seen_charts.values())
+        # ====================================================================
+        # END OF QUICK FIX - Remove above block once root cause is fixed
+        # ====================================================================
+
         return {
             "message": "Charts retrieved successfully",
             "project_id": str(project_id) if project_id else None,
-            "charts": [
-                {
-                    "id": str(chart.chart_id),
-                    "title": chart.chart.title,
-                    "created_at": chart.chart.created_at,
-                    "query": chart.chart.query,
-                    "type": chart.chart.chart_type,
-                    "isFavorite": chart.is_favorite,
-                    "datasourceConnectionId": str(chart.database_connection_id) if chart.database_connection_id else None,
-                    "status": chart.chart.status if hasattr(chart.chart, "status") else None,
-                    "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") else None,
-                }
-                for chart in user_charts
-            ],
+            "charts": deduplicated_charts,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

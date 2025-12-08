@@ -147,7 +147,7 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db:
     progress_queues.pop(task_id, None)
 
 
-# @require_permission(Permission.ADD_DATASOURCE)
+# @require_permission(Permission.ADD_DATASOURCE)xs
 # async def create_database_connection(
 #     project_id: UUID,
 #     token_payload: dict,
