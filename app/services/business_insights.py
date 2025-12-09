@@ -16,7 +16,6 @@ import logging
 from typing import Dict, List, Any
 from uuid import UUID
 
-import redis
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
@@ -32,9 +31,6 @@ from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-REDIS_TTL_SECONDS = 3600  # 1 hour
-redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
 
 async def generate_business_insights_service(
@@ -99,18 +95,6 @@ async def generate_business_insights_service(
                 detail="User does not have access to this project"
             )
         
-        cache_key = f"business_insights:{db_connection.project_id}"
-        try:
-            cached_insights = redis_client.get(cache_key)
-            if cached_insights:
-                logger.info(
-                    "Returning cached business insights for project %s",
-                    db_connection.project_id,
-                )
-                return json.loads(cached_insights)
-        except redis.RedisError as redis_err:
-            logger.warning("Redis unavailable, proceeding without cache: %s", redis_err)
-
         logger.info(
             "Generating business insights for database: %s", db_connection.connection_name
         )
@@ -162,16 +146,6 @@ async def generate_business_insights_service(
             "query_results": query_results,
             "insights": business_insights,
         }
-        
-        try:
-            redis_client.set(cache_key, json.dumps(result), ex=REDIS_TTL_SECONDS)
-            logger.info(
-                "Stored business insights in cache for project %s with TTL %s seconds",
-                db_connection.project_id,
-                REDIS_TTL_SECONDS,
-            )
-        except redis.RedisError as redis_err:
-            logger.warning("Failed to cache business insights: %s", redis_err)
 
         return result
         
@@ -306,6 +280,7 @@ async def generate_kpi_queries_with_llm(
         if not db_type:
             db_type = "postgres"
             logger.warning("Database type not specified, defaulting to postgres")
+        db_type = db_type.lower()
         
         # Configure Gemini API from environment
         if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
@@ -318,7 +293,34 @@ async def generate_kpi_queries_with_llm(
         
         model = genai.GenerativeModel('gemini-2.5-flash')
         
-        # Create comprehensive prompt for KPI generation
+        oracle_guidelines = """
+Write queries ONLY using syntax compatible with Oracle database.
+CRITICAL Oracle-specific syntax requirements:
+- CRITICAL: NEVER use LIMIT clause - Oracle does NOT support LIMIT. Always use FETCH FIRST n ROWS ONLY instead (e.g., ORDER BY col DESC FETCH FIRST 10 ROWS ONLY, NOT LIMIT 10)
+- CRITICAL: NEVER end queries with semicolons (;) - Oracle will throw "query didn't properly ended" error. Your query must end WITHOUT a semicolon. Example: ORDER BY col DESC (correct) NOT ORDER BY col DESC; (wrong)
+- CRITICAL: ORDER BY clause CANNOT use column aliases - you MUST repeat the full expression (e.g., SELECT SUM(amount) AS total ... ORDER BY SUM(amount) DESC, NOT ORDER BY total DESC)
+- CRITICAL: GROUP BY clause CANNOT use column aliases - you MUST repeat the full expression (e.g., SELECT TO_CHAR(date_col, 'YYYY-MM') AS month_year ... GROUP BY TO_CHAR(date_col, 'YYYY-MM'), NOT GROUP BY month_year)
+- CRITICAL: For date comparisons in WHERE clause, ALWAYS use TO_DATE() - never use string literals directly (e.g., WHERE date_col BETWEEN TO_DATE('2024-01-01', 'YYYY-MM-DD') AND TO_DATE('2024-12-31', 'YYYY-MM-DD'), NOT WHERE date_col BETWEEN '2024-01-01' AND '2024-12-31')
+- Use TO_DATE('YYYY-MM-DD', 'YYYY-MM-DD') for date literals (e.g., TO_DATE('2024-01-01', 'YYYY-MM-DD'))
+- Use TRUNC(date_column, 'MONTH') or TRUNC(date_column, 'YEAR') for date truncation instead of DATE_TRUNC
+- Use SYSDATE for current date/time, not CURRENT_DATE or NOW()
+- Use FETCH FIRST n ROWS ONLY for row limiting after ORDER BY (e.g., ORDER BY col DESC FETCH FIRST 10 ROWS ONLY)
+- Use ROWNUM <= n for row limiting in subqueries (e.g., WHERE ROWNUM <= 10)
+- Use double quotes (") for identifiers if needed, but prefer unquoted identifiers
+- Use NVL() or COALESCE() for null handling
+- Use || for string concatenation (e.g., 'Hello' || 'World')
+- Use TO_CHAR(date_column, 'YYYY-MM') for date formatting
+- Date arithmetic: date_column + INTERVAL '1' MONTH or date_column + 30 (days)
+- Use EXTRACT(YEAR FROM date_column) for extracting date parts
+- Use ROUND() for rounding numbers, not ROUND() for dates
+- Use DUAL table for calculations (e.g., SELECT SYSDATE FROM DUAL)
+""".strip()
+
+        dialect_guidance = ""
+        if db_type in {"oracle", "oracledb"}:
+            dialect_guidance = f"\n- ORACLE RULES:\n{oracle_guidelines}\n"
+
+        # Create comprehensive prompt for KPI generation, injecting dialect guidance when needed
         prompt = f"""
 You are a business intelligence expert. Analyze the following database schema and generate 10 important KPI (Key Performance Indicator) SQL queries that would provide valuable business insights FOR THIS SPECIFIC DATABASE.
 
@@ -359,7 +361,7 @@ Return the response as a JSON array with this exact structure:
 CRITICAL REQUIREMENTS:
 - Generate exactly 10 KPIs
 - Use ONLY tables and columns from the schema provided above
-- Queries must be syntactically correct for {db_type} (use {db_type}-specific syntax)
+- Queries must be syntactically correct for {db_type} (use {db_type}-specific syntax){dialect_guidance}
 - For PostgreSQL: Use INTERVAL '30 days', DATE_TRUNC, etc.
 - For MySQL: Use DATE_SUB, DATE_FORMAT, etc.
 - Use appropriate aggregations (SUM, COUNT, AVG, MAX, MIN)
