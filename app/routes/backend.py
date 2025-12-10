@@ -1510,27 +1510,27 @@ async def generate_project_business_insights(
     )
 
 
-@backend_router.get(
-    "/business-insights/latest",
-    status_code=status.HTTP_200_OK,
-    response_model=LatestBusinessInsightResponse,
-)
-async def get_latest_business_insight_route(
-    project_id: UUID = Query(..., description="Project ID to filter business insights"),
-    user_id: Optional[UUID] = Query(
-        None, description="User ID to filter (defaults to current user)"
-    ),
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user),
-):
-    """
-    Fetch the latest generated business insight for a specific user and project.
-    """
-    return await get_latest_business_insight_service(
-        db=db,
-        token_payload=token_payload,
-        project_id=project_id,
-        user_id=user_id,
-    )
+# @backend_router.get(
+#     "/business-insights/latest",
+#     status_code=status.HTTP_200_OK,
+#     response_model=LatestBusinessInsightResponse,
+# )
+# async def get_latest_business_insight_route(
+#     project_id: UUID = Query(..., description="Project ID to filter business insights"),
+#     user_id: Optional[UUID] = Query(
+#         None, description="User ID to filter (defaults to current user)"
+#     ),
+#     db: Session = Depends(get_db),
+#     token_payload: dict = Depends(get_current_user),
+# ):
+#     """
+#     Fetch the latest generated business insight for a specific user and project.
+#     """
+#     return await get_latest_business_insight_service(
+#         db=db,
+#         token_payload=token_payload,
+#         project_id=project_id,
+#         user_id=user_id,
+#     )
 
 
