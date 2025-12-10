@@ -37,9 +37,13 @@ logging.basicConfig(level=logging.INFO)
 
 REDIS_TTL_SECONDS = 3600  # 1 hour
 REDIS_PREFIX = "project_business_insights"
-redis_host = os.getenv("REDIS_HOST", "localhost")
-redis_port = int(os.getenv("REDIS_PORT", 6379))
-redis_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
+redis_url = settings.REDIS_URL
+if redis_url:
+    redis_client = redis.from_url(redis_url, decode_responses=True)
+else:
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", 6379))
+    redis_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
 
 
 def _make_cache_key(project_id: UUID) -> str:

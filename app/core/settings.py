@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # LLM_URI: str
     ENCRYPTION_KEY: str
     GEMINI_API_KEY: str
+    REDIS_URL: str | None = None
 
     class Config:
         """
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
 
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings(_env_file=".env", _env_file_encoding="utf-8")
