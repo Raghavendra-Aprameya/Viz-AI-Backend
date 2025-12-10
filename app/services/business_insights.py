@@ -13,9 +13,11 @@ provides comprehensive business intelligence based on actual data.
 
 import json
 import logging
+import os
 from typing import Dict, List, Any
 from uuid import UUID
 
+import redis
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
@@ -31,6 +33,11 @@ from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+REDIS_TTL_SECONDS = 3600  # 1 hour
+redis_host = os.getenv("REDIS_HOST", "localhost")
+redis_port = int(os.getenv("REDIS_PORT", 6379))
+redis_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
 
 
 async def generate_business_insights_service(
@@ -95,6 +102,19 @@ async def generate_business_insights_service(
                 detail="User does not have access to this project"
             )
         
+        # Check Redis cache first
+        cache_key = f"business_insights:{db_connection.project_id}"
+        try:
+            cached_insights = redis_client.get(cache_key)
+            if cached_insights:
+                logger.info(
+                    "Returning cached business insights for project %s",
+                    db_connection.project_id,
+                )
+                return json.loads(cached_insights)
+        except redis.RedisError as redis_err:
+            logger.warning("Redis unavailable, proceeding without cache: %s", redis_err)
+        
         logger.info(
             "Generating business insights for database: %s", db_connection.connection_name
         )
@@ -146,6 +166,17 @@ async def generate_business_insights_service(
             "query_results": query_results,
             "insights": business_insights,
         }
+
+        # Store in Redis cache
+        try:
+            redis_client.setex(cache_key, REDIS_TTL_SECONDS, json.dumps(result))
+            logger.info(
+                "Stored business insights in cache for project %s with TTL %s seconds",
+                db_connection.project_id,
+                REDIS_TTL_SECONDS,
+            )
+        except redis.RedisError as redis_err:
+            logger.warning("Failed to cache business insights: %s", redis_err)
 
         return result
         

@@ -7,9 +7,11 @@ within a project, providing a unified strategic view of the entire project's dat
 
 import json
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from uuid import UUID
 
+import redis
 from fastapi import HTTPException, status 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -32,6 +34,28 @@ from app.services.business_insights import (
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+REDIS_TTL_SECONDS = 3600  # 1 hour
+REDIS_PREFIX = "project_business_insights"
+redis_host = os.getenv("REDIS_HOST", "localhost")
+redis_port = int(os.getenv("REDIS_PORT", 6379))
+redis_client = redis.Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
+
+
+def _make_cache_key(project_id: UUID) -> str:
+    """Construct Redis cache key for project-level insights."""
+    return f"{REDIS_PREFIX}:{str(project_id)}"
+
+
+def _serialize_for_cache(payload: Dict[str, Any]) -> str:
+    """Serialize payload into JSON, coercing non-JSON types to string."""
+
+    def default_serializer(value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    return json.dumps(payload, default=default_serializer)
 
 
 async def generate_project_insights_service(
@@ -88,6 +112,21 @@ async def generate_project_insights_service(
             raise HTTPException(
                 status_code=403,
                 detail="User does not have access to this project"
+            )
+        
+        # Check Redis cache first
+        cache_key = _make_cache_key(project_id)
+        try:
+            cached_insights = redis_client.get(cache_key)
+            if cached_insights:
+                logger.info(
+                    "Returning cached project business insights for project %s",
+                    project_id,
+                )
+                return json.loads(cached_insights)
+        except redis.RedisError as redis_err:
+            logger.warning(
+                "Redis unavailable while fetching project insights cache: %s", redis_err
             )
         
         logger.info(f"Generating project-wide insights for project: {project.name}")
@@ -185,40 +224,56 @@ async def generate_project_insights_service(
             "consolidated_insights": consolidated_insights
         }
 
-        # Persist the latest insights for auditing and downstream consumption
+        # Store in Redis cache
         try:
-            insight_record = BusinessInsightModel(
-                executive_summary=consolidated_insights.get("health_assessment", "No summary generated"),
-                key_metrics=json.dumps(
-                    {
-                        "overall_health_score": consolidated_insights.get("overall_health_score"),
-                        "total_databases_analyzed": result["total_databases_analyzed"],
-                        "successful_analyses": result["successful_analyses"],
-                    }
-                ),
-                insights_and_patterns=json.dumps(
-                    consolidated_insights.get("cross_database_patterns", [])
-                ),
-                recommendations=json.dumps(
-                    consolidated_insights.get("strategic_priorities", [])
-                ),
-                areas_of_concern=json.dumps(
-                    consolidated_insights.get("risk_assessment", {})
-                ),
-                project_id=project_id,
-                user_id=user_id,
-            )
-            db.add(insight_record)
-            db.commit()
-            db.refresh(insight_record)
+            redis_client.setex(cache_key, REDIS_TTL_SECONDS, _serialize_for_cache(result))
             logger.info(
-                "Stored business insight record %s for project %s",
-                insight_record.id,
+                "Stored project business insights in cache for project %s with TTL %s seconds",
                 project_id,
+                REDIS_TTL_SECONDS,
             )
-        except Exception as db_err:
-            db.rollback()
-            logger.error("Failed to persist business insights for project %s: %s", project_id, db_err)
+        except redis.RedisError as redis_err:
+            logger.warning(
+                "Failed to cache project business insights for project %s: %s",
+                project_id,
+                redis_err,
+            )
+
+        # # Persist the latest insights for auditing and downstream consumption
+        # # COMMENTED OUT: Now using Redis cache instead of DB storage
+        # try:
+        #     insight_record = BusinessInsightModel(
+        #         executive_summary=consolidated_insights.get("health_assessment", "No summary generated"),
+        #         key_metrics=json.dumps(
+        #             {
+        #                 "overall_health_score": consolidated_insights.get("overall_health_score"),
+        #                 "total_databases_analyzed": result["total_databases_analyzed"],
+        #                 "successful_analyses": result["successful_analyses"],
+        #             }
+        #         ),
+        #         insights_and_patterns=json.dumps(
+        #             consolidated_insights.get("cross_database_patterns", [])
+        #         ),
+        #         recommendations=json.dumps(
+        #             consolidated_insights.get("strategic_priorities", [])
+        #         ),
+        #         areas_of_concern=json.dumps(
+        #             consolidated_insights.get("risk_assessment", {})
+        #         ),
+        #         project_id=project_id,
+        #         user_id=user_id,
+        #     )
+        #     db.add(insight_record)
+        #     db.commit()
+        #     db.refresh(insight_record)
+        #     logger.info(
+        #         "Stored business insight record %s for project %s",
+        #         insight_record.id,
+        #         project_id,
+        #     )
+        # except Exception as db_err:
+        #     db.rollback()
+        #     logger.error("Failed to persist business insights for project %s: %s", project_id, db_err)
 
         return result
         
