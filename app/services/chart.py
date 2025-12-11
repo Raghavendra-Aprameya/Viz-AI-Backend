@@ -734,17 +734,25 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
                 
                 if current_created_at and existing_created_at:
                     # Compare timestamps
-                    if current_created_at > existing_created_at:
-                        # Current is newer, prefer it
-                        should_replace = True
-                    elif current_created_at == existing_created_at:
-                        # Same timestamp - prefer the one with is_time_based=True
+                    time_diff_seconds = (current_created_at - existing_created_at).total_seconds()
+                    
+                    # If timestamps are very close (within 2 seconds), prioritize is_time_based=True
+                    if abs(time_diff_seconds) <= 2:
+                        # Within 2 seconds - always prefer the one with is_time_based=True
                         if current_is_time_based and not existing_is_time_based:
+                            # Current has is_time_based=True, existing doesn't - prefer current
                             should_replace = True
-                        elif current_is_time_based == existing_is_time_based:
-                            # Both have same is_time_based, prefer current (newer ID/UUID)
+                        elif not current_is_time_based and existing_is_time_based:
+                            # Existing has is_time_based=True, current doesn't - keep existing
+                            should_replace = False
+                        elif time_diff_seconds > 0:
+                            # Same is_time_based, but current is slightly newer - prefer current
                             should_replace = True
-                    # else: existing is newer, keep it
+                        # else: same is_time_based and existing is newer or equal - keep existing
+                    elif time_diff_seconds > 2:
+                        # Current is significantly newer (>2 seconds), prefer it
+                        should_replace = True
+                    # else: existing is significantly newer (>2 seconds), keep it (should_replace stays False)
                 elif current_created_at:
                     # Current has a date, existing doesn't, prefer current
                     should_replace = True
@@ -845,6 +853,43 @@ async def save_chart_service(
             if hasattr(data, "status") and data.status is not None
             else "draft"
         )
+
+        # Check if a chart with the same title and query already exists for this user
+        # This prevents duplicate charts when saving the same chart multiple times
+        existing_chart = (
+            db.query(ChartModel)
+            .join(UserChartModel, UserChartModel.chart_id == ChartModel.id)
+            .filter(
+                ChartModel.title == data.title,
+                ChartModel.query == data.query,
+                ChartModel.created_by == user_id,
+                UserChartModel.user_id == user_id,
+                UserChartModel.database_connection_id == data.data_connection_id
+            )
+            .order_by(ChartModel.created_at.desc())
+            .first()
+        )
+
+        if existing_chart:
+            # Update existing chart instead of creating a new one
+            existing_chart.report = data.report if hasattr(data, "report") and data.report is not None else existing_chart.report
+            existing_chart.type = data.type if data.type else existing_chart.type
+            existing_chart.relevance = (
+                data.relevance
+                if hasattr(data, "relevance") and data.relevance is not None
+                else existing_chart.relevance
+            )
+            # Always update is_time_based if provided, as it's critical for chart functionality
+            if hasattr(data, "is_time_based") and data.is_time_based is not None:
+                existing_chart.is_time_based = data.is_time_based
+            existing_chart.chart_type = data.chart_type if data.chart_type else existing_chart.chart_type
+            existing_chart.status = status_value
+            existing_chart.x_axis = data.x_axis if hasattr(data, "x_axis") and data.x_axis is not None else existing_chart.x_axis
+            existing_chart.y_axis = data.y_axis if hasattr(data, "y_axis") and data.y_axis is not None else existing_chart.y_axis
+            
+            db.commit()
+            db.refresh(existing_chart)
+            return {"message": "Chart updated successfully", "chart_id": str(existing_chart.id)}
 
         # Create the new chart
         new_chart = ChartModel(
