@@ -708,7 +708,7 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
                 "isFavorite": chart.is_favorite,
                 "datasourceConnectionId": str(chart.database_connection_id) if chart.database_connection_id else None,
                 "status": chart.chart.status if hasattr(chart.chart, "status") else None,
-                "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") else None,
+                "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") and chart.chart.is_time_based is not None else False,
             }
             
             # If we haven't seen this chart, or if this one is newer, keep it
@@ -930,6 +930,29 @@ async def save_chart_to_dashboard_service(
             database_connection_id=data.data_connection_id,
         )
         db.add(new_chart_to_dashboard)
+        
+        # Create user-chart relationship so the chart appears in GET /charts endpoint
+        # Check if UserChartModel entry already exists to avoid duplicates
+        existing_user_chart = (
+            db.query(UserChartModel)
+            .filter(
+                UserChartModel.user_id == user_id,
+                UserChartModel.chart_id == new_chart.id
+            )
+            .first()
+        )
+        
+        if not existing_user_chart:
+            user_chart = UserChartModel(
+                user_id=user_id,
+                chart_id=new_chart.id,
+                can_read=True,
+                can_write=True,
+                can_delete=True,
+                database_connection_id=data.data_connection_id,
+            )
+            db.add(user_chart)
+        
         db.commit()
         db.refresh(new_chart)
         db.refresh(new_chart_to_dashboard)
@@ -985,7 +1008,7 @@ async def get_charts_for_dashboard_service(
                     "chart_type": getattr(chart.chart, "chart_type", None),
                     "connection_id": chart.database_connection_id,
                     "status": chart.chart.status if hasattr(chart.chart, "status") else None,
-                    "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") else None,
+                    "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") and chart.chart.is_time_based is not None else False,
                 }
                 for chart in charts
             ],
@@ -1050,7 +1073,7 @@ async def get_user_dashboard_charts_service(
                     "type": chart.type,
                     "chart_type": chart.chart_type,
                     "relevance": chart.relevance,
-                    "is_time_based": chart.is_time_based,
+                    "is_time_based": chart.is_time_based if chart.is_time_based is not None else False,
                     "status": getattr(chart, "status", None),
                     "is_user_generated": chart.is_user_generated,
                     "x_axis": chart.x_axis,
