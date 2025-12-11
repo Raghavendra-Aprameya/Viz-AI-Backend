@@ -304,11 +304,16 @@ async def list_all_users_project(
         for upr in user_project_roles:
             user = db.query(UserModel).filter(UserModel.id == upr.user_id).first()
             if user:
+                # Get role name by querying RoleModel
+                role = db.query(RoleModel).filter(RoleModel.id == upr.role_id).first()
+                role_name = role.name if role else None
+                
                 users.append({
                     "id": upr.user_id,  # Using user_id as id since it's unique in this context
                     "user_id": upr.user_id,
                     "project_id": upr.project_id,
                     "role_id": upr.role_id,
+                    "role_name": role_name,  # Include role name for frontend display
                     "username": user.username,
                     "password": user.password, # optional if we want to hide the password
                     "email": user.email,
