@@ -48,6 +48,7 @@ Redis Usage:
 
 import json
 import logging
+from datetime import datetime
 from uuid import UUID
 
 import redis
@@ -666,6 +667,14 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
             )
         
         user_charts = query.all()
+        
+        # Sort by chart created_at descending to process newest charts first
+        # This ensures deduplication prefers newer charts with correct is_time_based values
+        user_charts = sorted(
+            user_charts,
+            key=lambda uc: uc.chart.created_at if uc.chart and uc.chart.created_at else datetime.min,
+            reverse=True
+        )
 
         # ====================================================================
         # QUICK FIX: Deduplicate charts before sending to frontend
@@ -711,18 +720,39 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
                 "is_time_based": chart.chart.is_time_based if hasattr(chart.chart, "is_time_based") and chart.chart.is_time_based is not None else False,
             }
             
-            # If we haven't seen this chart, or if this one is newer, keep it
+            # If we haven't seen this chart, or if this one is newer/better, keep it
             if chart_key not in seen_charts:
                 seen_charts[chart_key] = chart_data
             else:
                 # Keep the one with the most recent created_at
                 existing_created_at = seen_charts[chart_key]["created_at"]
                 current_created_at = chart_data["created_at"]
+                existing_is_time_based = seen_charts[chart_key].get("is_time_based", False)
+                current_is_time_based = chart_data.get("is_time_based", False)
+                
+                should_replace = False
+                
                 if current_created_at and existing_created_at:
+                    # Compare timestamps
                     if current_created_at > existing_created_at:
-                        seen_charts[chart_key] = chart_data
+                        # Current is newer, prefer it
+                        should_replace = True
+                    elif current_created_at == existing_created_at:
+                        # Same timestamp - prefer the one with is_time_based=True
+                        if current_is_time_based and not existing_is_time_based:
+                            should_replace = True
+                        elif current_is_time_based == existing_is_time_based:
+                            # Both have same is_time_based, prefer current (newer ID/UUID)
+                            should_replace = True
+                    # else: existing is newer, keep it
                 elif current_created_at:
-                    # Prefer the one with a date
+                    # Current has a date, existing doesn't, prefer current
+                    should_replace = True
+                elif not existing_created_at and current_is_time_based and not existing_is_time_based:
+                    # Neither has date, but current has is_time_based=True
+                    should_replace = True
+                
+                if should_replace:
                     seen_charts[chart_key] = chart_data
         
         deduplicated_charts = list(seen_charts.values())
