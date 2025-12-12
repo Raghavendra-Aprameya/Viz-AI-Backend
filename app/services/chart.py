@@ -1188,6 +1188,61 @@ async def get_user_dashboard_charts_service(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+async def delete_chart_service(
+    chart_id: UUID, db: Session, token_payload: dict
+):
+    """
+    Delete a chart entirely from the system.
+    This function:
+    1. Validates the user ID from the token payload
+    2. Checks if the chart exists
+    3. Checks if the user has permission to delete the chart
+    4. Deletes the chart and all its relationships
+    5. Commits the deletion to the database
+    Args:
+        chart_id (UUID): ID of the chart
+        db (Session): Database session
+        token_payload (dict): User authentication token payload
+    Returns:
+        dict: Success message
+    """
+    try:
+        user_id = UUID(token_payload.get("sub"))
+        if not user_id:
+            raise ValueError("User ID not found in token payload")
+        
+        # Check if chart exists
+        chart_record = (
+            db.query(ChartModel).filter(ChartModel.id == chart_id).first()
+        )
+        if not chart_record:
+            raise HTTPException(status_code=404, detail="Chart not found")
+        
+        # Check if user has permission to delete the chart
+        user_chart = (
+            db.query(UserChartModel)
+            .filter(
+                UserChartModel.chart_id == chart_id,
+                UserChartModel.user_id == user_id,
+            )
+            .first()
+        )
+        if not user_chart:
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to delete this chart"
+            )
+        
+        # Delete the chart (cascade will handle related records)
+        db.delete(chart_record)
+        db.commit()
+        return {"message": "Chart deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 async def delete_chart_from_dashboard_service(
     dashboard_id: UUID, chart_id: UUID, db: Session, token_payload: dict
 ):

@@ -128,6 +128,7 @@ from app.services.chart import (
     save_chart_to_dashboard_service,
     get_charts_for_dashboard_service,
     get_user_dashboard_charts_service,
+    delete_chart_service,
     delete_chart_from_dashboard_service,
     update_favorite_chart_service,
     get_favorite_charts_service,
@@ -1198,6 +1199,28 @@ async def get_charts_for_dashboard(
         list: A list of charts associated with the specified dashboard.
     """
     return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
+
+
+@backend_router.delete(
+    "/charts/{chart_id}", status_code=status.HTTP_200_OK
+)
+async def delete_chart(
+    chart_id: UUID = Path(..., description="Chart ID to delete"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Delete a chart entirely from the system.
+
+    Args:
+        chart_id (UUID): The ID of the chart to delete.
+        db (Session): The database session.
+        token_payload (dict): The payload of the current authenticated user.
+
+    Returns:
+        dict: A response indicating the chart has been successfully deleted.
+    """
+    return await delete_chart_service(chart_id, db, token_payload)
 
 
 @backend_router.delete(
