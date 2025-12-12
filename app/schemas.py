@@ -247,6 +247,7 @@ class UserProjectDetails(BaseModel):
         user_id: UUID of the user
         project_id: UUID of the project
         role_id: UUID of the user's role in the project
+        role_name: Name of the user's role in the project (optional)
         username: Username of the user
         password: Password of the user
         email: Email address of the user
@@ -257,6 +258,7 @@ class UserProjectDetails(BaseModel):
     user_id: UUID
     project_id: UUID
     role_id: UUID
+    role_name: Optional[str] = None
     username: str
     password: str
     email: str
