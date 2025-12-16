@@ -33,7 +33,7 @@ POOL_RECYCLE = 300
 POOL_SIZE = 20
 MAX_OVERFLOW = 10
 
-ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io"]
+ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io", "https://*.ngrok-free.dev"]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*", "Authorization"]
