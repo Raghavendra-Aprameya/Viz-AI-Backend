@@ -32,13 +32,13 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
             body_bytes=request_body, content_type=request.headers.get("content-type")
         )
 
-        logger.info(
-            "HTTP Request | %s %s | query=%s | body=%s",
-            request.method,
-            request.url.path,
-            dict(request.query_params),
-            request_payload,
-        )
+        # logger.info(
+        #     "HTTP Request | %s %s | query=%s | body=%s",
+        #     request.method,
+        #     request.url.path,
+        #     dict(request.query_params),
+        #     request_payload,
+        # )
 
         response = await call_next(request)
 
@@ -51,13 +51,13 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
             body_bytes=response_body, content_type=response.headers.get("content-type")
         )
 
-        logger.info(
-            "HTTP Response | %s %s | status=%s | body=%s",
-            request.method,
-            request.url.path,
-            response.status_code,
-            response_payload,
-        )
+        # logger.info(
+        #     "HTTP Response | %s %s | status=%s | body=%s",
+        #     request.method,
+        #     request.url.path,
+        #     response.status_code,
+        #     response_payload,
+        # )
 
         response.body_iterator = iterate_in_threadpool(iter([response_body]))
         return response

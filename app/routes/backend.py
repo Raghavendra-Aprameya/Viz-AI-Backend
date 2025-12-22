@@ -1557,3 +1557,27 @@ async def generate_project_business_insights(
 #     )
 
 
+@backend_router.get("/admin/engine-stats", status_code=status.HTTP_200_OK)
+async def get_engine_stats(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Get statistics about external database engine cache.
+
+    Returns cache metrics including:
+    - Number of cached engines
+    - Maximum cache size
+    - Cache utilization percentage
+    - List of cached connection IDs
+
+    This endpoint is useful for monitoring engine pool performance
+    and identifying potential memory issues.
+
+    Returns:
+        dict: Engine cache statistics
+    """
+    from app.core.db import external_engine_manager
+    return external_engine_manager.get_cache_stats()
+
+

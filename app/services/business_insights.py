@@ -197,21 +197,28 @@ async def generate_business_insights_service(
 async def extract_database_schema(db_connection: DatabaseConnectionModel) -> Dict[str, Any]:
     """
     Extract database schema information including tables, columns, and data types.
-    
+
     NOTE: This is a fallback method. The primary method is to use the pre-extracted
     schema stored in db_connection.db_schema during connection creation.
     This function is kept for compatibility and schema refresh scenarios.
-    
+
     Args:
         db_connection: Database connection model
-        
+
     Returns:
         dict: Schema information with tables and columns
     """
     try:
         # Decrypt the connection string before using it
         decrypted_connection_string = decrypt_string(db_connection.db_connection_string)
-        engine = create_engine(decrypted_connection_string)
+
+        # Use external engine manager for connection pooling
+        from app.core.db import external_engine_manager
+        engine = external_engine_manager.get_engine(
+            connection_id=db_connection.id,
+            connection_string=decrypted_connection_string,
+            db_type=db_connection.db_type
+        )
         
         with engine.connect() as connection:
             # Get all tables
@@ -281,8 +288,8 @@ async def extract_database_schema(db_connection: DatabaseConnectionModel) -> Dic
                     "table_name": table,
                     "columns": columns
                 })
-        
-        engine.dispose()
+
+        # Engine is managed by external_engine_manager, no dispose() needed
         return schema_info
         
     except Exception as e:
@@ -469,18 +476,25 @@ async def execute_kpi_queries(
 ) -> List[Dict[str, Any]]:
     """
     Execute all KPI queries against the database and collect results.
-    
+
     Args:
         db_connection: Database connection model
         queries: List of KPI queries to execute
-        
+
     Returns:
         list: Query results with KPI data
     """
     try:
         # Decrypt the connection string before using it
         decrypted_connection_string = decrypt_string(db_connection.db_connection_string)
-        engine = create_engine(decrypted_connection_string)
+
+        # Use external engine manager for connection pooling
+        from app.core.db import external_engine_manager
+        engine = external_engine_manager.get_engine(
+            connection_id=db_connection.id,
+            connection_string=decrypted_connection_string,
+            db_type=db_connection.db_type
+        )
         results = []
         
         for kpi in queries:
@@ -528,12 +542,12 @@ async def execute_kpi_queries(
                     "data": [],
                     "row_count": 0
                 })
-        
-        engine.dispose()
-        
+
+        # Engine is managed by external_engine_manager, no dispose() needed
+
         successful_queries = sum(1 for r in results if r['success'])
         logger.info(f"Executed {successful_queries}/{len(queries)} queries successfully")
-        
+
         return results
         
     except Exception as e:

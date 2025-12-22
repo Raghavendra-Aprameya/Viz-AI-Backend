@@ -39,3 +39,10 @@ def get_db() -> Generator:
         yield db
     finally:
         db.close()
+
+
+# External Database Engine Manager
+# Singleton instance for managing external user database connections
+from app.core.external_engine_manager import ExternalEngineManager
+
+external_engine_manager = ExternalEngineManager()

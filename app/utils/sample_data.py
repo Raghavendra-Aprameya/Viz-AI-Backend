@@ -6,6 +6,9 @@ def get_sample_data(connection_string: str) -> str:
     """
     Fetches 10 rows of sample data from each table in the database along with column names.
     Returns the sample data as a JSON string.
+
+    NOTE: This creates a new engine each time. Consider refactoring to use
+    external_engine_manager if chart generation becomes a performance bottleneck.
     """
     engine = create_engine(connection_string)
     inspector = inspect(engine)
@@ -16,10 +19,10 @@ def get_sample_data(connection_string: str) -> str:
             for table_name in inspector.get_table_names():
                 columns = inspector.get_columns(table_name)
                 column_names = [col["name"] for col in columns]
-                
+
                 query = f"SELECT {', '.join(column_names)} FROM {table_name} LIMIT 10"
                 result = connection.execute(query).fetchall()
-                
+
                 rows = [dict(zip(column_names, row)) for row in result]
 
                 sample_data[table_name] = {
@@ -33,3 +36,6 @@ def get_sample_data(connection_string: str) -> str:
     except Exception as e:
         print(f"Error fetching sample data: {e}")
         raise
+    finally:
+        # Dispose engine to prevent connection leaks
+        engine.dispose()

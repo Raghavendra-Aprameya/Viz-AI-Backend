@@ -380,7 +380,15 @@ def execute_external_query(
 
     decrypt_conn_string = decrypt_string(datasource_connection_id.db_connection_string)
     # print(decyrpt_conn_string)
-    engine = create_engine(decrypt_conn_string)
+
+    # Use external engine manager for connection pooling
+    from app.core.db import external_engine_manager
+    engine = external_engine_manager.get_engine(
+        connection_id=datasource_connection_id.id,
+        connection_string=decrypt_conn_string,
+        db_type=datasource_connection_id.db_type
+    )
+
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
     try:
@@ -405,7 +413,7 @@ def execute_external_query(
         return {"error": str(e)}
     finally:
         session.close()
-        engine.dispose()
+        # Engine is managed by external_engine_manager, no dispose() needed
 
 
 def transform_data_dynamic(data):

@@ -1,0 +1,25 @@
+{
+  "test_config": {
+    "num_requests": 50,
+    "connection_string": "postgresql://postgres:password@localhost:5432/vizai-db-local",
+    "query": "SELECT 1"
+  },
+  "old_approach": {
+    "elapsed_time": 0.5053590300085489,
+    "memory_increase": 0.23424911499023438,
+    "peak_memory": 0.24281883239746094,
+    "avg_request_time": 0.010102955723414197,
+    "min_request_time": 0.006792826985474676,
+    "max_request_time": 0.016736863006372005,
+    "engines_created": 50
+  },
+  "new_approach": {
+    "elapsed_time": 0.035976510000182316,
+    "memory_increase": 0.019441604614257812,
+    "peak_memory": 0.025743484497070312,
+    "avg_request_time": 0.0007093431404791772,
+    "min_request_time": 0.00026026798877865076,
+    "max_request_time": 0.007000927987974137,
+    "engines_created": 1
+  }
+}

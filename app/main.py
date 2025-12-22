@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+import logging
+
 from fastapi import FastAPI, Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,9 +19,30 @@ from app.utils.constants import (
 )
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan manager for startup and shutdown events.
+
+    Handles:
+    - Graceful shutdown of external database engine pool
+    """
+    # Startup
+    logger.info("Starting VizAI Backend...")
+    yield
+    # Shutdown
+    logger.info("Shutting down VizAI Backend...")
+    from app.core.db import external_engine_manager
+    external_engine_manager.dispose_all()
+    logger.info("All external engines disposed successfully")
+
+
 # For SQLAlchemy session, if used elsewhere
-# Create a single FastAPI app instance
-app = FastAPI()
+# Create a single FastAPI app instance with lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(

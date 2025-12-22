@@ -649,6 +649,12 @@ async def update_db_connection(
     if data.db_type:
         db_connection.db_type = data.db_type
 
+    # Invalidate cached engine if connection string changed
+    if data.db_connection_string:
+        from app.core.db import external_engine_manager
+        external_engine_manager.invalidate_engine(connection_id)
+        logger.info(f"Invalidated engine cache for updated connection {connection_id}")
+
     db.commit()
     db.refresh(db_connection)
 
@@ -684,6 +690,11 @@ async def delete_db_connection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Database connection not found",
         )
+
+    # Invalidate cached engine before deletion
+    from app.core.db import external_engine_manager
+    external_engine_manager.invalidate_engine(connection_id)
+    logger.info(f"Invalidated engine cache for deleted connection {connection_id}")
 
     db.delete(db_connection)
     db.commit()
@@ -878,27 +889,28 @@ async def _test_single_connection(
     connection_name = connection.connection_name
     current_time = datetime.utcnow()
     
+    test_engine = None
     try:
         # Decrypt the connection string
         decrypted_connection_string = decrypt_string(connection.db_connection_string)
-        
+
         # Create a test engine
         test_engine = create_engine(
             decrypted_connection_string,
             pool_pre_ping=True,
             connect_args={"connect_timeout": 10}
         )
-        
+
         # Attempt to connect and execute a simple query
         with test_engine.connect() as conn:
             # Execute a simple query to verify the connection works
             conn.execute(text("SELECT 1"))
-        
+
         # Connection successful - update status to True
         connection.status = True
         connection.last_checked = current_time
         db.commit()
-        
+
         return {
             "connection_id": connection_id,
             "connection_name": connection_name,
@@ -906,18 +918,18 @@ async def _test_single_connection(
             "last_checked": current_time.isoformat(),
             "error_message": None
         }
-        
+
     except Exception as e:
         # Connection failed - update status to False
         connection.status = False
         connection.last_checked = current_time
         db.commit()
-        
+
         error_msg = str(e)
         # Truncate long error messages
         if len(error_msg) > 200:
             error_msg = error_msg[:200] + "..."
-        
+
         return {
             "connection_id": connection_id,
             "connection_name": connection_name,
@@ -925,3 +937,7 @@ async def _test_single_connection(
             "last_checked": current_time.isoformat(),
             "error_message": error_msg
         }
+    finally:
+        # Dispose test engine to prevent connection leaks
+        if test_engine is not None:
+            test_engine.dispose()
