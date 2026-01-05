@@ -29,9 +29,10 @@ class Permissions(str, Enum):
     EDIT_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb52"
     DELETE_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb53"
 
-POOL_RECYCLE = 300
+POOL_RECYCLE = 3600
 POOL_SIZE = 20
 MAX_OVERFLOW = 10
+POOL_TIMEOUT = 30
 
 ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io", "https://*.ngrok-free.dev", "http://192.168.1.62:3000/"]
 ALLOWED_CREDENTIALS = True

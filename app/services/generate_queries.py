@@ -392,13 +392,13 @@ def execute_external_query(
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
     try:
-        print(query)
+        print(f"{query=}")
         result = session.execute(text(query))
         data = result.fetchall()
-        print(data)
+        # print(data)
         response = [dict(row._mapping) for row in data]
         transformed_data = transform_data_dynamic(response)
-        print(transformed_data)
+        # print(transformed_data)
         response = {
             "result": transformed_data["data"],
             "x_axis": transformed_data["x_axis"],
@@ -407,7 +407,7 @@ def execute_external_query(
             # "chartType": generated_query.chart_type,
             # "report": generated_query.report
         }
-        print(response)
+        # print(response)
         return response
     except (sqlalchemy.exc.SQLAlchemyError, ValueError) as e:
         return {"error": str(e)}

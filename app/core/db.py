@@ -9,12 +9,15 @@ Features:
 """
 
 from typing import Generator
+import logging
 
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from app.core.settings import settings
 from app.core.base import Base
-from app.utils.constants import POOL_SIZE, MAX_OVERFLOW, POOL_RECYCLE
+from app.utils.constants import POOL_SIZE, MAX_OVERFLOW, POOL_RECYCLE, POOL_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 
 engine = create_engine(
@@ -24,6 +27,7 @@ engine = create_engine(
     pool_recycle=POOL_RECYCLE,
     pool_size=POOL_SIZE,
     max_overflow=MAX_OVERFLOW,
+    pool_timeout=POOL_TIMEOUT,
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
@@ -39,6 +43,35 @@ def get_db() -> Generator:
         yield db
     finally:
         db.close()
+
+
+def get_pool_status() -> dict:
+    """Get current connection pool status for monitoring"""
+    pool = engine.pool
+    return {
+        "size": pool.size(),
+        "checked_in": pool.checkedin(),
+        "checked_out": pool.checkedout(),
+        "overflow": pool.overflow(),
+        "max_overflow": MAX_OVERFLOW,
+        "pool_size": POOL_SIZE,
+    }
+
+
+def log_pool_status():
+    """Log current pool status for debugging connection issues"""
+    try:
+        status = get_pool_status()
+        logger.info(
+            f"Pool status - Size: {status['size']}, "
+            f"Checked in: {status['checked_in']}, "
+            f"Checked out: {status['checked_out']}, "
+            f"Overflow: {status['overflow']}/{status['max_overflow']}"
+        )
+        if status['checked_out'] >= POOL_SIZE + MAX_OVERFLOW - 5:
+            logger.warning("Connection pool nearly exhausted! Check for connection leaks.")
+    except Exception as e:
+        logger.error(f"Error getting pool status: {e}")
 
 
 # External Database Engine Manager

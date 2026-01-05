@@ -24,7 +24,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.db import get_db
+from app.core.db import get_db, get_pool_status
 from app.utils.token_parser import get_current_user
 
 # Schema imports
@@ -156,6 +156,30 @@ from app.services.multiple_db_generate_queries import generate_trino_queries_ser
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
+
+
+@backend_router.get("/health/pool-status")
+async def get_pool_status_endpoint():
+    """
+    Get database connection pool status for monitoring.
+    Returns pool metrics including size, checked in/out connections, and overflow.
+    """
+    try:
+        status_data = get_pool_status()
+
+        utilization_pct = (status_data['checked_out'] / (status_data['pool_size'] + status_data['max_overflow'])) * 100
+
+        return {
+            "status": "healthy" if utilization_pct < 80 else "warning" if utilization_pct < 95 else "critical",
+            "pool": status_data,
+            "utilization_percentage": round(utilization_pct, 2),
+            "available_connections": status_data['pool_size'] + status_data['max_overflow'] - status_data['checked_out']
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get pool status: {str(e)}"
+        )
 
 
 @backend_router.post("/create-project", status_code=status.HTTP_201_CREATED)

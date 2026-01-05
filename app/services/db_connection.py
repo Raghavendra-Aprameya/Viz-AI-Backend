@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 
 progress_queues: dict[str, asyncio.Queue] = {}
 
-async def extract_tables_in_background(task_id: str, connection_string: str, db: Session, db_entry_id):
+async def extract_tables_in_background(task_id: str, connection_string: str, db_entry_id):
     # ensure the async queue exists and frontend can connect immediately
     queue = progress_queues.setdefault(task_id, asyncio.Queue())
 
@@ -107,36 +107,45 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db:
         schema_structure = None
 
     # Save schema to DB only if extraction was successful
-    if schema_structure is not None:
-        try:
-            # Validate that schema has tables before saving
-            if isinstance(schema_structure, dict) and schema_structure.get("tables"):
-                num_tables = len(schema_structure.get("tables", []))
-                logger.info(f"Schema has {num_tables} tables, attempting to save to DB for task_id: {task_id}")
-                
-                db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
-                if db_entry:
-                    schema_json = json.dumps(schema_structure)
-                    logger.info(f"Saving schema to DB entry {db_entry_id}, schema size: {len(schema_json)} bytes")
-                    db_entry.db_schema = schema_json
-                    db.commit()
-                    logger.info(f"Successfully saved schema with {num_tables} tables to DB entry {db_entry_id}")
-                    await queue.put({"type": "info", "message": f"Successfully saved schema with {num_tables} tables"})
+    # Create a new session for this background task to avoid holding onto request session
+    from app.core.db import SessionLocal
+    db = SessionLocal()
+    try:
+        if schema_structure is not None:
+            try:
+                # Validate that schema has tables before saving
+                if isinstance(schema_structure, dict) and schema_structure.get("tables"):
+                    num_tables = len(schema_structure.get("tables", []))
+                    logger.info(f"Schema has {num_tables} tables, attempting to save to DB for task_id: {task_id}")
+
+                    db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
+                    if db_entry:
+                        schema_json = json.dumps(schema_structure)
+                        logger.info(f"Saving schema to DB entry {db_entry_id}, schema size: {len(schema_json)} bytes")
+                        db_entry.db_schema = schema_json
+                        db.commit()
+                        logger.info(f"Successfully saved schema with {num_tables} tables to DB entry {db_entry_id}")
+                        await queue.put({"type": "info", "message": f"Successfully saved schema with {num_tables} tables"})
+                    else:
+                        error_msg = f"Database entry not found for ID: {db_entry_id}"
+                        logger.error(error_msg)
+                        await queue.put({"type": "error", "message": error_msg})
                 else:
-                    error_msg = f"Database entry not found for ID: {db_entry_id}"
-                    logger.error(error_msg)
+                    error_msg = "Schema extraction returned empty or invalid data. Not saving to database."
+                    logger.warning(f"{error_msg} Schema structure: {type(schema_structure)}, has tables: {schema_structure.get('tables') if isinstance(schema_structure, dict) else 'N/A'}")
                     await queue.put({"type": "error", "message": error_msg})
-            else:
-                error_msg = "Schema extraction returned empty or invalid data. Not saving to database."
-                logger.warning(f"{error_msg} Schema structure: {type(schema_structure)}, has tables: {schema_structure.get('tables') if isinstance(schema_structure, dict) else 'N/A'}")
-                await queue.put({"type": "error", "message": error_msg})
-        except Exception as e:
-            logger.error(f"Failed saving schema to DB for task_id: {task_id}: {str(e)}", exc_info=True)
-            await queue.put({"type": "error", "message": f"Failed saving schema to DB: {e}"})
-    else:
-        error_msg = "Schema extraction failed - no schema data to save"
-        logger.error(f"{error_msg} for task_id: {task_id}")
-        await queue.put({"type": "error", "message": error_msg})
+            except Exception as e:
+                logger.error(f"Failed saving schema to DB for task_id: {task_id}: {str(e)}", exc_info=True)
+                await queue.put({"type": "error", "message": f"Failed saving schema to DB: {e}"})
+                db.rollback()
+        else:
+            error_msg = "Schema extraction failed - no schema data to save"
+            logger.error(f"{error_msg} for task_id: {task_id}")
+            await queue.put({"type": "error", "message": error_msg})
+    finally:
+        # Always close the session to prevent connection leaks
+        db.close()
+        logger.debug(f"Background task session closed for task_id: {task_id}")
 
     # notify completion and sentinel
     logger.info(f"Schema extraction task completed for task_id: {task_id}")
@@ -518,10 +527,11 @@ async def create_database_connection(
 
     # --- Create task ID and start background schema extraction ---
     task_id = str(uuid4())
-    background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db, db_entry.id)
+    # Don't pass db session to background task - it will create its own to avoid connection leaks
+    background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db_entry.id)
 
     # --- Return immediately ---
-    tables_count = len(extract_table_names(connection_string))  
+    tables_count = len(extract_table_names(connection_string))
     return {"taskId": task_id, "tablesCount": tables_count}
 
 
