@@ -48,7 +48,7 @@ def get_auth_token() -> Optional[str]:
     return token
 
 
-def fetch_engine_stats(base_url: str = BASE_URL, token: Optional[str] = None) -> dict:
+def fetch_engine_stats(base_url: str = BASE_URL, token: Optional[str] = None, stats_endpoint: str = STATS_ENDPOINT) -> dict:
     """
     Fetch engine statistics from the backend API.
 
@@ -158,10 +158,14 @@ def main():
 
     try:
         # Fetch stats
-        stats = fetch_engine_stats(token=token)
+        stats = fetch_engine_stats(base_url= "http://170.187.237.181:8000", token=token)
 
         # Display stats
         display_stats(stats)
+
+        health = fetch_engine_stats(base_url= "http://170.187.237.181:8000", token=token, stats_endpoint= "api/v1/backend/health/pool-status")
+        print("🩺 Pool Health Check:")
+        print(health)
 
         # Also save to file
         output_file = "engine_stats_output.json"

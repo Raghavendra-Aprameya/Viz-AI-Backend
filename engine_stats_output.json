@@ -1,10 +1,9 @@
 {
-  "cached_engines": 3,
+  "cached_engines": 2,
   "max_cache_size": 100,
-  "cache_utilization": "3.0%",
+  "cache_utilization": "2.0%",
   "connection_ids": [
-    "ebab6980-8208-484e-9445-f67e59468813",
     "a8814d0d-ecc5-4072-bd73-295a0865722c",
-    "e791084f-d75d-443b-9267-4bfd3f559a77"
+    "ebab6980-8208-484e-9445-f67e59468813"
   ]
 }

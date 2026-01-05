@@ -30,10 +30,10 @@ engine = create_engine(
     pool_timeout=POOL_TIMEOUT,
 )
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False)
-Base.metadata.create_all(engine)
-inspector = inspect(engine)
-print(f"Tables in database after creation: {inspector.get_table_names()}")
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False,)
+# Base.metadata.create_all(engine)
+# inspector = inspect(engine)
+# print(f"Tables in database after creation: {inspector.get_table_names()}")
 
 
 def get_db() -> Generator:
