@@ -62,7 +62,8 @@ def fetch_engine_stats(base_url: str = BASE_URL, token: Optional[str] = None, st
     Raises:
         requests.RequestException: If the request fails
     """
-    url = f"{base_url}{STATS_ENDPOINT}"
+
+    url = f"{base_url}{stats_endpoint}"
 
     headers = {}
     if token:
@@ -163,7 +164,7 @@ def main():
         # Display stats
         display_stats(stats)
 
-        health = fetch_engine_stats(base_url= "http://170.187.237.181:8000", token=token, stats_endpoint= "api/v1/backend/health/pool-status")
+        health = fetch_engine_stats(base_url= "http://170.187.237.181:8000", token=token, stats_endpoint= "/api/v1/backend/health/pool-status")
         print("🩺 Pool Health Check:")
         print(health)
 

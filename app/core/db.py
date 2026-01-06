@@ -22,12 +22,18 @@ logger = logging.getLogger(__name__)
 
 engine = create_engine(
     url=settings.DB_URI,
-    # url="postgresql://neondb_owner:npg_bKP5QEfSk0XT@ep-super-cherry-a560k4nm-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
     pool_pre_ping=True,
     pool_recycle=POOL_RECYCLE,
     pool_size=POOL_SIZE,
     max_overflow=MAX_OVERFLOW,
     pool_timeout=POOL_TIMEOUT,
+    connect_args={
+        "connect_timeout": 10,  # Fail fast if DB is unreachable
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    },
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False,)
@@ -72,7 +78,6 @@ def log_pool_status():
             logger.warning("Connection pool nearly exhausted! Check for connection leaks.")
     except Exception as e:
         logger.error(f"Error getting pool status: {e}")
-
 
 # External Database Engine Manager
 # Singleton instance for managing external user database connections
