@@ -85,7 +85,6 @@ from app.utils.tasks import generate_charts_asynchronously
 from app.utils.token_parser import get_current_user
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)

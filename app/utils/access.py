@@ -24,7 +24,6 @@ from app.schemas import ValidateChartAccessRequest
 
 from app.utils.constants import Permissions as Permission
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

@@ -139,7 +139,6 @@ from app.core.settings import settings
 from app.schemas import QueryRequest  # Import the QueryRequest schema
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 # Celery app config with properly configured serializer
 celery_app = Celery(
@@ -301,10 +300,8 @@ async def generate_nl_sql(
             )
 
         schema_str = db_conn.db_schema or "{}"
-        # print(schema_str)
-        print(db_conn)
         db_type = db_conn.db_type
-        print(db_type)
+        logger.debug(f"Processing database connection: {db_conn.connection_name}, type: {db_type}")
         payload = {
             "nl_query": data.nl_query,
             "db_schema": schema_str,

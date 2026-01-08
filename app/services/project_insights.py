@@ -33,7 +33,6 @@ from app.services.business_insights import (
 )
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 REDIS_TTL_SECONDS = 3600  # 1 hour
 REDIS_PREFIX = "project_business_insights"

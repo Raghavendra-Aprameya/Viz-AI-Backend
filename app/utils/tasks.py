@@ -139,7 +139,6 @@ from app.core.settings import settings
 from app.schemas import QueryRequest  # Import the QueryRequest schema
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 # Celery app config with properly configured serializer
 celery_app = Celery(

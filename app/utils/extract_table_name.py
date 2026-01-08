@@ -1,4 +1,7 @@
+import logging
 from sqlalchemy import create_engine, inspect
+
+logger = logging.getLogger(__name__)
 
 def extract_table_names(connection_string: str):
     """
@@ -24,7 +27,7 @@ def extract_table_names(connection_string: str):
         return table_names
 
     except Exception as e:
-        print(f"Error extracting table names: {e}")
+        logger.error(f"Error extracting table names: {e}", exc_info=True)
         return []
     finally:
         # Dispose engine to prevent connection leaks

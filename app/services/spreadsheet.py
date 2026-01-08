@@ -8,12 +8,15 @@ to a project in the database.
 """
 
 import json
+import logging
 from io import StringIO
 from uuid import UUID
 
 import duckdb
 import pandas as pd
 import requests
+
+logger = logging.getLogger(__name__)
 from fastapi import (
     APIRouter,
     Body,
@@ -77,7 +80,7 @@ def get_spreadsheet_data():
         return response_data
 
     else:
-        print(f"Failed to fetch data. HTTP Status code: {response.status_code}")
+        logger.error(f"Failed to fetch data. HTTP Status code: {response.status_code}")
         return None
 
 
@@ -254,7 +257,7 @@ def add_spreadsheet_datasource_service(project_id, data, db, token_payload):
             return new_data
 
         else:
-            print(f"Failed to fetch data. HTTP Status code: {response.status_code}")
+            logger.error(f"Failed to fetch data. HTTP Status code: {response.status_code}")
             return None
     except Exception as e:
         raise HTTPException(

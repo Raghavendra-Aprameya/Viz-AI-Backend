@@ -82,7 +82,7 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
     # ensure the async queue exists and frontend can connect immediately
     queue = progress_queues.setdefault(task_id, asyncio.Queue())
 
-    logger.info(f"Starting background schema extraction for task_id: {task_id}, db_entry_id: {db_entry_id}")
+    logger.debug(f"Starting background schema extraction for task_id: {task_id}, db_entry_id: {db_entry_id}")
 
     loop = asyncio.get_running_loop()
 
@@ -90,7 +90,7 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
     # get_schema_structure will use loop.call_soon_threadsafe(queue.put_nowait, msg)
     schema_structure = None
     try:
-        logger.info(f"Running schema extraction in executor for task_id: {task_id}")
+        logger.debug(f"Running schema extraction in executor for task_id: {task_id}")
         schema_structure = await loop.run_in_executor(
             None,                       # default ThreadPoolExecutor
             get_schema_structure,       # blocking function that now takes (connection_string, queue, loop)
@@ -98,7 +98,7 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
             queue,
             loop
         )
-        logger.info(f"Schema extraction completed for task_id: {task_id}, got schema: {schema_structure is not None}")
+        logger.debug(f"Schema extraction completed for task_id: {task_id}, got schema: {schema_structure is not None}")
     except Exception as e:
         error_msg = f"Schema extraction failed: {str(e)}"
         logger.error(f"Schema extraction failed for task_id: {task_id}: {error_msg}", exc_info=True)
@@ -116,12 +116,12 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
                 # Validate that schema has tables before saving
                 if isinstance(schema_structure, dict) and schema_structure.get("tables"):
                     num_tables = len(schema_structure.get("tables", []))
-                    logger.info(f"Schema has {num_tables} tables, attempting to save to DB for task_id: {task_id}")
+                    logger.debug(f"Schema has {num_tables} tables, attempting to save to DB for task_id: {task_id}")
 
                     db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
                     if db_entry:
                         schema_json = json.dumps(schema_structure)
-                        logger.info(f"Saving schema to DB entry {db_entry_id}, schema size: {len(schema_json)} bytes")
+                        logger.debug(f"Saving schema to DB entry {db_entry_id}, schema size: {len(schema_json)} bytes")
                         db_entry.db_schema = schema_json
                         db.commit()
                         logger.info(f"Successfully saved schema with {num_tables} tables to DB entry {db_entry_id}")
@@ -936,6 +936,10 @@ async def _test_single_connection(
         db.commit()
 
         error_msg = str(e)
+        logger.error(
+            f"Database connection test failed for {connection_name} (ID: {connection_id}): {error_msg}",
+            exc_info=True
+        )
         # Truncate long error messages
         if len(error_msg) > 200:
             error_msg = error_msg[:200] + "..."

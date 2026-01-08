@@ -1,9 +1,12 @@
 from fastapi import APIRouter, status, Depends, Response, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
+import logging
 
 import bcrypt
 import jwt
+
+logger = logging.getLogger(__name__)
 
 from app.core.db import get_db
 from app.core.settings import settings
@@ -102,10 +105,12 @@ async def login_user(login_data: LoginData, response: Response, db: Session = No
         # Retrieve user by username
         user = db.query(UserModel).filter(UserModel.username == login_data.username).first()
         if not user:
+            logger.warning(f"Login attempt failed: User not found - {login_data.username}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found")
 
         # Compare hashed password
         if not bcrypt.checkpw(login_data.password.encode(), user.password.encode()):
+            logger.warning(f"Login attempt failed: Invalid password for user - {login_data.username}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid password")
 
         # Generate new tokens
