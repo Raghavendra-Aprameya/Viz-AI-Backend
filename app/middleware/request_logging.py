@@ -15,9 +15,10 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
     Captures method, path, query parameters, status codes, and truncated bodies for readability.
     """
 
-    def __init__(self, app, max_body_length: int = 2048) -> None:
+    def __init__(self, app, max_body_length: int = 2048, enable_logging: bool = False) -> None:
         super().__init__(app)
         self.max_body_length = max_body_length
+        self.enable_logging = enable_logging
 
     async def dispatch(self, request: Request, call_next) -> Response:
         request_body = await request.body()
@@ -27,37 +28,38 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
 
         request._receive = receive  # noqa: SLF001 - Starlette pattern for resetting body
 
-        # Prepare request log entry
-        request_payload = self._format_body(
-            body_bytes=request_body, content_type=request.headers.get("content-type")
-        )
-
-        # logger.info(
-        #     "HTTP Request | %s %s | query=%s | body=%s",
-        #     request.method,
-        #     request.url.path,
-        #     dict(request.query_params),
-        #     request_payload,
-        # )
+        # Only format body for logging if logging is enabled
+        if self.enable_logging:
+            request_payload = self._format_body(
+                body_bytes=request_body, content_type=request.headers.get("content-type")
+            )
+            logger.info(
+                "HTTP Request | %s %s | query=%s | body=%s",
+                request.method,
+                request.url.path,
+                dict(request.query_params),
+                request_payload,
+            )
 
         response = await call_next(request)
 
-        # Buffer response body so we can both log it and return it
+        # Buffer response body so we can return it
         response_body = b""
         async for chunk in response.body_iterator:
             response_body += chunk
 
-        response_payload = self._format_body(
-            body_bytes=response_body, content_type=response.headers.get("content-type")
-        )
-
-        # logger.info(
-        #     "HTTP Response | %s %s | status=%s | body=%s",
-        #     request.method,
-        #     request.url.path,
-        #     response.status_code,
-        #     response_payload,
-        # )
+        # Only format body for logging if logging is enabled
+        if self.enable_logging:
+            response_payload = self._format_body(
+                body_bytes=response_body, content_type=response.headers.get("content-type")
+            )
+            logger.info(
+                "HTTP Response | %s %s | status=%s | body=%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                response_payload,
+            )
 
         response.body_iterator = iterate_in_threadpool(iter([response_body]))
         return response

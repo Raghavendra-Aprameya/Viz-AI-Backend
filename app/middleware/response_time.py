@@ -1,5 +1,6 @@
 import time
 import uuid
+import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Callable
 from fastapi import Request
@@ -8,6 +9,8 @@ from datetime import datetime
 
 from app.core.db import get_db
 from app.models.schema_models import ResponseTimeModel
+
+logger = logging.getLogger(__name__)
 
 class ResponseTimeMiddleware(BaseHTTPMiddleware):
     """
@@ -60,14 +63,14 @@ class ResponseTimeMiddleware(BaseHTTPMiddleware):
                     db.add(new_record)
                 
                 db.commit()
-                print(f"Request URL: {path}, Processing Time: {process_time:.4f} seconds")
+                logger.debug(f"Request URL: {path}, Processing Time: {process_time:.4f} seconds")
             except Exception as e:
                 db.rollback()
-                print(f"Failed to store response time: {e}")
+                logger.error(f"Failed to store response time: {e}", exc_info=True)
             finally:
                 db.close()
         except Exception as e:
-            print(f"Database error in middleware: {e}")
+            logger.error(f"Database error in middleware: {e}", exc_info=True)
         
         # Add custom header with processing time in milliseconds
         response.headers["X-Response-Time"] = f"{process_time:.4f} seconds"

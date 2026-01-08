@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 import logging
+import os
+import sys
 
 from fastapi import FastAPI, Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,22 @@ from app.utils.constants import (
     ALLOWED_HEADERS,
 )
 from sqlalchemy.orm import Session
+
+# Configure logging - set to INFO by default, can be overridden with LOG_LEVEL env var
+log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
+
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Set SQLAlchemy engine logging to WARNING to reduce noise
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 

@@ -25,6 +25,9 @@ from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
 from app.utils.crypt import decrypt_string
 from app.utils.sample_data import get_sample_data
 from app.utils.token_parser import get_current_user
+import logging
+
+logger = logging.getLogger(__name__)
 
 # LLM_SERVICE_URL = "http://localhost:8001/queries/"
 
@@ -100,8 +103,7 @@ async def generate_and_store_charts(
     if db_conn.consent_given:
         sample_data = get_sample_data(decrypt_conn_string)
     db_schema = json.loads(db_conn.db_schema)
-    print(db_conn)
-    print(db_conn.db_type)
+    logger.debug(f"Processing database connection: {db_conn.connection_name}, type: {db_conn.db_type}")
     llm_payload = {
         "db_schema": db_conn.db_schema,
         "db_type": db_conn.db_type,
@@ -119,7 +121,7 @@ async def generate_and_store_charts(
     else:
         llm_response = await post_to_llm(LLM_SERVICE_URL, llm_payload)
         queries = llm_response.get("queries", [])
-    print(queries)
+    logger.debug(f"Generated {len(queries)} queries from LLM")
 
     chart_models = []
     for q in queries:
@@ -379,7 +381,6 @@ def execute_external_query(
         )
 
     decrypt_conn_string = decrypt_string(datasource_connection_id.db_connection_string)
-    # print(decyrpt_conn_string)
 
     # Use external engine manager for connection pooling
     from app.core.db import external_engine_manager
@@ -392,24 +393,20 @@ def execute_external_query(
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
     try:
-        print(f"{query=}")
+        logger.debug(f"Executing query: {query[:200]}..." if len(query) > 200 else f"Executing query: {query}")
         result = session.execute(text(query))
         data = result.fetchall()
-        # print(data)
         response = [dict(row._mapping) for row in data]
         transformed_data = transform_data_dynamic(response)
-        # print(transformed_data)
         response = {
             "result": transformed_data["data"],
             "x_axis": transformed_data["x_axis"],
             "y_axis": transformed_data["y_axis"],
-            # "id": str(generated_query.id),
-            # "chartType": generated_query.chart_type,
-            # "report": generated_query.report
         }
-        # print(response)
+        logger.debug(f"Query executed successfully, returned {len(response['result'])} rows")
         return response
     except (sqlalchemy.exc.SQLAlchemyError, ValueError) as e:
+        logger.error(f"Query execution failed for connection {datasource_connection_id}: {str(e)}", exc_info=True)
         return {"error": str(e)}
     finally:
         session.close()

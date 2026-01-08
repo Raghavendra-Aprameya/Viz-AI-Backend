@@ -32,7 +32,6 @@ from app.core.settings import settings
 import os
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 REDIS_TTL_SECONDS = 3600  # 1 hour
 redis_url = settings.REDIS_URL
@@ -111,7 +110,7 @@ async def generate_business_insights_service(
         try:
             cached_insights = redis_client.get(cache_key)
             if cached_insights:
-                logger.info(
+                logger.debug(
                     "Returning cached business insights for project %s",
                     db_connection.project_id,
                 )
@@ -132,7 +131,7 @@ async def generate_business_insights_service(
         
         try:
             schema_info = json.loads(db_connection.db_schema)
-            logger.info(f"Loaded schema with {len(schema_info.get('tables', []))} tables")
+            logger.debug(f"Loaded schema with {len(schema_info.get('tables', []))} tables")
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse stored schema: {str(e)}")
             raise HTTPException(
@@ -174,7 +173,7 @@ async def generate_business_insights_service(
         # Store in Redis cache
         try:
             redis_client.setex(cache_key, REDIS_TTL_SECONDS, json.dumps(result))
-            logger.info(
+            logger.debug(
                 "Stored business insights in cache for project %s with TTL %s seconds",
                 db_connection.project_id,
                 REDIS_TTL_SECONDS,
@@ -417,7 +416,7 @@ DO NOT include markdown code fences.
 Just the raw JSON array starting with [ and ending with ].
 """
         
-        logger.info("Generating KPI queries with LLM...")
+        logger.debug("Generating KPI queries with LLM...")
         response = model.generate_content(prompt)
         
         # Parse JSON response
@@ -452,7 +451,7 @@ Just the raw JSON array starting with [ and ending with ].
         
         kpi_queries = json.loads(response_text)
         
-        logger.info(f"Generated {len(kpi_queries)} KPI queries")
+        logger.debug(f"Generated {len(kpi_queries)} KPI queries")
         return kpi_queries
         
     except json.JSONDecodeError as e:
@@ -501,7 +500,7 @@ async def execute_kpi_queries(
             # Use a new connection for each query to avoid transaction issues
             try:
                 with engine.connect() as connection:
-                    logger.info(f"Executing query for KPI: {kpi['kpi_title']}")
+                    logger.debug(f"Executing query for KPI: {kpi['kpi_title']}")
                     
                     query_result = connection.execute(text(kpi['sql_query']))
                     
@@ -546,7 +545,7 @@ async def execute_kpi_queries(
         # Engine is managed by external_engine_manager, no dispose() needed
 
         successful_queries = sum(1 for r in results if r['success'])
-        logger.info(f"Executed {successful_queries}/{len(queries)} queries successfully")
+        logger.debug(f"Executed {successful_queries}/{len(queries)} queries successfully")
 
         return results
         
@@ -666,7 +665,7 @@ DO NOT include markdown code fences.
 Just the raw JSON object starting with {{ and ending with }}.
 """
         
-        logger.info("Generating business insights with LLM...")
+        logger.debug("Generating business insights with LLM...")
         response = model.generate_content(prompt)
         
         # Parse JSON response
@@ -701,7 +700,7 @@ Just the raw JSON object starting with {{ and ending with }}.
         
         insights = json.loads(response_text)
         
-        logger.info("Business insights generated successfully")
+        logger.debug("Business insights generated successfully")
         return insights
         
     except json.JSONDecodeError as e:

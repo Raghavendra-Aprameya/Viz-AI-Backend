@@ -7,6 +7,9 @@ use dependency injection for DB session and user authentication.
 from uuid import UUID
 from typing import Optional
 import traceback
+import logging
+
+logger = logging.getLogger(__name__)
 from fastapi import (
     APIRouter,
     status,
@@ -235,7 +238,7 @@ async def ws_progress(ws: WebSocket, task_id: str):
                 break  # worker finished
             await ws.send_json(msg)
     except WebSocketDisconnect:
-        print(f"Client disconnected from task {task_id}")
+        logger.debug(f"Client disconnected from task {task_id}")
     finally:
         try:
             await ws.close()
@@ -1057,8 +1060,8 @@ def execute_query(
         raise HTTPException(status_code=400, detail=f"ValueError: {str(e)}") from e
 
     except Exception as e:
-        # Print the stack trace for debugging purposes
-        traceback.print_exc()
+        # Log the full exception with stack trace
+        logger.exception("Unexpected error executing query", exc_info=True)
         # Explicitly re-raise the unexpected exception with more context
         raise HTTPException(status_code=500, detail="Unexpected error occurred") from e
 

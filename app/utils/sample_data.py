@@ -1,6 +1,9 @@
 import json
+import logging
 from sqlalchemy import create_engine, inspect
 from typing import Dict, List
+
+logger = logging.getLogger(__name__)
 
 def get_sample_data(connection_string: str) -> str:
     """
@@ -34,7 +37,7 @@ def get_sample_data(connection_string: str) -> str:
         return sample_data_str
 
     except Exception as e:
-        print(f"Error fetching sample data: {e}")
+        logger.error(f"Error fetching sample data: {e}", exc_info=True)
         raise
     finally:
         # Dispose engine to prevent connection leaks
