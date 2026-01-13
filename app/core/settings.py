@@ -2,6 +2,7 @@
 This module contains the settings for the application.
 """
 
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     # LLM_URI: str
     ENCRYPTION_KEY: str
     GEMINI_API_KEY: str
-    REDIS_URL: str | None = None
+    REDIS_URL: Optional[str] = None
 
     class Config:
         """
