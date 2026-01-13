@@ -1,7 +1,6 @@
 """
     This module contains the constants for the application.
 """
-import os
 from enum import Enum
 
 class Permissions(str, Enum):
@@ -40,21 +39,13 @@ ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*", "Authorization"]
 
-# Make LLM service URLs configurable via environment variables
-# Default to localhost for local development
-LLM_SERVICE_URL = os.getenv(
-    "LLM_SERVICE_URL",
-    "http://localhost:8001/queries/"
-)
-LLM_SPREADSHEET_URL = os.getenv(
-    "LLM_SPREADSHEET_URL",
-    "http://localhost:8001/generate-sheet-queries/"
-)
+LLM_SERVICE_URL = "http://localhost:8001/queries/"
+LLM_SPREADSHEET_URL = "http://localhost:8001/generate-sheet-queries/"
 
-# External database connection pool settings (production-safe)
-EXTERNAL_POOL_SIZE = 5          # Pool size per external DB
-EXTERNAL_MAX_OVERFLOW = 10      # Burst capacity (total: 15 connections max)
-EXTERNAL_POOL_RECYCLE = 1800    # Recycle connections every 30 minutes (prevents stale connections)
+# External database connection pool settings
+EXTERNAL_POOL_SIZE = 5          # Conservative pool size per external DB
+EXTERNAL_MAX_OVERFLOW = 10      # Burst capacity (total: 15 connections)
+EXTERNAL_POOL_RECYCLE = 300     # Recycle connections every 5 minutes
 EXTERNAL_CONNECT_TIMEOUT = 10   # Connection timeout in seconds
 EXTERNAL_ENGINE_CACHE_SIZE = 100  # Max engines to cache (LRU eviction)
 
