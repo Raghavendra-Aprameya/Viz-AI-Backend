@@ -3,20 +3,43 @@ from sqlalchemy import create_engine, inspect
 
 logger = logging.getLogger(__name__)
 
-def extract_table_names(connection_string: str):
+def extract_table_names(connection_string: str, db_type: str = None):
     """
     Extract all table names from a database using the provided connection string.
 
+    Uses production-safe engine configuration to prevent stale connections.
+
     Args:
         connection_string (str): SQLAlchemy database connection string
+        db_type (str, optional): Database type ('postgres', 'mysql', 'oracle', etc.)
 
     Returns:
         list: List of table names in the database
     """
     engine = None
     try:
-        # Create engine from connection string
-        engine = create_engine(connection_string)
+        # Use production-safe configuration for external databases
+        connect_args = {}
+        if db_type in ("postgres", "postgresql"):
+            connect_args = {
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
+            }
+        elif db_type not in ("oracledb", "oracle"):
+            connect_args = {"connect_timeout": 10}
+        
+        # Create engine with production-safe configuration
+        engine = create_engine(
+            connection_string,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+            pool_recycle=1800,
+            connect_args=connect_args,
+        )
 
         # Create inspector to examine database schema
         inspector = inspect(engine)
