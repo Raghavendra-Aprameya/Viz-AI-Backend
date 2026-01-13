@@ -93,8 +93,21 @@ async def create_project(
         db.add(new_project)
         db.flush()
 
-        # Get role ID of "ALL role"
-        role_id = db.query(RoleModel).filter(RoleModel.name == "Super Admin").first().id
+        # Get role ID of "Super Admin" role (should be a global role)
+        super_admin_role = db.query(RoleModel).filter(RoleModel.name == "Super Admin").first()
+        
+        if not super_admin_role:
+            # If Super Admin role doesn't exist, create it as a global role
+            super_admin_role = RoleModel(
+                name="Super Admin",
+                description="Super Admin role with full access to all project resources",
+                is_global=True,
+                project_id=None
+            )
+            db.add(super_admin_role)
+            db.flush()
+        
+        role_id = super_admin_role.id
 
         # Assign role to user in UserProjectRoleModel
         user_project_role = UserProjectRoleModel(

@@ -608,3 +608,29 @@ class ResponseTimeModel(Base):
     request_count = Column(Double, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HomeInsightModel(Base):
+    """
+    Stores saved insights that are pinned to the home page.
+    """
+
+    __tablename__ = "home_insights"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id = Column(
+        UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False
+    )
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    insight_type = Column(String, nullable=False)  # "positive", "negative", "opportunity"
+    category = Column(String, nullable=False)
+    impact = Column(String, nullable=False)  # "High", "Medium", "Low"
+    source = Column(String, nullable=True)  # Database name or "Project-wide"
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    user = relationship("UserModel", backref="home_insights")
+    project = relationship("ProjectModel", backref="home_insights")
