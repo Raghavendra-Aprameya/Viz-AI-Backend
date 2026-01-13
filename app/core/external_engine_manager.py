@@ -159,17 +159,13 @@ class ExternalEngineManager:
         try:
             pool_config = self._get_pool_config(db_type)
 
-            # Extract connect_args if present, otherwise create empty dict
+            # Add connect timeout to connect_args (database-specific)
             connect_args = pool_config.pop('connect_args', {})
-            if not isinstance(connect_args, dict):
-                connect_args = {}
 
-            # Add connect timeout (Oracle doesn't support connect_timeout in the same way)
+            # Oracle doesn't support connect_timeout in the same way
             if db_type not in ("oracledb", "oracle"):
                 connect_args['connect_timeout'] = EXTERNAL_CONNECT_TIMEOUT
 
-            # Create engine with production-safe configuration
-            # pool_config already has pool_size, max_overflow, pool_pre_ping, pool_recycle
             engine = create_engine(
                 connection_string,
                 connect_args=connect_args,
@@ -178,7 +174,7 @@ class ExternalEngineManager:
 
             pool_size = pool_config.get('pool_size', 'N/A')
             logger.debug(
-                f"Created engine with pool_size={pool_size}, pool_recycle={EXTERNAL_POOL_RECYCLE}, db_type={db_type}"
+                f"Created engine with pool_size={pool_size}, db_type={db_type}"
             )
             return engine
 
@@ -187,18 +183,10 @@ class ExternalEngineManager:
             # Fallback to NullPool (no connection pooling)
             logger.warning("Falling back to NullPool (no connection pooling)")
 
-            # Fallback with production-safe settings
+            # Try without connect_timeout for Oracle, with it for others
             fallback_connect_args = {}
             if db_type not in ("oracledb", "oracle"):
                 fallback_connect_args['connect_timeout'] = EXTERNAL_CONNECT_TIMEOUT
-                # Add PostgreSQL keepalive settings for fallback too
-                if db_type in ("postgres", "postgresql"):
-                    fallback_connect_args.update({
-                        "keepalives": 1,
-                        "keepalives_idle": 30,
-                        "keepalives_interval": 10,
-                        "keepalives_count": 5,
-                    })
 
             return create_engine(
                 connection_string,
@@ -209,8 +197,6 @@ class ExternalEngineManager:
     def _get_pool_config(self, db_type: Optional[str]) -> dict:
         """
         Get pool configuration based on database type.
-        
-        Production-safe configuration with keepalives to prevent stale connections.
 
         Args:
             db_type: Database type ('postgres', 'mysql', 'oracle', 'spreadsheet')
@@ -230,23 +216,12 @@ class ExternalEngineManager:
             # Google Sheets or similar - no pooling needed
             return {"poolclass": NullPool}
         else:
-            # PostgreSQL, MySQL, or default - Production-safe configuration
-            # PostgreSQL keepalive settings to detect dead connections
-            connect_args = {}
-            if db_type in ("postgres", "postgresql"):
-                connect_args = {
-                    "keepalives": 1,
-                    "keepalives_idle": 30,
-                    "keepalives_interval": 10,
-                    "keepalives_count": 5,
-                }
-            
+            # PostgreSQL, MySQL, or default
             return {
                 "pool_size": EXTERNAL_POOL_SIZE,
                 "max_overflow": EXTERNAL_MAX_OVERFLOW,
-                "pool_pre_ping": True,  # Validates connections before use
-                "pool_recycle": EXTERNAL_POOL_RECYCLE,  # Recycle every 30 minutes
-                "connect_args": connect_args,  # PostgreSQL keepalive settings
+                "pool_pre_ping": True,
+                "pool_recycle": EXTERNAL_POOL_RECYCLE,
             }
 
     def _evict_oldest(self):

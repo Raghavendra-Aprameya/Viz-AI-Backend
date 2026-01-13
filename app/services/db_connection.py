@@ -531,8 +531,7 @@ async def create_database_connection(
     background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db_entry.id)
 
     # --- Return immediately ---
-    # Pass db_type for production-safe connection configuration
-    tables_count = len(extract_table_names(connection_string, db_type))
+    tables_count = len(extract_table_names(connection_string))
     return {"taskId": task_id, "tablesCount": tables_count}
 
 
@@ -905,23 +904,11 @@ async def _test_single_connection(
         # Decrypt the connection string
         decrypted_connection_string = decrypt_string(connection.db_connection_string)
 
-        # Create a test engine with production-safe configuration
-        connect_args = {"connect_timeout": 10}
-        if connection.db_type in ("postgres", "postgresql"):
-            connect_args.update({
-                "keepalives": 1,
-                "keepalives_idle": 30,
-                "keepalives_interval": 10,
-                "keepalives_count": 5,
-            })
-        
+        # Create a test engine
         test_engine = create_engine(
             decrypted_connection_string,
-            pool_size=5,
-            max_overflow=10,
             pool_pre_ping=True,
-            pool_recycle=1800,
-            connect_args=connect_args
+            connect_args={"connect_timeout": 10}
         )
 
         # Attempt to connect and execute a simple query

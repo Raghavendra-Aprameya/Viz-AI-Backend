@@ -13,29 +13,41 @@ import json
 from typing import Any
 from uuid import UUID
 
-import json
-import logging
-from typing import Any
-from uuid import UUID
-
 import httpx
 import sqlalchemy
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.models.schema_models import ChartModel, DatabaseConnectionModel
+from app.schemas import QueryRequest
+from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
+from app.utils.crypt import decrypt_string
+from app.utils.sample_data import get_sample_data
+from app.utils.token_parser import get_current_user
+import logging
+
+logger = logging.getLogger(__name__)
+
+# LLM_SERVICE_URL = "http://localhost:8001/queries/"
+
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text, create_engine
+from fastapi import HTTPException, status, Depends
+from uuid import UUID
+from typing import Any
+import httpx
+import json
 from app.models.schema_models import (
     ChartModel,
     DashboardChartsModel,
     DatabaseConnectionModel,
 )
 from app.schemas import QueryRequest
-from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
-from app.utils.crypt import decrypt_string
-from app.utils.sample_data import get_sample_data
 from app.utils.token_parser import get_current_user
-
-logger = logging.getLogger(__name__)
+from app.utils.crypt import decrypt_string
+from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
+from app.utils.sample_data import get_sample_data
 
 
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
@@ -89,7 +101,7 @@ async def generate_and_store_charts(
         )
     sample_data = None
     if db_conn.consent_given:
-        sample_data = get_sample_data(decrypt_conn_string, db_conn.db_type)
+        sample_data = get_sample_data(decrypt_conn_string)
     db_schema = json.loads(db_conn.db_schema)
     logger.debug(f"Processing database connection: {db_conn.connection_name}, type: {db_conn.db_type}")
     llm_payload = {
@@ -377,24 +389,6 @@ def execute_external_query(
         connection_string=decrypt_conn_string,
         db_type=datasource_connection_id.db_type
     )
-
-    # Health check: Test connection before executing query
-    # This detects stale connections that pool_pre_ping might miss
-    try:
-        with engine.connect() as test_conn:
-            test_conn.execute(text("SELECT 1"))
-    except Exception as health_error:
-        logger.warning(
-            f"Connection health check failed for {datasource_connection_id.id}, "
-            f"invalidating engine: {health_error}"
-        )
-        # Invalidate stale engine and get fresh one
-        external_engine_manager.invalidate_engine(datasource_connection_id.id)
-        engine = external_engine_manager.get_engine(
-            connection_id=datasource_connection_id.id,
-            connection_string=decrypt_conn_string,
-            db_type=datasource_connection_id.db_type
-        )
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()

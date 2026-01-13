@@ -5,34 +5,15 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
-def get_sample_data(connection_string: str, db_type: str = None) -> str:
+def get_sample_data(connection_string: str) -> str:
     """
     Fetches 10 rows of sample data from each table in the database along with column names.
     Returns the sample data as a JSON string.
 
-    Uses production-safe engine configuration to prevent stale connections.
+    NOTE: This creates a new engine each time. Consider refactoring to use
+    external_engine_manager if chart generation becomes a performance bottleneck.
     """
-    # Use production-safe configuration for external databases
-    connect_args = {}
-    if db_type in ("postgres", "postgresql"):
-        connect_args = {
-            "connect_timeout": 10,
-            "keepalives": 1,
-            "keepalives_idle": 30,
-            "keepalives_interval": 10,
-            "keepalives_count": 5,
-        }
-    elif db_type not in ("oracledb", "oracle"):
-        connect_args = {"connect_timeout": 10}
-    
-    engine = create_engine(
-        connection_string,
-        pool_size=5,
-        max_overflow=10,
-        pool_pre_ping=True,
-        pool_recycle=1800,
-        connect_args=connect_args,
-    )
+    engine = create_engine(connection_string)
     inspector = inspect(engine)
     sample_data = {}
 
