@@ -1456,3 +1456,86 @@ class DeleteAccountResponse(BaseModel):
     """
     
     message: str
+
+
+class SaveHomeInsightRequest(BaseModel):
+    """
+    Request model for saving an insight to the home page.
+    
+    Attributes:
+        project_id: ID of the project
+        title: Title of the insight
+        description: Detailed description of the insight
+        insight_type: Type of insight - "positive", "negative", or "opportunity"
+        category: Category of the insight
+        impact: Impact level - "High", "Medium", or "Low"
+        source: Source of the insight (database name or "Project-wide")
+    """
+    
+    project_id: UUID
+    title: str
+    description: str
+    insight_type: str  # "positive", "negative", "opportunity"
+    category: str
+    impact: str  # "High", "Medium", "Low"
+    source: Optional[str] = None
+
+
+class HomeInsightResponse(BaseModel):
+    """
+    Response model for a home insight.
+    
+    Attributes:
+        id: Unique identifier of the insight
+        user_id: ID of the user who saved the insight
+        project_id: ID of the associated project
+        title: Title of the insight
+        description: Detailed description
+        insight_type: Type of insight
+        category: Category
+        impact: Impact level
+        source: Source of the insight
+        created_at: Timestamp when the insight was saved
+    """
+    
+    id: str
+    user_id: str
+    project_id: str
+    title: str
+    description: str
+    insight_type: str
+    category: str
+    impact: str
+    source: Optional[str] = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class GetHomeInsightsResponse(BaseModel):
+    """
+    Response model for fetching home insights.
+    
+    Attributes:
+        message: Status message
+        insights: List of home insights
+        total_count: Total number of insights
+    """
+    
+    message: str
+    insights: List[HomeInsightResponse]
+    total_count: int
+
+
+class SaveHomeInsightResponse(BaseModel):
+    """
+    Response model for saving a home insight.
+    
+    Attributes:
+        message: Status message
+        insight: The saved insight
+    """
+    
+    message: str
+    insight: HomeInsightResponse

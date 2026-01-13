@@ -73,6 +73,9 @@ from app.schemas import (
     LatestBusinessInsightResponse,
     ConnectionStatsResponse,
     ConnectionCheckResponse,
+    SaveHomeInsightRequest,
+    SaveHomeInsightResponse,
+    GetHomeInsightsResponse,
 )
 
 # Service imports
@@ -155,7 +158,11 @@ from app.services.nl2sql import generate_nl_sql
 
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
 
-
+from app.services.home_insights import (
+    save_home_insight_service,
+    get_home_insights_service,
+    delete_home_insight_service,
+)
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
@@ -1606,5 +1613,119 @@ async def get_engine_stats(
     """
     from app.core.db import external_engine_manager
     return external_engine_manager.get_cache_stats()
+
+
+@backend_router.post(
+    "/home-insights",
+    status_code=status.HTTP_201_CREATED,
+    response_model=SaveHomeInsightResponse,
+)
+async def save_home_insight(
+    data: SaveHomeInsightRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Save an insight to the user's home page.
+    
+    This endpoint allows users to pin important insights to their home page
+    for quick access and monitoring.
+    
+    Args:
+        data (SaveHomeInsightRequest): Insight data including title, description, type, etc.
+        db (Session): The database session
+        token_payload (dict): The authenticated user's token payload
+        
+    Returns:
+        SaveHomeInsightResponse: The saved insight with its ID and metadata
+        
+    Example:
+        POST /api/v1/backend/home-insights
+        {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
+            "title": "Revenue Growth Trend",
+            "description": "Monthly revenue has increased by 15% over the last quarter",
+            "insight_type": "positive",
+            "category": "Revenue",
+            "impact": "High",
+            "source": "Sales Database"
+        }
+    """
+    return await save_home_insight_service(
+        data=data.dict(),
+        db=db,
+        token_payload=token_payload
+    )
+
+
+@backend_router.get(
+    "/home-insights",
+    status_code=status.HTTP_200_OK,
+    response_model=GetHomeInsightsResponse,
+)
+async def get_home_insights(
+    project_id: Optional[UUID] = Query(None, description="Filter by project ID"),
+    limit: int = Query(10, description="Maximum number of insights to return", ge=1, le=50),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Get all saved home insights for the current user.
+    
+    This endpoint retrieves insights that the user has pinned to their home page,
+    ordered by most recent first.
+    
+    Args:
+        project_id (Optional[UUID]): Optional project ID to filter insights
+        limit (int): Maximum number of insights to return (1-50, default 10)
+        db (Session): The database session
+        token_payload (dict): The authenticated user's token payload
+        
+    Returns:
+        GetHomeInsightsResponse: List of home insights and total count
+        
+    Example:
+        GET /api/v1/backend/home-insights?limit=5
+        GET /api/v1/backend/home-insights?project_id=550e8400-e29b-41d4-a716-446655440000
+    """
+    return await get_home_insights_service(
+        db=db,
+        token_payload=token_payload,
+        project_id=project_id,
+        limit=limit
+    )
+
+
+@backend_router.delete(
+    "/home-insights/{insight_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_home_insight(
+    insight_id: UUID = Path(..., description="ID of the insight to delete"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Delete a saved home insight.
+    
+    This endpoint removes an insight from the user's home page.
+    Only the user who created the insight can delete it.
+    
+    Args:
+        insight_id (UUID): The ID of the insight to delete
+        db (Session): The database session
+        token_payload (dict): The authenticated user's token payload
+        
+    Returns:
+        dict: Confirmation message
+        
+    Example:
+        DELETE /api/v1/backend/home-insights/550e8400-e29b-41d4-a716-446655440000
+    """
+    return await delete_home_insight_service(
+        insight_id=insight_id,
+        db=db,
+        token_payload=token_payload
+    )
 
 
