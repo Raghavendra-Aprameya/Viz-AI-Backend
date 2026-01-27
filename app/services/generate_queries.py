@@ -417,6 +417,8 @@ def transform_data_dynamic(data):
     """
     Transforms an array of dictionaries into the required format by dynamically detecting fields.
     Also returns the detected x-axis and y-axis labels.
+    
+    Handles single-column queries by using index as label.
 
     :param data: List of dictionaries with unknown key names
     :return: Dictionary containing transformed data and axis labels
@@ -426,9 +428,23 @@ def transform_data_dynamic(data):
 
     keys = list(data[0].keys())
 
+    # Handle single-column queries (e.g., COUNT(*), SUM(amount))
+    if len(keys) == 1:
+        # Use index as label and the single column as value
+        y_axis = keys[0]
+        transformed_data = [
+            {"label": str(idx + 1), "value": item[y_axis]} for idx, item in enumerate(data)
+        ]
+        return {
+            "data": transformed_data, 
+            "x_axis": "Index",  # Default label for single-column queries
+            "y_axis": y_axis
+        }
+    
+    # Handle multi-column queries (standard case)
     if len(keys) < 2:
         raise ValueError(
-            "Data must contain at least two fields (one for label and one for value)."
+            "Data must contain at least one field. Empty result set."
         )
 
     x_axis = keys[0]  # First key for x-axis
