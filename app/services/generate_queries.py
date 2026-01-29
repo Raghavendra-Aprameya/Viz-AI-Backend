@@ -49,6 +49,17 @@ from app.utils.crypt import decrypt_string
 from app.utils.constants import LLM_SERVICE_URL, LLM_SPREADSHEET_URL
 from app.utils.sample_data import get_sample_data
 
+# Salesforce support is optional - only import if available
+try:
+    from app.services.soql_executor import execute_salesforce_query, replace_soql_date_placeholders
+    from app.services.salesforce_client import salesforce_client_manager
+    SALESFORCE_AVAILABLE = True
+except ImportError:
+    execute_salesforce_query = None
+    replace_soql_date_placeholders = None
+    salesforce_client_manager = None
+    SALESFORCE_AVAILABLE = False
+
 
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
 # celery -A app.utils.tasks.celery_app worker --loglevel=info
@@ -371,23 +382,59 @@ def execute_external_query(
     # Replace dates in query if provided, otherwise use default dates in query
     query = replace_dates_in_query(query_input, from_date, to_date)
 
-    datasource_connection_id = (
+    db_connection = (
         db.query(DatabaseConnectionModel).filter_by(id=datasource_connection_id).first()
     )
-    if not datasource_connection_id:
+    if not db_connection:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Datasource Connection ID dosent Exist",
+            detail="Datasource Connection ID doesn't exist",
         )
 
-    decrypt_conn_string = decrypt_string(datasource_connection_id.db_connection_string)
+    decrypt_conn_string = decrypt_string(db_connection.db_connection_string)
 
+    # Handle Salesforce queries separately
+    if db_connection.db_type == "salesforce":
+        if not SALESFORCE_AVAILABLE:
+            return {"error": "Salesforce integration is not available. Please install simple-salesforce."}
+
+        try:
+            # For Salesforce, use SOQL date placeholder replacement
+            soql_query = replace_soql_date_placeholders(query, from_date, to_date)
+            logger.debug(f"Executing SOQL query: {soql_query[:200]}..." if len(soql_query) > 200 else f"Executing SOQL: {soql_query}")
+
+            # Get decrypted OAuth2 credentials
+            # For Salesforce OAuth2: db_password = session_id (encrypted), db_host_link = instance_url
+            decrypted_session_id = decrypt_string(db_connection.db_password) if db_connection.db_password else ""
+
+            # Execute Salesforce query using OAuth2
+            result = execute_salesforce_query(
+                connection_id=db_connection.id,
+                session_id=decrypted_session_id,
+                instance_url=db_connection.db_host_link,
+                query=soql_query,
+                from_date=from_date,
+                to_date=to_date,
+            )
+
+            if "error" in result:
+                logger.error(f"SOQL execution failed: {result['error']}")
+            else:
+                logger.debug(f"SOQL executed successfully, returned {len(result.get('result', []))} rows")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Salesforce query execution failed: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+
+    # Standard SQL database execution
     # Use external engine manager for connection pooling
     from app.core.db import external_engine_manager
     engine = external_engine_manager.get_engine(
-        connection_id=datasource_connection_id.id,
+        connection_id=db_connection.id,
         connection_string=decrypt_conn_string,
-        db_type=datasource_connection_id.db_type
+        db_type=db_connection.db_type
     )
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -406,7 +453,7 @@ def execute_external_query(
         logger.debug(f"Query executed successfully, returned {len(response['result'])} rows")
         return response
     except (sqlalchemy.exc.SQLAlchemyError, ValueError) as e:
-        logger.error(f"Query execution failed for connection {datasource_connection_id}: {str(e)}", exc_info=True)
+        logger.error(f"Query execution failed for connection {db_connection.id}: {str(e)}", exc_info=True)
         return {"error": str(e)}
     finally:
         session.close()
