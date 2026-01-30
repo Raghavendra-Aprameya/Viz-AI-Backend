@@ -534,7 +534,7 @@ async def create_database_connection(
     tables_count = len(extract_table_names(connection_string))
     return {"taskId": task_id, "tablesCount": tables_count}
 
-
+ 
 
 
 @require_permission(Permission.VIEW_DATASOURCE)

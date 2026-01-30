@@ -29,7 +29,7 @@ class Permissions(str, Enum):
     EDIT_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb52"
     DELETE_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb53"
 
-POOL_RECYCLE = 3600
+POOL_RECYCLE = 1800
 POOL_SIZE = 20
 MAX_OVERFLOW = 10
 POOL_TIMEOUT = 30
@@ -39,9 +39,13 @@ ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*", "Authorization"]
 
-LLM_SERVICE_URL = "http://localhost:8001/queries/"
-LLM_SPREADSHEET_URL = "http://localhost:8001/generate-sheet-queries/"
+#LOCAL
+# LLM_SERVICE_URL = "http://localhost:8001/queries/"
+# LLM_SPREADSHEET_URL = "http://localhost:8001/generate-sheet-queries/"
 
+# Use Docker Service Name
+LLM_SERVICE_URL = "http://vizai_llm_service:8001/queries/"
+LLM_SPREADSHEET_URL = "http://vizai_llm_service:8001/generate-sheet-queries/"
 # External database connection pool settings
 EXTERNAL_POOL_SIZE = 5          # Conservative pool size per external DB
 EXTERNAL_MAX_OVERFLOW = 10      # Burst capacity (total: 15 connections)
