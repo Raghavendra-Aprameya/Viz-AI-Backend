@@ -193,7 +193,7 @@ async def generate_business_insights_service(
         ) from e
 
 
-async def extract_database_schema(db_connection: DatabaseConnectionModel) -> Dict[str, Any]:
+async def   extract_database_schema(db_connection: DatabaseConnectionModel) -> Dict[str, Any]:
     """
     Extract database schema information including tables, columns, and data types.
 

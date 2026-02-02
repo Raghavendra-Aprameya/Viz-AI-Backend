@@ -34,7 +34,7 @@ POOL_SIZE = 20
 MAX_OVERFLOW = 10
 POOL_TIMEOUT = 30
 
-ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://192.46.213.30:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io", "https://*.ngrok-free.dev", "http://192.168.1.62:3000/"]
+ALLOWED_ORIGINS=["http://170.187.237.181:3000","http://172.105.61.172:3000","http://localhost:3000","http://localhost:3001","http://localhost:3002","http://localhost:3003", "https://*.ngrok-free.app", "https://*.ngrok.io", "https://*.ngrok-free.dev", "http://192.168.1.62:3000/"]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*", "Authorization"]
