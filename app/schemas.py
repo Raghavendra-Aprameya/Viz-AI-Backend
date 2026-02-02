@@ -20,13 +20,16 @@ class DBConnectionRequest(BaseModel):
         connection_name: Name of the database connection
         connection_string: Optional connection string for the database
         domain: Optional domain of the database
-        db_type: Optional type of the database (e.g., PostgreSQL, MySQL)
+        db_type: Optional type of the database (e.g., PostgreSQL, MySQL, Salesforce)
         api_key: Optional API key for authentication
-        password: Optional password for authentication
+        password: Optional password for authentication (for SQL databases)
         host: Optional host address of the database
         db_name: Optional name of the database
         name: Optional alternative name for the connection
+        username: Optional username field for Oracle DB
         consent_given: Optional flag indicating if consent is given for the connection
+        session_id: Salesforce OAuth access_token (for Salesforce only)
+        instance_url: Salesforce instance URL e.g. https://na45.salesforce.com (for Salesforce only)
     """
 
     connection_name: str
@@ -41,6 +44,9 @@ class DBConnectionRequest(BaseModel):
     name: Optional[str] = None
     username: Optional[str] = None  # Optional username field for Oracle DB
     consent_given: Optional[bool] = False
+    # Salesforce OAuth2 fields (session-based authentication only)
+    session_id: Optional[str] = None  # Salesforce OAuth access_token
+    instance_url: Optional[str] = None  # Salesforce instance URL (e.g., https://na45.salesforce.com)
 
 
 # class DBConnectionResponse(BaseModel):

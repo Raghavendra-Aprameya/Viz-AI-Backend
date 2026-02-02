@@ -61,8 +61,16 @@ from app.schemas import (
     UpdateDBConnectionRequest,
 )
 from app.utils.crypt import encrypt_string, decrypt_string
-from app.utils.schema_structure import get_schema_structure
+from app.utils.schema_structure import get_schema_structure, get_salesforce_schema_structure
 from app.utils.extract_table_name import extract_table_names
+
+# Salesforce support is optional - only import if available
+try:
+    from app.services.salesforce_client import salesforce_client_manager
+    SALESFORCE_AVAILABLE = True
+except ImportError:
+    salesforce_client_manager = None
+    SALESFORCE_AVAILABLE = False
 from app.utils.token_parser import get_current_user
 from app.utils.constants import Permissions as Permission
 from app.utils.access import require_permission
@@ -78,11 +86,11 @@ logger = logging.getLogger(__name__)
 
 progress_queues: dict[str, asyncio.Queue] = {}
 
-async def extract_tables_in_background(task_id: str, connection_string: str, db_entry_id):
+async def extract_tables_in_background(task_id: str, connection_string: str, db_entry_id, db_type: str = None, salesforce_credentials: dict = None):
     # ensure the async queue exists and frontend can connect immediately
     queue = progress_queues.setdefault(task_id, asyncio.Queue())
 
-    logger.debug(f"Starting background schema extraction for task_id: {task_id}, db_entry_id: {db_entry_id}")
+    logger.debug(f"Starting background schema extraction for task_id: {task_id}, db_entry_id: {db_entry_id}, db_type: {db_type}")
 
     loop = asyncio.get_running_loop()
 
@@ -91,13 +99,24 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
     schema_structure = None
     try:
         logger.debug(f"Running schema extraction in executor for task_id: {task_id}")
-        schema_structure = await loop.run_in_executor(
-            None,                       # default ThreadPoolExecutor
-            get_schema_structure,       # blocking function that now takes (connection_string, queue, loop)
-            connection_string,
-            queue,
-            loop
-        )
+
+        # Salesforce requires different schema extraction
+        if db_type == "salesforce" and salesforce_credentials:
+            schema_structure = await loop.run_in_executor(
+                None,
+                get_salesforce_schema_structure,
+                salesforce_credentials,
+                queue,
+                loop
+            )
+        else:
+            schema_structure = await loop.run_in_executor(
+                None,                       # default ThreadPoolExecutor
+                get_schema_structure,       # blocking function that now takes (connection_string, queue, loop)
+                connection_string,
+                queue,
+                loop
+            )
         logger.debug(f"Schema extraction completed for task_id: {task_id}, got schema: {schema_structure is not None}")
     except Exception as e:
         error_msg = f"Schema extraction failed: {str(e)}"
@@ -488,15 +507,85 @@ async def create_database_connection(
             if ":" in host:
                 # Host contains port
                 host, port = host.split(":", 1)
-            
+
             if not all([username, password, host, service_name]):
                 raise HTTPException(status_code=400, detail="Oracle requires username (or name), password, host, and service_name (db_name)")
-            
+
             # Build Oracle connection string in the specified format
             connection_string = (
                 f"oracle+oracledb://{username}:{quote_plus(str(password))}@{host}:{port}/"
                 f"?service_name={service_name}"
             )
+        elif db_type == "salesforce":
+            # Check if Salesforce support is available
+            if not SALESFORCE_AVAILABLE:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Salesforce integration is not available. Please install simple-salesforce: pip install simple-salesforce"
+                )
+
+            # Salesforce uses OAuth2 session-based authentication only
+            # Frontend sends: session_id (OAuth access_token) and instance_url
+            session_id = getattr(data, 'session_id', None) or ""
+            instance_url = getattr(data, 'instance_url', None) or ""
+
+            # Validate required fields
+            if not session_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Salesforce requires session_id (OAuth access_token)"
+                )
+
+            if not instance_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Salesforce requires instance_url (e.g., https://na45.salesforce.com)"
+                )
+
+            # Validate instance_url is NOT login.salesforce.com (that's the auth endpoint, not the API)
+            instance_url_lower = instance_url.lower()
+            if "login.salesforce.com" in instance_url_lower or "test.salesforce.com" in instance_url_lower:
+                raise HTTPException(
+                    status_code=400,
+                    detail="instance_url must be your Salesforce instance URL (e.g., https://na45.salesforce.com), not the login URL"
+                )
+
+            # Ensure instance_url has https:// prefix
+            if not instance_url.startswith("https://"):
+                if instance_url.startswith("http://"):
+                    instance_url = instance_url.replace("http://", "https://")
+                else:
+                    instance_url = f"https://{instance_url}"
+
+            # Validate Salesforce OAuth session before creating the connection
+            logger.info(f"Validating Salesforce OAuth session for instance: {instance_url}")
+            test_result = salesforce_client_manager.test_connection(
+                session_id=session_id,
+                instance_url=instance_url,
+            )
+
+            if not test_result.get("success"):
+                error_msg = test_result.get("error", "Salesforce OAuth session validation failed")
+                logger.error(f"Salesforce connection validation failed: {error_msg}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Salesforce connection failed: {error_msg}"
+                )
+
+            org_name = test_result.get('org_name', 'Unknown')
+            logger.info(f"Salesforce OAuth session validated successfully for org: {org_name}")
+
+            # For Salesforce OAuth2, we use the existing fields:
+            # - db_username: Not used (set to org_name for display)
+            # - db_password: Stores session_id (encrypted)
+            # - db_host_link: Stores instance_url
+            # - db_name: Not used for Salesforce
+            # - db_connection_string: Placeholder URL for identification
+            connection_string = f"salesforce://{instance_url}"
+            username = org_name  # Store org name for display purposes
+            password = session_id  # Store session_id in password field (will be encrypted)
+            host = instance_url
+            db_name = None
         else:
             raise HTTPException(status_code=400, detail="Unsupported database type.")
 
@@ -508,6 +597,7 @@ async def create_database_connection(
         raise HTTPException(status_code=400, detail="Connection already exists")
 
     # Create DB entry without schema
+    db_name_value = db_name
     db_entry = DatabaseConnectionModel(
         id=uuid4(),
         connection_name=data.connection_name,
@@ -516,7 +606,7 @@ async def create_database_connection(
         db_username=username,
         db_password=encrypt_string(password),
         db_host_link=host,
-        db_name=db_name,
+        db_name=db_name_value,
         project_id=project_id,
         consent_given=bool(data.consent_given) if data.consent_given is not None else False,
         db_type=db_type,
@@ -528,10 +618,30 @@ async def create_database_connection(
     # --- Create task ID and start background schema extraction ---
     task_id = str(uuid4())
     # Don't pass db session to background task - it will create its own to avoid connection leaks
-    background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db_entry.id)
+
+    # Handle Salesforce differently - pass OAuth2 credentials instead of connection string
+    if db_type == "salesforce":
+        # For schema extraction, pass the OAuth2 credentials
+        # Note: password contains session_id, host contains instance_url
+        salesforce_creds = {
+            "session_id": password,  # password field stores session_id for Salesforce
+            "instance_url": host,    # host field stores instance_url for Salesforce
+        }
+        background_tasks.add_task(
+            extract_tables_in_background,
+            task_id,
+            connection_string,
+            db_entry.id,
+            db_type,
+            salesforce_creds
+        )
+        # For Salesforce, we don't know the table count upfront
+        tables_count = 0
+    else:
+        background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db_entry.id, db_type)
+        tables_count = len(extract_table_names(connection_string))
 
     # --- Return immediately ---
-    tables_count = len(extract_table_names(connection_string))
     return {"taskId": task_id, "tablesCount": tables_count}
 
 
@@ -887,21 +997,50 @@ async def _test_single_connection(
 ) -> Dict[str, Any]:
     """
     Test a single database connection and update its status.
-    
+
     Args:
         connection (DatabaseConnectionModel): The database connection to test.
         db (Session): The database session for updating the record.
-        
+
     Returns:
         dict: Result of the connection test.
     """
     connection_id = str(connection.id)
     connection_name = connection.connection_name
     current_time = datetime.utcnow()
-    
+
     test_engine = None
     try:
-        # Decrypt the connection string
+        # Handle Salesforce connections differently
+        if connection.db_type == "salesforce":
+            if not SALESFORCE_AVAILABLE:
+                raise Exception("Salesforce integration is not available. Please install simple-salesforce.")
+
+            # Test Salesforce connection using the client manager
+            # For Salesforce OAuth2: db_password = session_id (encrypted), db_host_link = instance_url
+            decrypted_session_id = decrypt_string(connection.db_password) if connection.db_password else ""
+
+            test_result = salesforce_client_manager.test_connection(
+                session_id=decrypted_session_id,
+                instance_url=connection.db_host_link,
+            )
+
+            if test_result.get("success"):
+                connection.status = True
+                connection.last_checked = current_time
+                db.commit()
+
+                return {
+                    "connection_id": connection_id,
+                    "connection_name": connection_name,
+                    "status": True,
+                    "last_checked": current_time.isoformat(),
+                    "error_message": None
+                }
+            else:
+                raise Exception(test_result.get("error", "Salesforce connection failed"))
+
+        # Standard database connection test
         decrypted_connection_string = decrypt_string(connection.db_connection_string)
 
         # Create a test engine
