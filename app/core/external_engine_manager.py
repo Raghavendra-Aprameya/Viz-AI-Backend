@@ -100,15 +100,24 @@ class ExternalEngineManager:
         Args:
             connection_id: UUID of the DatabaseConnectionModel
             connection_string: Decrypted database connection string
-            db_type: Database type ('postgres', 'mysql', 'oracle', 'spreadsheet')
+            db_type: Database type ('postgres', 'mysql', 'oracle', 'spreadsheet', 'salesforce')
 
         Returns:
             SQLAlchemy Engine instance (cached or newly created)
+
+        Raises:
+            ValueError: If db_type is 'salesforce' (Salesforce doesn't use SQLAlchemy)
 
         Thread Safety:
             This method is thread-safe and can be called concurrently.
             The engine itself is also thread-safe once returned.
         """
+        # Salesforce doesn't use SQLAlchemy - use SalesforceClientManager instead
+        if db_type == "salesforce":
+            raise ValueError(
+                "Salesforce connections do not use SQLAlchemy engines. "
+                "Use SalesforceClientManager from app.services.salesforce_client instead."
+            )
         with self._instance_lock:
             # Check if engine exists and connection string hasn't changed
             if connection_id in self._engines:
