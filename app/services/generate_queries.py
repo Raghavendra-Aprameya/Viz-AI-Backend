@@ -416,8 +416,10 @@ def execute_external_query(
                 from_date=from_date,
                 to_date=to_date,
             )
-
-            if "error" in result:
+            if result is None:
+                logger.error("Query execution returned None")
+                result = {"error": "Internal execution error: No result returned from executor"}
+            elif "error" in result:
                 logger.error(f"SOQL execution failed: {result['error']}")
             else:
                 logger.debug(f"SOQL executed successfully, returned {len(result.get('result', []))} rows")

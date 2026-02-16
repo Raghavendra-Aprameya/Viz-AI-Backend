@@ -100,7 +100,10 @@ class SalesforceClientManager:
         if session_id and instance_url:
             return f"oauth:{instance_url}:{session_id[:20]}"
         return f"basic:{username}:{password}:{security_token}"
-
+    def refresh_client(self, connection_id: UUID, **kwargs) -> Salesforce:
+        """Forcefully remove old client and create a new one"""
+        self.invalidate_client(connection_id)
+        return self.get_client(connection_id=connection_id, **kwargs)
     def get_client(
         self,
         connection_id: UUID,

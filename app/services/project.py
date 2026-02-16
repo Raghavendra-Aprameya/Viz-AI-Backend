@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Path, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
+from sqlalchemy import inspect
 from app.core.db import get_db
 from app.models.schema_models import (
     ConnectionTableNameModel,
@@ -729,39 +729,38 @@ async def delete_project(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
-    """
-    Delete a project.
-
-    Args:
-        project_id (UUID): The ID of the project to delete.
-        db (Session): The database session.
-        token_payload (dict): The decoded JWT payload containing user details.
-
-    Returns:
-        dict: A message indicating the successful deletion of the project.
-
-    Raises:
-        HTTPException: If the project is not found or if there are any errors during deletion.
-    """
     try:
         user_id = UUID(token_payload.get("sub"))
-
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
             )
 
+        # 1. Fetch the project first to ensure it exists
         project = db.query(ProjectModel).filter(ProjectModel.id == project_id).first()
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
             )
 
-        db.delete(project)
-        db.commit()
+        # 2. Check for table existence using Inspector
+        inspector = inspect(db.get_bind())
+        table_exists = "home_insights" in inspector.get_table_names()
 
+        # 3. Choose deletion strategy
+        if table_exists:
+            # Table exists: safe to use ORM delete which handles Cascades
+            db.delete(project)
+        else:
+            # Table is missing: use a direct Query Delete to bypass relationship checks
+            # This skips the ORM's attempt to verify the home_insights table
+            db.query(ProjectModel).filter(ProjectModel.id == project_id).delete(synchronize_session=False)
+
+        db.commit()
         return {"message": "Project deleted successfully"}
+
     except Exception as e:
+        db.rollback() # Always rollback on error
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
         ) from e

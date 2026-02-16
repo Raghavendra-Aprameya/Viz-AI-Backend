@@ -20,6 +20,7 @@ from datetime import datetime
 try:
     from simple_salesforce import Salesforce
     from simple_salesforce.exceptions import SalesforceMalformedRequest
+    from simple_salesforce.exceptions import SalesforceExpiredSession, SalesforceMalformedRequest
 except ImportError:
     raise ImportError(
         "simple-salesforce is required for Salesforce integration. "
@@ -230,40 +231,28 @@ def execute_salesforce_query(
         Or on error:
         - error: Error message string
     """
+    def run_execution(client):
+        processed_query = replace_soql_date_placeholders(query, from_date, to_date)
+        result = execute_soql_query(client, processed_query)
+        return transform_salesforce_result(result.get("records", []))
+
     try:
-        # Get or create Salesforce client using OAuth2
+        # 1. Attempt with cached client
         sf_client = salesforce_client_manager.get_client(
             connection_id=connection_id,
             session_id=session_id,
             instance_url=instance_url,
         )
-
-        # Replace date placeholders in query
-        processed_query = replace_soql_date_placeholders(query, from_date, to_date)
-
-        # Execute SOQL query
-        result = execute_soql_query(sf_client, processed_query)
-
-        # Transform results to standard format
-        transformed = transform_salesforce_result(result.get("records", []))
-
-        return {
-            "result": transformed["data"],
-            "x_axis": transformed["x_axis"],
-            "y_axis": transformed["y_axis"],
-        }
-
-    except SalesforceMalformedRequest as e:
-        error_msg = f"Invalid SOQL query: {str(e)}"
-        logger.error(error_msg)
-        return {"error": error_msg}
-
-    except Exception as e:
-        error_msg = f"Salesforce query execution failed: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return {"error": error_msg}
-
-
+        transformed = run_execution(sf_client)
+        
+    except SalesforceExpiredSession:
+        logger.warning(f"Session expired for {connection_id}. Retrying with fresh login...")
+        # 2. Invalidate cache and get a BRAND NEW client
+        sf_client = salesforce_client_manager.refresh_client(
+            connection_id=connection_id,
+            session_id=session_id,
+            instance_url=instance_url
+        )
 def get_salesforce_sample_data(
     sf_client: Salesforce,
     object_name: str,
