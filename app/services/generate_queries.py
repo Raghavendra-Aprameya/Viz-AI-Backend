@@ -395,38 +395,43 @@ def execute_external_query(
 
     # Handle Salesforce queries separately
     if db_connection.db_type == "salesforce":
-        if not SALESFORCE_AVAILABLE:
-            return {"error": "Salesforce integration is not available. Please install simple-salesforce."}
+            if not SALESFORCE_AVAILABLE:
+                return {"error": "Salesforce integration is not available."}
 
-        try:
-            # For Salesforce, use SOQL date placeholder replacement
-            soql_query = replace_soql_date_placeholders(query, from_date, to_date)
-            logger.debug(f"Executing SOQL query: {soql_query[:200]}..." if len(soql_query) > 200 else f"Executing SOQL: {soql_query}")
+            try:
+                # 1. Prepare the SOQL query
+                soql_query = replace_soql_date_placeholders(query, from_date, to_date)
+                logger.debug(f"Executing SOQL for connection: {db_connection.id}")
 
-            # Get decrypted OAuth2 credentials
-            # For Salesforce OAuth2: db_password = session_id (encrypted), db_host_link = instance_url
-            decrypted_session_id = decrypt_string(db_connection.db_password) if db_connection.db_password else ""
+                decrypted_secret = decrypt_string(db_connection.db_password) if db_connection.db_password else ""
+                decrypted_password_token = decrypt_string(db_connection.db_connection_string) if db_connection.db_connection_string else ""
+                
+                # 3. Identify Flow (Connected App flow uses db_name for the Consumer Key)
+                is_connected_app = True if db_connection.db_name else False
 
-            # Execute Salesforce query using OAuth2
-            result = execute_salesforce_query(
-                connection_id=db_connection.id,
-                session_id=decrypted_session_id,
-                instance_url=db_connection.db_host_link,
-                query=soql_query,
-                from_date=from_date,
-                to_date=to_date,
-            )
+                # 4. Execute with full credentials to enable auto-refresh
+                result = execute_salesforce_query(
+                    connection_id=db_connection.id,
+                    query=soql_query,
+                    instance_url=db_connection.db_host_link,
+                    username=db_connection.db_username, 
+                    password=decrypted_password_token, # Contains Password + Security Token
+                    consumer_key=db_connection.db_name if is_connected_app else None,
+                    consumer_secret=decrypted_secret if is_connected_app else None,
+                    session_id=decrypted_secret if not is_connected_app else None,
+                    domain="login", 
+                    from_date=from_date,
+                    to_date=to_date,
+                )
 
-            if "error" in result:
-                logger.error(f"SOQL execution failed: {result['error']}")
-            else:
-                logger.debug(f"SOQL executed successfully, returned {len(result.get('result', []))} rows")
+                if "error" in result:
+                    logger.error(f"SOQL execution failed: {result['error']}")
+                
+                return result
 
-            return result
-
-        except Exception as e:
-            logger.error(f"Salesforce query execution failed: {str(e)}", exc_info=True)
-            return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Salesforce query execution failed: {str(e)}", exc_info=True)
+                return {"error": str(e)}
 
     # Standard SQL database execution
     # Use external engine manager for connection pooling

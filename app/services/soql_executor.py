@@ -201,9 +201,15 @@ def transform_salesforce_result(
 
 def execute_salesforce_query(
     connection_id: UUID,
-    session_id: str,
-    instance_url: str,
     query: str,
+    instance_url: str,
+    username: Optional[str] = None,       
+    password: Optional[str] = None,       
+    security_token: Optional[str] = None,   
+    session_id: Optional[str] = None,       
+    consumer_key: Optional[str] = None,     
+    consumer_secret: Optional[str] = None,  
+    domain: str = "login",                  
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -234,10 +240,15 @@ def execute_salesforce_query(
         # Get or create Salesforce client using OAuth2
         sf_client = salesforce_client_manager.get_client(
             connection_id=connection_id,
-            session_id=session_id,
+            username=username,
+            password=password,
+            security_token=security_token,
             instance_url=instance_url,
+            session_id=session_id,
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            domain=domain
         )
-
         # Replace date placeholders in query
         processed_query = replace_soql_date_placeholders(query, from_date, to_date)
 

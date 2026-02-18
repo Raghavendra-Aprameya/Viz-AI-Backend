@@ -174,149 +174,6 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
     # CLEANUP: remove queue so we don't leak memory (safe - WS should have consumed sentinel)
     progress_queues.pop(task_id, None)
 
-
-# @require_permission(Permission.ADD_DATASOURCE)xs
-# async def create_database_connection(
-#     project_id: UUID,
-#     token_payload: dict,
-#     data: DBConnectionRequest,
-#     db: Session,
-# ):
-#     """
-#     Creates and stores a new database connection for a given project.
-
-#     Args:
-#         project_id (UUID): The project to which this DB connection belongs.
-#         token_payload (dict): Decoded token payload for permission checks.
-#         data (DBConnectionRequest): Input data for creating the DB connection.
-#         db (Session): SQLAlchemy DB session.
-
-#     Returns:
-#         DBConnectionResponse: Response containing the created DB connection ID.
-
-#     Raises:
-#         HTTPException: On invalid DB type or parsing errors.
-#     """
-#     if data.connection_string:
-#         parsed_url = urlparse(data.connection_string)
-#         # Normalize parsed components to safe strings
-#         raw_username = parsed_url.username or ""
-#         raw_password = parsed_url.password or ""
-#         raw_host = parsed_url.hostname or ""
-#         raw_port = parsed_url.port
-#         raw_path = parsed_url.path or ""
-#         raw_query = parsed_url.query or ""
-
-#         # Determine final database name: prefer path, else fallback to provided db_name
-#         parsed_db_name = raw_path.lstrip("/")
-#         final_db_name = parsed_db_name or (data.db_name or "")
-
-#         if not raw_host:
-#             raise HTTPException(
-#                 status_code=400, detail="Host is required in connection string"
-#             )
-#         if not final_db_name:
-#             raise HTTPException(
-#                 status_code=400,
-#                 detail="Database name is required (missing in URL and payload)",
-#             )
-
-#         # Ensure quote_plus always gets a string
-#         encoded_password = quote_plus(str(raw_password))
-
-#         connection_string = (
-#             f"{parsed_url.scheme}://{raw_username}:{encoded_password}@"
-#             f"{raw_host}{':' + str(raw_port) if raw_port else ''}"
-#             f"/{final_db_name}"
-#             f"{'?' + raw_query if raw_query else ''}"
-#         )
-
-#         db_type = data.db_type
-#         schema_structure = get_schema_structure(connection_string)
-
-#         username = raw_username
-#         password = str(raw_password)
-#         host = raw_host
-#         db_name = final_db_name
-
-#     else:
-#         db_type = (data.db_type or "").lower()
-#         username = data.name or ""
-#         password = data.password or ""
-#         host = data.host or ""
-#         db_name = data.db_name or ""
-
-#         if not host:
-#             raise HTTPException(status_code=400, detail="Host is required")
-#         if not db_name:
-#             raise HTTPException(status_code=400, detail="Database name is required")
-
-#         # Parse host and port from host string (format: "host:port" or just "host")
-#         # SQLAlchemy connection strings support port in the format: scheme://user:pass@host:port/db
-#         if ":" in host and not host.startswith("["):  # IPv6 addresses start with [
-#             # Host already contains port (e.g., "localhost:3306")
-#             host_part = host
-#         else:
-#             # Host doesn't contain port, use default ports
-#             if db_type == "postgres":
-#                 host_part = f"{host}:5432"
-#             elif db_type == "mysql":
-#                 host_part = f"{host}:3306"
-#             else:
-#                 host_part = host
-
-#         if db_type == "postgres":
-#             connection_string = (
-#                 f"postgresql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
-#             )
-#         elif db_type == "mysql":
-#             connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host_part}/{db_name}"
-#         else:
-#             raise HTTPException(status_code=400, detail="Unsupported database type.")
-
-#         schema_structure = get_schema_structure(connection_string)
-
-#     existing = (
-#         db.query(DatabaseConnectionModel)
-#         .filter(DatabaseConnectionModel.connection_name == data.connection_name)
-#         .first()
-#     )
-#     if existing:
-#         raise HTTPException(status_code=400, detail="Connection already exists")
-
-#     db_entry = DatabaseConnectionModel(
-#         id=uuid4(),
-#         connection_name=data.connection_name,
-#         db_connection_string=encrypt_string(connection_string),
-#         db_schema=json.dumps(schema_structure),
-#         db_username=username,
-#         db_password=encrypt_string(password),
-#         db_host_link=host,
-#         db_name=db_name,
-#         project_id=project_id,
-#         consent_given=(
-#             bool(data.consent_given) if data.consent_given is not None else False
-#         ),
-#         # db_description=data.db_description,
-#         db_type=db_type,
-#     )
-
-#     db.add(db_entry)
-#     db.flush()
-
-#     table_names = extract_table_names(connection_string)
-#     for table_name in table_names:
-#         db.add(
-#             ConnectionTableNameModel(
-#                 table_name=table_name,
-#                 connection_id=db_entry.id,
-#             )
-#         )
-
-#     db.commit()
-
-#     return DBConnectionResponse(db_entry_id=db_entry.id)
-
 def parse_and_encode_connection_string(connection_string: str) -> str:
     """
     Parse a connection string and reconstruct it with proper URL encoding for all components.
@@ -521,73 +378,65 @@ async def create_database_connection(
             if not SALESFORCE_AVAILABLE:
                 raise HTTPException(
                     status_code=400,
-                    detail="Salesforce integration is not available. Please install simple-salesforce: pip install simple-salesforce"
+                    detail="Salesforce integration is not available."
                 )
+        # consumer_key, consumer_Secret, sf_username, sf_password , security_token(opt)
+            # 1. Extract all possible fields from incoming data
+            session_id = getattr(data, 'session_id', None)
+            instance_url = getattr(data, 'instance_url', None)
+            consumer_key = getattr(data, 'consumer_key', None)       
+            consumer_secret = getattr(data, 'consumer_secret', None) 
+            domain = getattr(data, 'domain', 'login')
+            
+            # Credentials for the refreshable flow
+            sf_username = getattr(data, 'sf_username', None) or getattr(data, 'name', None)
+            sf_password = getattr(data, 'sf_password', None)
+            security_token = getattr(data, 'security_token', '')
 
-            # Salesforce uses OAuth2 session-based authentication only
-            # Frontend sends: session_id (OAuth access_token) and instance_url
-            session_id = getattr(data, 'session_id', None) or ""
-            instance_url = getattr(data, 'instance_url', None) or ""
-
-            # Validate required fields
-            if not session_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Salesforce requires session_id (OAuth access_token)"
-                )
-
+            # 2. Basic Validation
             if not instance_url:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Salesforce requires instance_url (e.g., https://na45.salesforce.com)"
-                )
-
-            # Validate instance_url is NOT login.salesforce.com (that's the auth endpoint, not the API)
-            instance_url_lower = instance_url.lower()
-            if "login.salesforce.com" in instance_url_lower or "test.salesforce.com" in instance_url_lower:
-                raise HTTPException(
-                    status_code=400,
-                    detail="instance_url must be your Salesforce instance URL (e.g., https://na45.salesforce.com), not the login URL"
-                )
+                raise HTTPException(status_code=400, detail="Salesforce requires instance_url")
 
             # Ensure instance_url has https:// prefix
             if not instance_url.startswith("https://"):
-                if instance_url.startswith("http://"):
-                    instance_url = instance_url.replace("http://", "https://")
-                else:
-                    instance_url = f"https://{instance_url}"
+                instance_url = f"https://{instance_url.replace('http://', '')}"
 
-            # Validate Salesforce OAuth session before creating the connection
-            logger.info(f"Validating Salesforce OAuth session for instance: {instance_url}")
+            # 3. Validate connection via manager (handles both flows automatically)
+            logger.info(f"Validating Salesforce connection for: {instance_url}")
             test_result = salesforce_client_manager.test_connection(
                 session_id=session_id,
                 instance_url=instance_url,
+                consumer_key=consumer_key,
+                consumer_secret=consumer_secret,
+                username=sf_username,
+                password=sf_password,
+                security_token=security_token,
+                domain=domain
             )
 
             if not test_result.get("success"):
-                error_msg = test_result.get("error", "Salesforce OAuth session validation failed")
-                logger.error(f"Salesforce connection validation failed: {error_msg}")
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Salesforce connection failed: {error_msg}"
-                )
+                error_msg = test_result.get("error", "Validation failed")
+                raise HTTPException(status_code=400, detail=f"Salesforce failed: {error_msg}")
 
+            # 4. ASSIGN LOCAL VARIABLES (This prevents the UnboundLocalError)
             org_name = test_result.get('org_name', 'Unknown')
-            logger.info(f"Salesforce OAuth session validated successfully for org: {org_name}")
-
-            # For Salesforce OAuth2, we use the existing fields:
-            # - db_username: Not used (set to org_name for display)
-            # - db_password: Stores session_id (encrypted)
-            # - db_host_link: Stores instance_url
-            # - db_name: Not used for Salesforce
-            # - db_connection_string: Placeholder URL for identification
             connection_string = f"salesforce://{instance_url}"
-            username = org_name  # Store org name for display purposes
-            password = session_id  # Store session_id in password field (will be encrypted)
             host = instance_url
-            db_name = None
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported database type.")
+            
+            # Determine how we store these for the background task/executor
+            if consumer_key and consumer_secret and sf_password:
+                # Persistent Connected App Flow
+                username = sf_username or org_name
+                password = consumer_secret  
+                db_name = consumer_key     
+
+                connection_string = f"{sf_password}{security_token}" 
+            else:
+                # Normal Access Token (Session ID) Flow
+                username = org_name
+                password = session_id # Token stored in db_password
+                db_name = None        # No consumer key
+                connection_string = f"salesforce://{instance_url}" # Placeholder
 
     # Check for duplicate connection
     existing = db.query(DatabaseConnectionModel).filter(
@@ -621,11 +470,15 @@ async def create_database_connection(
 
     # Handle Salesforce differently - pass OAuth2 credentials instead of connection string
     if db_type == "salesforce":
-        # For schema extraction, pass the OAuth2 credentials
-        # Note: password contains session_id, host contains instance_url
         salesforce_creds = {
-            "session_id": password,  # password field stores session_id for Salesforce
-            "instance_url": host,    # host field stores instance_url for Salesforce
+            "session_id": session_id if not consumer_secret else None,
+            "instance_url": host,
+            "consumer_key": db_name,        
+            "consumer_secret": password,    
+            "username": username,   
+            "secuity_token":security_token,        
+            "password": decrypt_string(db_entry.db_connection_string) if not session_id else None, # sf_password+token
+            "domain": domain
         }
         background_tasks.add_task(
             extract_tables_in_background,
@@ -1014,15 +867,24 @@ async def _test_single_connection(
         # Handle Salesforce connections differently
         if connection.db_type == "salesforce":
             if not SALESFORCE_AVAILABLE:
-                raise Exception("Salesforce integration is not available. Please install simple-salesforce.")
+                raise Exception("Salesforce integration is not available.")
 
-            # Test Salesforce connection using the client manager
-            # For Salesforce OAuth2: db_password = session_id (encrypted), db_host_link = instance_url
-            decrypted_session_id = decrypt_string(connection.db_password) if connection.db_password else ""
+            # Decrypt stored secrets
+            # db_password -> consumer_secret
+            # db_connection_string -> sf_password + security_token
+            decrypted_secret = decrypt_string(connection.db_password) if connection.db_password else ""
+            decrypted_pass_token = decrypt_string(connection.db_connection_string) if connection.db_connection_string else ""
+            
+            is_oauth_flow = True if connection.db_name else False 
 
             test_result = salesforce_client_manager.test_connection(
-                session_id=decrypted_session_id,
                 instance_url=connection.db_host_link,
+                username=connection.db_username,      # Salesforce Email
+                password=decrypted_pass_token,        # Salesforce Pass + Token
+                consumer_key=connection.db_name if is_oauth_flow else None,
+                consumer_secret=decrypted_secret if is_oauth_flow else None,
+                session_id=decrypted_secret if not is_oauth_flow else None,
+                domain="login" 
             )
 
             if test_result.get("success"):

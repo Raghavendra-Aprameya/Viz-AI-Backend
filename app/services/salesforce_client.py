@@ -95,11 +95,14 @@ class SalesforceClientManager:
         security_token: Optional[str] = None,
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
+        consumer_key: Optional[str] = None,  
+        consumer_secret: Optional[str] = None, 
     ) -> str:
         """Create a hash string from credentials for cache comparison"""
         if session_id and instance_url:
-            return f"oauth:{instance_url}:{session_id[:20]}"
-        return f"basic:{username}:{password}:{security_token}"
+            return f"oauth_direct:{instance_url}:{session_id[:20]}"
+        # Include consumer info in the hash for the Connected App flow
+        return f"connected_app:{username}:{password}:{consumer_key}:{security_token}"
 
     def get_client(
         self,
@@ -109,64 +112,34 @@ class SalesforceClientManager:
         security_token: Optional[str] = None,
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
+        consumer_key: Optional[str] = None,    
+        consumer_secret: Optional[str] = None,
         domain: str = "login",
     ) -> Salesforce:
-        """
-        Get or create a cached Salesforce client for a connection.
-
-        Supports two authentication methods:
-        1. Username + Password + Security Token (basic auth)
-        2. Session ID + Instance URL (OAuth2)
-
-        Args:
-            connection_id: UUID of the DatabaseConnectionModel
-            username: Salesforce username (for basic auth)
-            password: Salesforce password (for basic auth)
-            security_token: Salesforce security token (for basic auth)
-            instance_url: Salesforce instance URL (for OAuth2)
-            session_id: OAuth2 access token (for OAuth2)
-            domain: Salesforce domain ('login' for production, 'test' for sandbox)
-
-        Returns:
-            Salesforce client instance (cached or newly created)
-
-        Raises:
-            SalesforceAuthenticationFailed: If authentication fails
-            ValueError: If required credentials are missing
-        """
+        """Get or create a cached Salesforce client with auto-refresh support."""
         credentials_hash = self._create_credentials_hash(
-            username, password, security_token, instance_url, session_id
+            username, password, security_token, instance_url, session_id, consumer_key, consumer_secret
         )
 
         with self._instance_lock:
-            # Check if client exists and credentials haven't changed
             if connection_id in self._clients:
                 cached_hash, cached_client = self._clients[connection_id]
 
                 if cached_hash == credentials_hash:
-                    # Move to end (LRU: most recently used)
                     self._clients.move_to_end(connection_id)
                     logger.debug(f"Reusing cached Salesforce client for connection {connection_id}")
                     return cached_client
                 else:
-                    # Credentials changed, remove old client
                     logger.info(f"Credentials changed for {connection_id}, creating new client")
                     del self._clients[connection_id]
 
-            # Evict oldest client if cache is full
             if len(self._clients) >= self._max_cache_size:
                 self._evict_oldest()
 
-            # Create new client
             client = self._create_client(
-                username, password, security_token, instance_url, session_id, domain
+                username, password, security_token, instance_url, session_id, domain, consumer_key, consumer_secret
             )
             self._clients[connection_id] = (credentials_hash, client)
-            logger.info(
-                f"Created new Salesforce client for connection {connection_id} "
-                f"(cache_size={len(self._clients)}/{self._max_cache_size})"
-            )
-
             return client
 
     def _create_client(
@@ -177,36 +150,28 @@ class SalesforceClientManager:
         instance_url: Optional[str],
         session_id: Optional[str],
         domain: str,
+        consumer_key: Optional[str] = None,   
+        consumer_secret: Optional[str] = None, 
     ) -> Salesforce:
-        """
-        Create a new Salesforce client.
-
-        Args:
-            username: Salesforce username (for basic auth)
-            password: Salesforce password (for basic auth)
-            security_token: Salesforce security token (for basic auth)
-            instance_url: Salesforce instance URL (for OAuth2)
-            session_id: OAuth2 access token (for OAuth2)
-            domain: Salesforce domain
-
-        Returns:
-            Salesforce client instance
-
-        Raises:
-            ValueError: If required credentials are missing
-            SalesforceAuthenticationFailed: If authentication fails
-        """
-        # OAuth2 authentication (session_id + instance_url)
+        
+        # Option A: Manual Session (Still expires)
         if session_id and instance_url:
-            logger.debug(f"Creating Salesforce client with OAuth2 at {instance_url}")
+            return Salesforce(instance_url=instance_url, session_id=session_id)
+
+        # Option B: Connected App OAuth2 (Auto-renews)
+        if username and password and consumer_key and consumer_secret:
+            logger.debug(f"Creating refreshable OAuth2 client for {username}")
             return Salesforce(
-                instance_url=instance_url,
-                session_id=session_id,
+                username=username,
+                password=password,
+                consumer_key=consumer_key,
+                consumer_secret=consumer_secret,
+                security_token=security_token or "",
+                domain=domain
             )
 
-        # Username/password/token authentication
+        # Option C: Basic Auth (Traditional)
         if username and password:
-            logger.debug(f"Creating Salesforce client with username/password for {username}")
             return Salesforce(
                 username=username,
                 password=password,
@@ -214,10 +179,7 @@ class SalesforceClientManager:
                 domain=domain,
             )
 
-        raise ValueError(
-            "Invalid Salesforce credentials. Provide either "
-            "(username, password, security_token) or (session_id, instance_url)"
-        )
+        raise ValueError("Missing credentials for Salesforce connection.")
 
     def _evict_oldest(self):
         """Evict the least recently used client from cache."""
@@ -258,52 +220,31 @@ class SalesforceClientManager:
             logger.info("All Salesforce clients disposed")
 
     def test_connection(
-        self,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        security_token: Optional[str] = None,
-        instance_url: Optional[str] = None,
-        session_id: Optional[str] = None,
-        domain: str = "login",
-    ) -> Dict[str, Any]:
-        """
-        Test Salesforce connection credentials without caching.
-
-        Args:
-            username: Salesforce username (for basic auth)
-            password: Salesforce password (for basic auth)
-            security_token: Salesforce security token (for basic auth)
-            instance_url: Salesforce instance URL (for OAuth2)
-            session_id: OAuth2 access token (for OAuth2)
-            domain: Salesforce domain
-
-        Returns:
-            Dict with 'success' boolean and 'message' or 'error' string
-        """
-        try:
-            client = self._create_client(
-                username, password, security_token, instance_url, session_id, domain
-            )
-            # Test the connection by querying the organization info
-            org_info = client.query("SELECT Id, Name FROM Organization LIMIT 1")
-            org_name = org_info.get("records", [{}])[0].get("Name", "Unknown")
-            return {
-                "success": True,
-                "message": f"Successfully connected to Salesforce org: {org_name}",
-                "org_name": org_name,
-            }
-        except SalesforceAuthenticationFailed as e:
-            logger.error(f"Salesforce authentication failed: {e}")
-            return {
-                "success": False,
-                "error": f"Authentication failed: {str(e)}",
-            }
-        except Exception as e:
-            logger.error(f"Salesforce connection test failed: {e}")
-            return {
-                "success": False,
-                "error": f"Connection failed: {str(e)}",
-            }
+            self,
+            username: Optional[str] = None,
+            password: Optional[str] = None,
+            security_token: Optional[str] = None,
+            instance_url: Optional[str] = None,
+            session_id: Optional[str] = None,
+            consumer_key: Optional[str] = None,    # Added
+            consumer_secret: Optional[str] = None, # Added
+            domain: str = "login",
+        ) -> Dict[str, Any]:
+            """Test Salesforce credentials without caching."""
+            try:
+                client = self._create_client(
+                    username, password, security_token, instance_url, session_id, domain, consumer_key, consumer_secret
+                )
+                org_info = client.query("SELECT Id, Name FROM Organization LIMIT 1")
+                org_name = org_info.get("records", [{}])[0].get("Name", "Unknown")
+                return {
+                    "success": True,
+                    "message": f"Successfully connected to Salesforce org: {org_name}",
+                    "org_name": org_name,
+                }
+            except Exception as e:
+                logger.error(f"Salesforce connection test failed: {e}")
+                return {"success": False, "error": str(e)}
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """
