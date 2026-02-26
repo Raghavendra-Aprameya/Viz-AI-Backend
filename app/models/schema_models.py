@@ -100,6 +100,9 @@ class UserModel(Base):
         "BusinessInsightModel", back_populates="user", cascade="all, delete-orphan"
     )
 
+    home_insights = relationship(
+        "HomeInsightModel", back_populates="user", cascade="all, delete-orphan"
+    )
 
 class RolePermissionModel(Base):
     """
@@ -234,7 +237,9 @@ class ProjectModel(Base):
     business_insights = relationship(
         "BusinessInsightModel", back_populates="project", cascade="all, delete-orphan"
     )
-
+    home_insights = relationship(
+            "HomeInsightModel", back_populates="project", cascade="all, delete-orphan"
+        )
 
 class RoleModel(Base):
     """
@@ -632,5 +637,5 @@ class HomeInsightModel(Base):
     source = Column(String, nullable=True)  # Database name or "Project-wide"
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    user = relationship("UserModel", backref="home_insights")
-    project = relationship("ProjectModel", backref="home_insights")
+    user = relationship("UserModel", back_populates="home_insights")
+    project = relationship("ProjectModel", back_populates="home_insights")
