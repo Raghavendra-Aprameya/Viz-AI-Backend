@@ -31,6 +31,7 @@ from app.services.business_insights import (
     execute_kpi_queries,
     generate_insights_from_results,
 )
+from app.services.soql_executor import execute_salesforce_kpi_queries
 
 logger = logging.getLogger(__name__)
 
@@ -172,17 +173,23 @@ async def generate_project_insights_service(
                 schema_info = json.loads(db_connection.db_schema)
                 db_type = db_connection.db_type or "postgres"
                 
-                # Generate KPI queries
+                # Generate KPI queries (SQL or SOQL based on db_type)
                 kpi_queries = await generate_kpi_queries_with_llm(
                     schema_info=schema_info,
                     db_type=db_type,
                 )
                 
-                # Execute queries
-                query_results = await execute_kpi_queries(
-                    db_connection=db_connection,
-                    queries=kpi_queries
-                )
+                # Execute queries: Salesforce uses SOQL; SQL DBs use SQLAlchemy
+                if db_type == "salesforce":
+                    query_results = await execute_salesforce_kpi_queries(
+                        db_connection=db_connection,
+                        queries=kpi_queries,
+                    )
+                else:
+                    query_results = await execute_kpi_queries(
+                        db_connection=db_connection,
+                        queries=kpi_queries
+                    )
                 
                 # Generate insights
                 database_insights = await generate_insights_from_results(

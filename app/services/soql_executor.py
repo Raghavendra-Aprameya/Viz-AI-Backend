@@ -13,9 +13,12 @@ This module provides functions to:
 
 import re
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import UUID
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.models.schema_models import DatabaseConnectionModel
 
 try:
     from simple_salesforce import Salesforce
@@ -31,6 +34,20 @@ from app.services.salesforce_client import salesforce_client_manager
 logger = logging.getLogger(__name__)
 
 
+# Salesforce DateTime fields require YYYY-MM-DDThh:mm:ssZ; Date fields require YYYY-MM-DD
+# ConvertedDate (Lead) is Date type; ClosedDate (Case) is DateTime type
+_SOQL_DATETIME_FIELDS = (
+    "CreatedDate",
+    "LastModifiedDate",
+    "SystemModStamp",
+    "LastActivityDate",
+    "EmailBouncedDate",
+    "LastViewedDate",
+    "LastReferencedDate",
+    "ClosedDate",  # Case.ClosedDate is DateTime
+)
+
+
 def replace_soql_date_placeholders(
     query: str,
     from_date: Optional[str] = None,
@@ -39,7 +56,11 @@ def replace_soql_date_placeholders(
     """
     Replace date placeholders in SOQL query with actual dates.
 
-    SOQL uses format: YYYY-MM-DD or YYYY-MM-DDThh:mm:ssZ for datetime fields.
+    SOQL uses:
+    - YYYY-MM-DD for Date fields (e.g., CloseDate, ActivityDate)
+    - YYYY-MM-DDThh:mm:ssZ for DateTime fields (e.g., CreatedDate, LastModifiedDate)
+
+    We detect if the query filters on a DateTime field and use the correct format.
 
     Args:
         query: SOQL query string with [MIN_DATE] and [MAX_DATE] placeholders
@@ -49,17 +70,41 @@ def replace_soql_date_placeholders(
     Returns:
         SOQL query with date placeholders replaced
     """
+    def _normalize_date(date_str: str) -> str:
+        if not date_str:
+            return date_str
+        if "T" in date_str:
+            date_str = date_str.split("T")[0]
+        if "Z" in date_str:
+            date_str = date_str.split("Z")[0]
+            if "T" in date_str:
+                date_str = date_str.split("T")[0]
+        return date_str
+
+    def _to_datetime(date_str: str, end_of_day: bool = False) -> str:
+        d = _normalize_date(date_str)
+        if not d:
+            return date_str
+        if end_of_day:
+            return f"{d}T23:59:59Z"
+        return f"{d}T00:00:00Z"
+
+    # Check if query uses a DateTime field with our placeholders (e.g. CreatedDate >= [MIN_DATE])
+    query_upper = query.upper()
+    use_datetime_format = any(
+        fld.upper() in query_upper
+        for fld in _SOQL_DATETIME_FIELDS
+    ) and ("[MIN_DATE]" in query or "[MAX_DATE]" in query)
+
     if from_date:
-        # Replace [MIN_DATE] placeholder
-        query = query.replace("[MIN_DATE]", from_date)
-        # Also handle :from_date bind parameter style
-        query = re.sub(r':from_date\b', from_date, query, flags=re.IGNORECASE)
+        from_val = _to_datetime(from_date, end_of_day=False) if use_datetime_format else _normalize_date(from_date)
+        query = query.replace("[MIN_DATE]", from_val)
+        query = re.sub(r":from_date\b", from_val, query, flags=re.IGNORECASE)
 
     if to_date:
-        # Replace [MAX_DATE] placeholder
-        query = query.replace("[MAX_DATE]", to_date)
-        # Also handle :to_date bind parameter style
-        query = re.sub(r':to_date\b', to_date, query, flags=re.IGNORECASE)
+        to_val = _to_datetime(to_date, end_of_day=True) if use_datetime_format else _normalize_date(to_date)
+        query = query.replace("[MAX_DATE]", to_val)
+        query = re.sub(r":to_date\b", to_val, query, flags=re.IGNORECASE)
 
     return query
 
@@ -262,6 +307,139 @@ def execute_salesforce_query(
         error_msg = f"Salesforce query execution failed: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return {"error": error_msg}
+
+
+def _clean_salesforce_records_for_insights(
+    records: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Clean Salesforce records for insights: remove attributes, flatten nested
+    relationship data, and ensure all values are JSON-serializable.
+    Returns raw row data (list of flat dicts) compatible with insight analysis.
+    """
+    cleaned_records = []
+    for record in records:
+        cleaned = {}
+        for key, value in record.items():
+            if key == "attributes":
+                continue
+            if isinstance(value, dict) and "attributes" in value:
+                for nested_key, nested_value in value.items():
+                    if nested_key != "attributes":
+                        cleaned[f"{key}.{nested_key}"] = (
+                            str(nested_value) if nested_value is not None and not isinstance(
+                                nested_value, (str, int, float, bool)
+                            ) else nested_value
+                        )
+            elif value is None:
+                cleaned[key] = None
+            elif isinstance(value, (int, float, str, bool)):
+                cleaned[key] = value
+            else:
+                cleaned[key] = str(value)
+        cleaned_records.append(cleaned)
+    return cleaned_records
+
+
+async def execute_salesforce_kpi_queries(
+    db_connection: "DatabaseConnectionModel",
+    queries: List[Dict[str, str]],
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Execute KPI SOQL queries against Salesforce and return results in the same
+    format as execute_kpi_queries for compatibility with generate_insights_from_results.
+
+    Args:
+        db_connection: DatabaseConnectionModel (Salesforce connection)
+        queries: List of {kpi_title, description, sql_query} (sql_query contains SOQL)
+        from_date: Start date for [MIN_DATE] placeholder (YYYY-MM-DD)
+        to_date: End date for [MAX_DATE] placeholder (YYYY-MM-DD)
+
+    Returns:
+        List of {kpi_title, description, query, success, data, row_count} or
+        {..., error} on failure - same format as execute_kpi_queries
+    """
+    from datetime import datetime, timedelta
+    from app.utils.crypt import decrypt_string
+
+    # Default date range: last 6 months
+    if not from_date or not to_date:
+        today = datetime.utcnow().date()
+        default_from = (today - timedelta(days=183)).isoformat()
+        default_to = today.isoformat()
+        from_date = from_date or default_from
+        to_date = to_date or default_to
+
+    decrypted_session_id = (
+        decrypt_string(db_connection.db_password) if db_connection.db_password else ""
+    )
+    instance_url = db_connection.db_host_link or ""
+
+    if not decrypted_session_id or not instance_url:
+        raise ValueError(
+            "Salesforce connection missing OAuth credentials (session_id, instance_url)"
+        )
+
+    try:
+        sf_client = salesforce_client_manager.get_client(
+            connection_id=db_connection.id,
+            session_id=decrypted_session_id,
+            instance_url=instance_url,
+        )
+    except Exception as e:
+        logger.error(f"Failed to get Salesforce client: {e}")
+        raise
+
+    logger.info("Executing %d KPI queries (Salesforce)", len(queries))
+    results = []
+    for kpi in queries:
+        query = kpi.get("sql_query", kpi.get("query", ""))
+        if not query:
+            results.append({
+                "kpi_title": kpi["kpi_title"],
+                "description": kpi["description"],
+                "query": "",
+                "success": False,
+                "error": "No query provided",
+                "data": [],
+                "row_count": 0,
+            })
+            continue
+        try:
+            processed_query = replace_soql_date_placeholders(
+                query, from_date=from_date, to_date=to_date
+            )
+            logger.debug(
+                f"Executing SOQL for KPI: {kpi['kpi_title']}"
+            )
+            result = execute_soql_query(sf_client, processed_query)
+            records = result.get("records", [])
+            cleaned_data = _clean_salesforce_records_for_insights(records)
+            results.append({
+                "kpi_title": kpi["kpi_title"],
+                "description": kpi["description"],
+                "query": query,
+                "success": True,
+                "data": cleaned_data,
+                "row_count": len(cleaned_data),
+            })
+        except Exception as query_error:
+            logger.error(f"SOQL error for KPI {kpi['kpi_title']}: {query_error}")
+            results.append({
+                "kpi_title": kpi["kpi_title"],
+                "description": kpi["description"],
+                "query": query,
+                "success": False,
+                "error": str(query_error),
+                "data": [],
+                "row_count": 0,
+            })
+
+    successful = sum(1 for r in results if r["success"])
+    logger.info("Executed %d/%d KPI queries successfully (Salesforce)", successful, len(queries))
+    return results
 
 
 def get_salesforce_sample_data(
