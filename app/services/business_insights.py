@@ -139,7 +139,7 @@ async def generate_business_insights_service(
                 detail="Invalid schema format in database connection"
             ) from e
         
-        # Step 2: Use LLM to generate KPI queries
+        # Step 2: Use LLM to generate KPI queries (SQL or SOQL based on db_type)
         # Ensure db_type has a default value
         db_type = db_connection.db_type or "postgres"
         
@@ -147,12 +147,21 @@ async def generate_business_insights_service(
             schema_info=schema_info,
             db_type=db_type,
         )
-        
+        logger.info("Generated %d KPI queries", len(kpi_queries))
+
         # Step 3: Execute queries against database
-        query_results = await execute_kpi_queries(
-            db_connection=db_connection,
-            queries=kpi_queries
-        )
+        # Salesforce uses simple-salesforce (SOQL); SQL DBs use SQLAlchemy
+        if db_type == "salesforce":
+            from app.services.soql_executor import execute_salesforce_kpi_queries
+            query_results = await execute_salesforce_kpi_queries(
+                db_connection=db_connection,
+                queries=kpi_queries,
+            )
+        else:
+            query_results = await execute_kpi_queries(
+                db_connection=db_connection,
+                queries=kpi_queries
+            )
         
         # Step 4: Use LLM to analyze results and generate insights
         business_insights = await generate_insights_from_results(
@@ -334,6 +343,42 @@ async def generate_kpi_queries_with_llm(
         
         model = genai.GenerativeModel('gemini-2.5-flash')
         
+        soql_guidelines = """
+Write queries ONLY using SOQL (Salesforce Object Query Language) syntax - NOT SQL.
+CRITICAL SOQL-specific requirements:
+- CRITICAL: SOQL is NOT SQL - use SOQL syntax only
+- CRITICAL: NEVER use AS keyword for aliases - SOQL does NOT support AS. Use direct aliases (e.g., SELECT COUNT(Id) count NOT SELECT COUNT(Id) AS count)
+- CRITICAL: NEVER use JOIN - use relationship queries (e.g., SELECT Account.Name FROM Contact)
+- CRITICAL: Use COUNT() not COUNT(*) (e.g., SELECT COUNT() FROM Account)
+- CRITICAL: NEVER end queries with semicolons (;)
+- CRITICAL: Use [MIN_DATE] and [MAX_DATE] placeholders for date filters (e.g., WHERE CreatedDate >= [MIN_DATE] AND CreatedDate <= [MAX_DATE])
+- Standard objects: Account, Contact, Opportunity, Lead, Case, Campaign, Order. Custom objects end with __c
+- Use LIMIT for row limiting (e.g., LIMIT 100)
+- HAVING can only be used with GROUP BY and aggregate queries
+- Do not use LIMIT with SELECT COUNT()
+- Subqueries are only allowed as relationship queries, not arbitrary nested SELECT statements
+- Avoid large IN clause lists (Salesforce has governor limits)
+- Field-to-field comparisons are not supported
+- DISTINCT keyword is not supported except COUNT_DISTINCT(field)
+- OFFSET has limits (max 2000) and should be used carefully
+- Do not use SQL functions in WHERE (e.g., YEAR(), MONTH())
+- Arithmetic expressions in SELECT are not supported
+- CRITICAL: ORDER BY cannot use column aliases - repeat the full expression (e.g., ORDER BY COUNT(Id) DESC not ORDER BY count DESC)
+- Include IsDeleted = false in WHERE clause to exclude soft-deleted records (for most objects)
+- In aggregate queries, all non-aggregate fields in SELECT must appear in GROUP BY
+- CRITICAL: SOQL does NOT support CASE WHEN / CASE expressions. For conditional counts (e.g. "count where field = true") use two separate queries: one with WHERE field = true (COUNT(Id) ... WHERE field = true) and one for total (COUNT(Id) ... ), or use COUNT(Id) with WHERE only - never SUM(CASE WHEN ...).
+- CRITICAL: GROUP BY in SOQL is restricted - many custom fields (picklist __c, lookup __c, etc.) "can not be grouped in a query call". Do NOT use GROUP BY on custom fields like Design_Category_Required__c. For distribution by category use a simple SELECT with LIMIT (e.g. SELECT Field__c FROM Obj WHERE Field__c != null LIMIT n) or avoid that KPI; use GROUP BY only on standard groupable fields when needed.
+- No UNION, INTERSECT, EXCEPT - SOQL does not support these
+- No COALESCE, NVL, IFNULL - SOQL does not support these
+- For null checks use = null and != null (not IS NULL / IS NOT NULL)
+- Booleans: use true and false (lowercase, no quotes)
+- SELECT * is NOT supported - always list field names explicitly
+- Date functions: use CALENDAR_MONTH(), CALENDAR_YEAR(), CALENDAR_QUARTER() for grouping by time
+- Aggregate functions: COUNT(), SUM(), AVG(), MIN(), MAX() with GROUP BY
+- Date format: YYYY-MM-DD or use placeholders [MIN_DATE], [MAX_DATE]
+- Alias syntax: SELECT field alias_name NOT SELECT field AS alias_name (SOQL does not support AS keyword)
+""".strip()
+
         oracle_guidelines = """
 Write queries ONLY using syntax compatible with Oracle database.
 CRITICAL Oracle-specific syntax requirements:
@@ -360,26 +405,30 @@ CRITICAL Oracle-specific syntax requirements:
         dialect_guidance = ""
         if db_type in {"oracle", "oracledb"}:
             dialect_guidance = f"\n- ORACLE RULES:\n{oracle_guidelines}\n"
+        elif db_type == "salesforce":
+            dialect_guidance = f"\n- SOQL RULES:\n{soql_guidelines}\n"
+
+        query_type_label = "SOQL query" if db_type == "salesforce" else f"{db_type.upper()} SQL query"
 
         # Create comprehensive prompt for KPI generation, injecting dialect guidance when needed
         prompt = f"""
-You are a business intelligence expert. Analyze the following database schema and generate 10 important KPI (Key Performance Indicator) SQL queries that would provide valuable business insights FOR THIS SPECIFIC DATABASE.
+You are a business intelligence expert. Analyze the following database schema and generate 10 important KPI (Key Performance Indicator) {"SOQL" if db_type == "salesforce" else "SQL"} queries that would provide valuable business insights FOR THIS SPECIFIC {"Salesforce org" if db_type == "salesforce" else "database"}.
 
 Database Type: {db_type}
 
-Database Schema (USER'S BUSINESS DATA):
+Database Schema (USER'S BUSINESS DATA - tables/objects and columns/fields):
 {json.dumps(schema_info, indent=2)}
 
 IMPORTANT INSTRUCTIONS:
-- This is a USER'S BUSINESS DATABASE, NOT a VizAI internal database
+- This is a USER'S BUSINESS {"Salesforce org" if db_type == "salesforce" else "DATABASE"}, NOT a VizAI internal database
 - DO NOT reference tables like "user", "project", "dashboard", "chart" unless they actually exist in the schema above
-- ONLY use tables and columns that are explicitly listed in the schema above
-- Generate queries relevant to THIS SPECIFIC business domain based on the table names and columns you see
+- ONLY use tables/objects and columns/fields that are explicitly listed in the schema above
+- Generate queries relevant to THIS SPECIFIC business domain based on the table/object names and columns you see
 
 For each KPI, provide:
 1. A clear title for the KPI
 2. A brief description of what business insight it provides
-3. A valid {db_type.upper()} SQL query to calculate this KPI
+3. A valid {query_type_label} to calculate this KPI
 
 Focus on KPIs based on the actual tables in the schema:
 - If there are sales/transactions tables: revenue, growth, averages
@@ -399,12 +448,15 @@ Return the response as a JSON array with this exact structure:
   ...
 ]
 
+{"CRITICAL FOR SALESFORCE: SOQL does NOT support AS keyword. Use SELECT COUNT(Id) count NOT SELECT COUNT(Id) AS count. Example: SELECT SUM(Amount) total_revenue FROM Opportunity" if db_type == "salesforce" else ""}
+
 CRITICAL REQUIREMENTS:
 - Generate exactly 10 KPIs
-- Use ONLY tables and columns from the schema provided above
+- Use ONLY tables/objects and columns/fields from the schema provided above
 - Queries must be syntactically correct for {db_type} (use {db_type}-specific syntax){dialect_guidance}
 - For PostgreSQL: Use INTERVAL '30 days', DATE_TRUNC, etc.
 - For MySQL: Use DATE_SUB, DATE_FORMAT, etc.
+- For Salesforce: Use SOQL only - NO AS keyword, NO CASE WHEN (use two queries for conditional counts), NO GROUP BY on custom picklist/lookup fields, [MIN_DATE]/[MAX_DATE] placeholders, COUNT() not COUNT(*), no JOIN
 - Use appropriate aggregations (SUM, COUNT, AVG, MAX, MIN)
 - Include GROUP BY where necessary
 - Use meaningful aliases for all calculated fields
@@ -494,8 +546,9 @@ async def execute_kpi_queries(
             connection_string=decrypted_connection_string,
             db_type=db_connection.db_type
         )
+        logger.info("Executing %d KPI queries (SQL)", len(queries))
         results = []
-        
+
         for kpi in queries:
             # Use a new connection for each query to avoid transaction issues
             try:
@@ -545,7 +598,7 @@ async def execute_kpi_queries(
         # Engine is managed by external_engine_manager, no dispose() needed
 
         successful_queries = sum(1 for r in results if r['success'])
-        logger.debug(f"Executed {successful_queries}/{len(queries)} queries successfully")
+        logger.info("Executed %d/%d KPI queries successfully", successful_queries, len(queries))
 
         return results
         
