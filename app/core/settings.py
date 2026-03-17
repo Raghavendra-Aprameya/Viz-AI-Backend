@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str
     GEMINI_API_KEY: str
     REDIS_URL: Optional[str] = None
-
+    SDK_SECRET_KEY: str
     class Config:
         """
         This class contains the configuration for the settings.

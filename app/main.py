@@ -11,7 +11,7 @@ from app.middleware.request_logging import RequestResponseLoggingMiddleware
 
 # Import routers and constants
 from app.routes.auth import auth_router
-from app.routes.backend import backend_router
+from app.routes.backend import backend_router, sdk_router
 from app.routes.llm import llm_router
 from app.utils.constants import (
     ALLOWED_ORIGINS,
@@ -75,6 +75,7 @@ app.add_middleware(
 # Include routers for your endpoints
 app.include_router(auth_router)  # Include auth-related endpoints
 app.include_router(backend_router)
+app.include_router(sdk_router)
 app.include_router(llm_router)  # Include backend-related endpoints
 
 app.add_middleware(RequestResponseLoggingMiddleware)

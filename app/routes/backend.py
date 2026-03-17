@@ -6,17 +6,24 @@ use dependency injection for DB session and user authentication.
 
 from uuid import UUID
 from typing import Optional
-import traceback
 import logging
+import secrets
+from sqlalchemy.orm import Session
+import jwt
+
+# Importing your existing service and settings
+from app.services.chart import get_charts_for_dashboard_service
+from app.core.settings import settings
+
 
 logger = logging.getLogger(__name__)
 from fastapi import (
     APIRouter,
     status,
-    Response,
     Depends,
     Request,
     Path,
+    Header,
     HTTPException,
     Body,
     Query,
@@ -76,6 +83,8 @@ from app.schemas import (
     SaveHomeInsightRequest,
     SaveHomeInsightResponse,
     GetHomeInsightsResponse,
+    RegisterAppRequest,
+    RegisterAppResponse,
 )
 
 # Service imports
@@ -143,17 +152,22 @@ from app.services.chart import (
     filter_charts_service,
 )
 
+from app.utils.crypt import * 
 from app.services.business_insights import generate_business_insights_service
 from app.services.project_insights import (
     generate_project_insights_service,
     get_latest_business_insight_service,
 )
-
+import jwt
+from datetime import datetime, timedelta, timezone
+from fastapi import Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from app.core.settings import settings 
 from app.services.generate_queries import (
     generate_and_store_charts,
     execute_external_query,
 )
-
+from app.models.schema_models import TokenRequest,TokenResponse
 from app.services.nl2sql import generate_nl_sql
 
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
@@ -166,8 +180,129 @@ from app.services.home_insights import (
 
 
 backend_router = APIRouter(prefix="/api/v1/backend", tags=["backend"])
+sdk_router = APIRouter(prefix="/api/v1/sdk", tags=["sdk"])
 
+@sdk_router.post("/register", status_code=status.HTTP_201_CREATED, response_model=RegisterAppResponse)
+async def register_viz_app(
+    data: RegisterAppRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Register a new Viz SDK App.
+    Generates a client_id and client_secret, hashes the secret and stores it.
+    """
+    from app.models.schema_models import VizSdkAppModel
+    
+    client_id = secrets.token_urlsafe(16)
+    client_secret = secrets.token_urlsafe(32)
+    client_secret_hash = get_password_hash(client_secret) 
 
+    new_app = VizSdkAppModel(
+        client_id=client_id,
+        client_secret_hash=client_secret_hash,
+        domain=data.domain,
+        dashboard_id=data.dashboard_id
+    )
+    
+    try:
+        db.add(new_app)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to register SDK app: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to register application."
+        )
+        
+    return RegisterAppResponse(client_id=client_id, client_secret=client_secret)
+
+@sdk_router.post("/token", response_model=TokenResponse)
+async def generate_sdk_token(
+    data: TokenRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Backend SDK Handshake: Verifies credentials and returns a JWT 
+    containing the hidden dashboard mapping.
+    """
+    from app.models.schema_models import VizSdkAppModel
+
+    # 1. Lookup the registered app [cite: 62]
+    sdk_app = db.query(VizSdkAppModel).filter(
+        VizSdkAppModel.client_id == data.client_id
+    ).first()
+
+    # 2. Verify the secret [cite: 6, 62]
+    if not sdk_app or not verify_password(data.client_secret, sdk_app.client_secret_hash):
+        logger.warning(f"Failed SDK auth attempt for client_id: {data.client_id}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Client ID or Client Secret"
+        )
+
+    # 3. Create the JWT payload [cite: 63]
+    # We hide the dash_id and domain inside so the frontend doesn't need them 
+    expire = datetime.now(timezone.utc) + timedelta(hours=1)
+    payload = {
+        "dash_id": str(sdk_app.dashboard_id),
+        "domain": sdk_app.domain,
+        "exp": expire,
+        "iat": datetime.now(timezone.utc)
+    }
+
+    # 4. Sign and return the JWT [cite: 64]
+    access_token = jwt.encode(payload, settings.SDK_SECRET_KEY, algorithm="HS256")
+    
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=3600,
+        expires_at=expire
+    )
+
+@sdk_router.get("/charts")
+async def get_sdk_dashboard_charts(
+    request: Request,
+    authorization: str = Header(..., description="Bearer <SDK_JWT_TOKEN>"),
+    db: Session = Depends(get_db)
+):
+    """
+    Frontend SDK Rendering: Decodes the SDK JWT and uses the 
+    imported chart service to fetch data.
+    """
+    # 1. Decode the SDK-specific JWT
+    try:
+        # Extract token from 'Bearer <token>' string
+        token = authorization.split(" ")[1]
+        payload = jwt.decode(token, settings.SDK_SECRET_KEY, algorithms=["HS256"])
+        
+        # Extract hidden metadata from the token [cite: 63, 81]
+        dash_id = payload.get("dash_id")
+        allowed_domain = payload.get("domain")
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail="Invalid or expired session token"
+        )
+
+    # 2. Security: Verify the Origin matches the registered domain [cite: 78]
+    origin = request.headers.get("Origin") or request.headers.get("Referer") or ""
+    if allowed_domain not in origin:
+        logger.error(f"SDK Domain mismatch: Expected {allowed_domain}, got {origin}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="This domain is not authorized to render these charts."
+        )
+
+    # 3. Use the imported module to fetch the charts [cite: 77]
+    # We pass the dash_id from the token directly to your service.
+    # We provide a mock token_payload since your service expects user context.
+    return await get_charts_for_dashboard_service(
+        dashboard_id=UUID(dash_id),
+        db=db,
+        token_payload={"sub": payload.get("sub", "sdk_system_user")}
+    )
 @backend_router.get("/health/pool-status")
 async def get_pool_status_endpoint():
     """

@@ -38,6 +38,8 @@ from sqlalchemy.orm import relationship
 
 from app.core.base import Base
 
+from pydantic import BaseModel, Field
+from typing import Optional
 
 ChartStatusEnum = SqlEnum("draft", "published", name="chart_status")
 
@@ -103,6 +105,7 @@ class UserModel(Base):
     home_insights = relationship(
         "HomeInsightModel", back_populates="user", cascade="all, delete-orphan"
     )
+    sdk_apps = relationship("VizSdkAppModel", back_populates="user", cascade="all, delete-orphan")
 
 class RolePermissionModel(Base):
     """
@@ -639,3 +642,39 @@ class HomeInsightModel(Base):
 
     user = relationship("UserModel", back_populates="home_insights")
     project = relationship("ProjectModel", back_populates="home_insights")
+class VizSdkAppModel(Base):
+    """
+    Stores registered Viz SDK Apps and maps them to specific dashboards and users.
+    """
+    __tablename__ = "viz_sdk_apps"
+
+    ### Primary Key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    client_id = Column(String, unique=True, nullable=False, index=True)
+    client_secret_hash = Column(String, nullable=False) # Hashed using bcrypt [cite: 6, 54]
+    domain = Column(String, nullable=False)
+
+    dashboard_id = Column(
+        UUID(as_uuid=True), 
+        ForeignKey("dashboard.id", ondelete="CASCADE"), 
+        nullable=False
+    )
+    user_id = Column(
+        UUID(as_uuid=True), 
+        ForeignKey("user.id", ondelete="CASCADE"), 
+        nullable=False
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    dashboard = relationship("DashboardModel")
+    user = relationship("UserModel", back_populates="sdk_apps")
+
+class TokenRequest(BaseModel):
+    client_id: str = Field(..., description="The unique ID provided during registration")
+    client_secret: str = Field(..., description="The raw client secret provided during registration")
+
+class TokenResponse(BaseModel):
+    access_token: str = Field(..., description="The short-lived JWT for frontend rendering")
+    token_type: str = "bearer"
+    expires_in: int = 3600  # 1 hour as per documentation
+    expires_at: datetime

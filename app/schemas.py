@@ -1545,3 +1545,19 @@ class SaveHomeInsightResponse(BaseModel):
     
     message: str
     insight: HomeInsightResponse
+
+
+class RegisterAppRequest(BaseModel):
+    """
+    Request model for registering a Viz SDK App.
+    """
+    domain: str
+    dashboard_id: UUID
+
+
+class RegisterAppResponse(BaseModel):
+    """
+    Response model for registering a Viz SDK App.
+    """
+    client_id: str
+    client_secret: str
