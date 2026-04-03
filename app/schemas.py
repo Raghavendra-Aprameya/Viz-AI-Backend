@@ -6,7 +6,7 @@ including validation rules and types.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -815,11 +815,18 @@ class QueryExecutionRequest(BaseModel):
         query: SQL query string to execute
         from_date: Optional start date for filtering (YYYY-MM-DD format)
         to_date: Optional end date for filtering (YYYY-MM-DD format)
+        response_format: "legacy" returns {label, value} pairs (first two columns only).
+            "tabular" returns full row dicts with all columns (JSON-safe values).
+        x_axis: Optional hint for category/dimension column name (metadata + chart UIs)
+        y_axis: Optional hint for primary measure column name
     """
 
     query: str
     from_date: Optional[str] = None
     to_date: Optional[str] = None
+    response_format: Literal["legacy", "tabular"] = "legacy"
+    x_axis: Optional[str] = None
+    y_axis: Optional[str] = None
 
 
 class Nl2SQLChatRequest(BaseModel):

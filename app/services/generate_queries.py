@@ -10,7 +10,9 @@ into a specific format.
 """
 
 import json
-from typing import Any
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import httpx
@@ -323,6 +325,26 @@ def add_date_filter_to_query(query: str, from_date: str = None, to_date: str = N
     return query
 
 
+def _json_safe_value(value: Any) -> Any:
+    """Convert DB driver values to JSON-serializable primitives."""
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return str(value)
+    return value
+
+
+def _json_safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: _json_safe_value(v) for k, v in row.items()}
+
+
 def execute_external_query(
     db: Session,
     datasource_connection_id: UUID,
@@ -330,6 +352,9 @@ def execute_external_query(
     token_payload: dict,
     from_date: str = None,
     to_date: str = None,
+    response_format: str = "legacy",
+    x_axis: Optional[str] = None,
+    y_axis: Optional[str] = None,
 ):
     """
     Executes a SQL query on the external database.
@@ -443,8 +468,36 @@ def execute_external_query(
         logger.debug(f"Executing query: {query[:200]}..." if len(query) > 200 else f"Executing query: {query}")
         result = session.execute(text(query))
         data = result.fetchall()
-        response = [dict(row._mapping) for row in data]
-        transformed_data = transform_data_dynamic(response)
+        raw_rows: List[Dict[str, Any]] = [dict(row._mapping) for row in data]
+
+        if response_format == "tabular":
+            tabular_result = [_json_safe_row(r) for r in raw_rows]
+            meta_x = x_axis
+            meta_y = y_axis
+            if tabular_result and (meta_x is None or meta_y is None):
+                keys = list(tabular_result[0].keys())
+                if meta_x is None and keys:
+                    meta_x = keys[0]
+                if meta_y is None and len(keys) > 1:
+                    # Prefer first numeric column after x for primary measure
+                    for k in keys[1:]:
+                        v = tabular_result[0].get(k)
+                        if isinstance(v, (int, float)) and not isinstance(v, bool):
+                            meta_y = k
+                            break
+                    if meta_y is None:
+                        meta_y = keys[1]
+            response = {
+                "result": tabular_result,
+                "x_axis": meta_x,
+                "y_axis": meta_y,
+            }
+            logger.debug(
+                f"Query executed successfully (tabular), returned {len(response['result'])} rows"
+            )
+            return response
+
+        transformed_data = transform_data_dynamic(raw_rows)
         response = {
             "result": transformed_data["data"],
             "x_axis": transformed_data["x_axis"],
