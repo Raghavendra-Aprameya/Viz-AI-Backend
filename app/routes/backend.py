@@ -1056,6 +1056,9 @@ def execute_query(
             token_payload=token_payload,
             from_date=request.from_date,
             to_date=request.to_date,
+            response_format=request.response_format,
+            x_axis=request.x_axis,
+            y_axis=request.y_axis,
         )
     except SQLAlchemyError as e:
         # Explicitly re-raise the exception with context
