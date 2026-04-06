@@ -165,83 +165,39 @@ async def generate_and_store_charts(
 
 def replace_dates_in_query(query: str, from_date: str = None, to_date: str = None) -> str:
     """
-    Replaces date literals and bind parameters in a SQL query with provided from_date and to_date values.
-    If dates are not provided, keeps the original dates in the query.
-    
-    Args:
-        query: The original SQL query
-        from_date: Start date in YYYY-MM-DD format to replace the first date found
-        to_date: End date in YYYY-MM-DD format to replace the second date found
-    
-    Returns:
-        Modified SQL query with dates replaced if provided, otherwise original query
+    Injects request dates only where the query explicitly asks for them.
+
+    Replaces:
+    - :from_date / :to_date bind-style tokens
+    - [MIN_DATE] / [MAX_DATE] placeholders (paired with UI/dashboard date range)
+
+    Does not scan or rewrite arbitrary date literals in the SQL — those stay exactly
+    as the LLM (or stored chart) authored them, so validation and execution match.
     """
     import re
-    
-    # First, handle SQLAlchemy bind parameters (:from_date, :to_date)
-    if from_date:
-        # Replace :from_date bind parameter with actual date value
-        # Handle both :from_date and :from_date in TO_DATE functions
-        query = re.sub(
-            r':from_date',
-            f"'{from_date}'",
-            query,
-            flags=re.IGNORECASE
-        )
-    
-    if to_date:
-        # Replace :to_date bind parameter with actual date value
-        query = re.sub(
-            r':to_date',
-            f"'{to_date}'",
-            query,
-            flags=re.IGNORECASE
-        )
-    
-    # If no dates provided, return query (bind parameters will remain, but that's handled by error)
+
     if not from_date and not to_date:
         return query
-    
-    # Then handle date literals in SQL (handles both single and double quotes)
-    # Matches dates in format: 'YYYY-MM-DD' or "YYYY-MM-DD"
-    date_pattern = r"(['\"])(\d{4}-\d{2}-\d{2})\1"
-    
-    # Find all date matches in the query
-    matches = list(re.finditer(date_pattern, query))
-    
-    if not matches:
-        # No date literals found in query, return as is (bind params already handled)
-        return query
-    
-    # Build list of replacements (position, new_value, quote_char)
-    # Replace from the end to preserve correct positions
-    replacements = []
-    
-    if len(matches) >= 2:
-        # Two or more dates found: first with from_date, second with to_date
-        if to_date:
-            last_match = matches[-1]
-            replacements.append((last_match.start(), last_match.end(), 
-                               f"{last_match.group(1)}{to_date}{last_match.group(1)}"))
-        if from_date:
-            first_match = matches[0]
-            replacements.append((first_match.start(), first_match.end(),
-                               f"{first_match.group(1)}{from_date}{first_match.group(1)}"))
-    elif len(matches) == 1:
-        # Only one date found
-        match = matches[0]
-        quote_char = match.group(1)
-        if from_date:
-            replacements.append((match.start(), match.end(), f"{quote_char}{from_date}{quote_char}"))
-        elif to_date:
-            replacements.append((match.start(), match.end(), f"{quote_char}{to_date}{quote_char}"))
-    
-    # Apply replacements from right to left (end to beginning) to preserve positions
-    modified_query = query
-    for start, end, replacement in sorted(replacements, reverse=True):
-        modified_query = modified_query[:start] + replacement + modified_query[end:]
-    
-    return modified_query
+
+    if from_date:
+        query = re.sub(
+            r":from_date",
+            f"'{from_date}'",
+            query,
+            flags=re.IGNORECASE,
+        )
+        query = query.replace("[MIN_DATE]", f"'{from_date}'")
+
+    if to_date:
+        query = re.sub(
+            r":to_date",
+            f"'{to_date}'",
+            query,
+            flags=re.IGNORECASE,
+        )
+        query = query.replace("[MAX_DATE]", f"'{to_date}'")
+
+    return query
 
 
 def add_date_filter_to_query(query: str, from_date: str = None, to_date: str = None) -> str:
