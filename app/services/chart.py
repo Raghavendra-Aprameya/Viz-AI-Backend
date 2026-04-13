@@ -701,12 +701,13 @@ async def get_charts_service(db: Session, token_payload: dict, project_id: UUID 
             # Normalize for comparison
             title_key = chart.chart.title.lower().strip() if chart.chart.title else ""
             query_key = chart.chart.query.strip() if chart.chart.query else ""
-            chart_key = (title_key, query_key)
-            
-            # Skip if empty title or query
-            if not title_key or not query_key:
-                continue
-            
+            # Drafts with missing title/query must still appear in the project charts list
+            # (otherwise the UI only sees them via dashboard merge and may miss database id / query).
+            if title_key and query_key:
+                chart_key = (title_key, query_key)
+            else:
+                chart_key = ("__incomplete__", str(chart.chart_id))
+
             chart_data = {
                 "id": str(chart.chart_id),
                 "title": chart.chart.title,
@@ -888,7 +889,14 @@ async def save_chart_service(
             
             db.commit()
             db.refresh(existing_chart)
-            return {"message": "Chart updated successfully", "chart_id": str(existing_chart.id)}
+            return {
+                "message": "Chart updated successfully",
+                "id": str(existing_chart.id),
+                "chart_id": str(existing_chart.id),
+                "title": existing_chart.title,
+                "query": existing_chart.query or "",
+                "chart_type": existing_chart.chart_type,
+            }
 
         # Create the new chart
         new_chart = ChartModel(
@@ -932,7 +940,14 @@ async def save_chart_service(
         db.commit()
         db.refresh(new_chart)  # Refresh the chart to get complete data
 
-        return {"message": "Chart saved successfully", "chart_id": str(new_chart.id)}
+        return {
+            "message": "Chart saved successfully",
+            "id": str(new_chart.id),
+            "chart_id": str(new_chart.id),
+            "title": new_chart.title,
+            "query": new_chart.query or "",
+            "chart_type": new_chart.chart_type,
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e

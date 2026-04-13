@@ -990,7 +990,7 @@ class TrinoQueryRequest(BaseModel):
     role: str
     domain: str
     api_key: Optional[str] = None
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gpt-4o-mini"
     min_date: Optional[Union[datetime, str]] = None
     max_date: Optional[Union[datetime, str]] = None
 
