@@ -55,7 +55,6 @@ langchain-classic==1.0.1
 langchain-community==0.4.1
 langchain-core==1.2.19
 langchain-google-genai==4.2.1
-langchain-ollama==0.2.3
 langchain-openai==1.1.11
 langchain-text-splitters==1.1.0
 langgraph==1.1.2
