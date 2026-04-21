@@ -45,12 +45,13 @@
 #     return schema_info
 
 # blocking sync function — runs in a thread
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import json
 import logging
-from urllib.parse import urlparse
+import re
+from urllib.parse import urlparse, parse_qs
 
 try:
     from simple_salesforce import Salesforce
@@ -73,9 +74,20 @@ def get_schema_structure(connection_string: str, queue, loop):
         # Parse connection string to detect database type
         parsed_url = urlparse(connection_string)
         is_oracle = parsed_url.scheme and "oracle" in parsed_url.scheme.lower()
+        is_databricks = parsed_url.scheme and "databricks" in parsed_url.scheme.lower()
         oracle_schema = parsed_url.username if is_oracle else None
+        query_params = parse_qs(parsed_url.query or "")
+        databricks_catalog = (query_params.get("catalog", [None])[0] or "").strip() if is_databricks else ""
+        databricks_schema = (query_params.get("schema", [None])[0] or "").strip() if is_databricks else ""
         
-        logger.info(f"Starting schema extraction - DB Type: {'Oracle' if is_oracle else 'Other'}, Schema: {oracle_schema}")
+        if is_databricks:
+            logger.info(
+                "Starting schema extraction - DB Type: Databricks, Catalog: %s, Schema: %s",
+                databricks_catalog,
+                databricks_schema,
+            )
+        else:
+            logger.info(f"Starting schema extraction - DB Type: {'Oracle' if is_oracle else 'Other'}, Schema: {oracle_schema}")
         
         engine = create_engine(connection_string, pool_pre_ping=True)
         inspector = inspect(engine)
@@ -85,8 +97,37 @@ def get_schema_structure(connection_string: str, queue, loop):
         with engine.connect() as connection:
             logger.info("Database connection established")
             
+            # Databricks: use information_schema to preserve 3-level namespace
+            if is_databricks:
+                if not databricks_catalog or not databricks_schema:
+                    error_msg = "Databricks connection string is missing catalog or schema query parameters."
+                    logger.error(error_msg)
+                    loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": error_msg})
+                    raise Exception(error_msg)
+                if not re.match(r"^[A-Za-z0-9_]+$", databricks_catalog):
+                    raise Exception("Invalid Databricks catalog name format")
+                if not re.match(r"^[A-Za-z0-9_]+$", databricks_schema):
+                    raise Exception("Invalid Databricks schema name format")
+
+                tables_sql = text(
+                    f"""
+                    SELECT table_catalog, table_schema, table_name
+                    FROM {databricks_catalog}.information_schema.tables
+                    WHERE table_schema = :schema_name
+                      AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+                    """
+                )
+                table_rows = connection.execute(tables_sql, {"schema_name": databricks_schema}).mappings().all()
+                table_names = [r.get("table_name") for r in table_rows]
+                logger.info(
+                    "Found %d Databricks tables in %s.%s",
+                    len(table_names),
+                    databricks_catalog,
+                    databricks_schema,
+                )
             # For Oracle, try with schema first
-            if is_oracle and oracle_schema:
+            elif is_oracle and oracle_schema:
                 logger.info(f"Oracle detected, trying to get tables from schema: {oracle_schema.upper()}")
                 try:
                     table_names = inspector.get_table_names(schema=oracle_schema.upper())
@@ -128,29 +169,54 @@ def get_schema_structure(connection_string: str, queue, loop):
             for idx, table_name in enumerate(table_names, start=1):
                 try:
                     logger.debug(f"Extracting table {idx}/{total_tables}: {table_name}")
-                    
+
+                    # Databricks column extraction from information_schema
+                    if is_databricks:
+                        columns_sql = text(
+                            f"""
+                            SELECT column_name, data_type
+                            FROM {databricks_catalog}.information_schema.columns
+                            WHERE table_schema = :schema_name
+                              AND table_name = :table_name
+                            ORDER BY ordinal_position
+                            """
+                        )
+                        column_rows = connection.execute(
+                            columns_sql,
+                            {"schema_name": databricks_schema, "table_name": table_name},
+                        ).mappings().all()
+                        columns = [{"name": col["column_name"], "type": str(col["data_type"])} for col in column_rows]
+                        primary_keys = {"constrained_columns": []}
+                        foreign_keys = []
+                        qualified_table_name = f"{databricks_catalog}.{databricks_schema}.{table_name}"
                     # Get table schema - for Oracle, specify schema if available
-                    if is_oracle and oracle_schema:
+                    elif is_oracle and oracle_schema:
                         columns = inspector.get_columns(table_name, schema=oracle_schema.upper())
                         primary_keys = inspector.get_pk_constraint(table_name, schema=oracle_schema.upper())
                         foreign_keys_raw = inspector.get_foreign_keys(table_name, schema=oracle_schema.upper())
+                        qualified_table_name = table_name
                     else:
                         columns = inspector.get_columns(table_name)
                         primary_keys = inspector.get_pk_constraint(table_name)
                         foreign_keys_raw = inspector.get_foreign_keys(table_name)
+                        qualified_table_name = table_name
 
-                    # Process foreign keys safely
-                    foreign_keys = []
-                    for fk in foreign_keys_raw:
-                        if fk.get("constrained_columns") and len(fk["constrained_columns"]) > 0:
-                            foreign_keys.append({
-                                "column": fk["constrained_columns"][0],
-                                "references": fk.get("referred_table", "")
-                            })
+                    if not is_databricks:
+                        # Process foreign keys safely
+                        foreign_keys = []
+                        for fk in foreign_keys_raw:
+                            if fk.get("constrained_columns") and len(fk["constrained_columns"]) > 0:
+                                foreign_keys.append({
+                                    "column": fk["constrained_columns"][0],
+                                    "references": fk.get("referred_table", "")
+                                })
 
                     schema_info["tables"].append({
-                        "name": table_name,
-                        "columns": [{"name": col["name"], "type": str(col["type"])} for col in columns],
+                        "name": qualified_table_name,
+                        "catalog": databricks_catalog if is_databricks else None,
+                        "schema": databricks_schema if is_databricks else (oracle_schema.upper() if is_oracle and oracle_schema else None),
+                        "table": table_name,
+                        "columns": columns if is_databricks else [{"name": col["name"], "type": str(col["type"])} for col in columns],
                         "primary_keys": primary_keys,
                         "foreign_keys": foreign_keys
                     })

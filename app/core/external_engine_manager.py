@@ -171,8 +171,8 @@ class ExternalEngineManager:
             # Add connect timeout to connect_args (database-specific)
             connect_args = pool_config.pop('connect_args', {})
 
-            # Oracle doesn't support connect_timeout in the same way
-            if db_type not in ("oracledb", "oracle"):
+            # Oracle/Databricks don't support connect_timeout in the same way
+            if db_type not in ("oracledb", "oracle", "databricks"):
                 connect_args['connect_timeout'] = EXTERNAL_CONNECT_TIMEOUT
 
             engine = create_engine(
@@ -194,7 +194,7 @@ class ExternalEngineManager:
 
             # Try without connect_timeout for Oracle, with it for others
             fallback_connect_args = {}
-            if db_type not in ("oracledb", "oracle"):
+            if db_type not in ("oracledb", "oracle", "databricks"):
                 fallback_connect_args['connect_timeout'] = EXTERNAL_CONNECT_TIMEOUT
 
             return create_engine(
@@ -221,7 +221,7 @@ class ExternalEngineManager:
                 "pool_pre_ping": True,
                 "pool_recycle": EXTERNAL_POOL_RECYCLE,
             }
-        elif db_type == "spreadsheet":
+        elif db_type in ("spreadsheet", "databricks"):
             # Google Sheets or similar - no pooling needed
             return {"poolclass": NullPool}
         else:
