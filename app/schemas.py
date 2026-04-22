@@ -30,6 +30,11 @@ class DBConnectionRequest(BaseModel):
         consent_given: Optional flag indicating if consent is given for the connection
         session_id: Salesforce OAuth access_token (for Salesforce only)
         instance_url: Salesforce instance URL e.g. https://na45.salesforce.com (for Salesforce only)
+        workspace_url: Databricks workspace URL (for Databricks only)
+        http_path: Databricks warehouse/cluster HTTP path (for Databricks only)
+        catalog_name: Databricks catalog name (for Databricks only)
+        schema_name: Databricks schema name (for Databricks only)
+        access_token: Databricks access token (for Databricks only)
     """
 
     connection_name: str
@@ -47,6 +52,12 @@ class DBConnectionRequest(BaseModel):
     # Salesforce OAuth2 fields (session-based authentication only)
     session_id: Optional[str] = None  # Salesforce OAuth access_token
     instance_url: Optional[str] = None  # Salesforce instance URL (e.g., https://na45.salesforce.com)
+    # Databricks fields
+    workspace_url: Optional[str] = None
+    http_path: Optional[str] = None
+    catalog_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    access_token: Optional[str] = None
 
 
 # class DBConnectionResponse(BaseModel):

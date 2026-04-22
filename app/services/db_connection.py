@@ -86,6 +86,21 @@ logger = logging.getLogger(__name__)
 
 progress_queues: dict[str, asyncio.Queue] = {}
 
+
+def _normalize_databricks_workspace_host(workspace_url: str) -> str:
+    """
+    Convert a Databricks workspace URL into a SQLAlchemy-compatible host string.
+    Accepts values such as:
+    - dbc-xxxx.cloud.databricks.com
+    - https://dbc-xxxx.cloud.databricks.com
+    """
+    raw = (workspace_url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.netloc or parsed.path or "").strip().strip("/")
+    return host
+
 async def extract_tables_in_background(task_id: str, connection_string: str, db_entry_id, db_type: str = None, salesforce_credentials: dict = None):
     # ensure the async queue exists and frontend can connect immediately
     queue = progress_queues.setdefault(task_id, asyncio.Queue())
@@ -469,6 +484,21 @@ async def create_database_connection(
             username = username or data.username or data.name or ""
             password = password or data.password or ""
             # connection_string is already properly encoded by parse_and_encode_connection_string above
+        elif parsed_url.scheme and "databricks" in parsed_url.scheme.lower():
+            db_type = "databricks"
+            query_params = parse_qs(parsed_url.query or "")
+            catalog_name = (query_params.get("catalog", [None])[0] or "").strip()
+            schema_name = (query_params.get("schema", [None])[0] or "").strip()
+            http_path = (query_params.get("http_path", [None])[0] or "").strip()
+            token_password = parsed_url.password or ""
+            db_name = f"{catalog_name}.{schema_name}" if catalog_name and schema_name else (data.db_name or "")
+            if not host or not db_name or not http_path or not token_password:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Databricks connection string must include host, http_path, catalog, schema and token password",
+                )
+            username = username or "token"
+            password = token_password or data.password or ""
         else:
             # Other database types
             db_name = parsed_url.path.lstrip("/") or data.db_name or ""
@@ -586,6 +616,42 @@ async def create_database_connection(
             password = session_id  # Store session_id in password field (will be encrypted)
             host = instance_url
             db_name = None
+        elif db_type == "databricks":
+            workspace_url = getattr(data, "workspace_url", None) or data.host or ""
+            http_path = getattr(data, "http_path", None) or ""
+            catalog_name = getattr(data, "catalog_name", None) or ""
+            schema_name = getattr(data, "schema_name", None) or ""
+            access_token = getattr(data, "access_token", None) or data.password or ""
+
+            host = _normalize_databricks_workspace_host(workspace_url)
+            if not all([host, http_path.strip(), catalog_name.strip(), schema_name.strip(), access_token.strip()]):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Databricks requires workspace_url, http_path, catalog_name, "
+                        "schema_name, and access_token"
+                    ),
+                )
+
+            normalized_http_path = http_path.strip()
+            if not normalized_http_path.startswith("/"):
+                normalized_http_path = f"/{normalized_http_path}"
+            endpoint_kind = "warehouse" if "/sql/1.0/warehouses/" in normalized_http_path else "cluster"
+            logger.info(
+                "Creating Databricks connection using %s HTTP path",
+                endpoint_kind,
+            )
+
+            username = "token"
+            password = access_token
+            db_name = f"{catalog_name.strip()}.{schema_name.strip()}"
+            host = host
+            connection_string = (
+                f"databricks://token:{quote_plus(str(access_token))}@{host}"
+                f"?http_path={quote_plus(normalized_http_path, safe='/')}"
+                f"&catalog={quote_plus(catalog_name.strip())}"
+                f"&schema={quote_plus(schema_name.strip())}"
+            )
         else:
             raise HTTPException(status_code=400, detail="Unsupported database type.")
 
@@ -1044,10 +1110,15 @@ async def _test_single_connection(
         decrypted_connection_string = decrypt_string(connection.db_connection_string)
 
         # Create a test engine
+        create_engine_kwargs = {
+            "pool_pre_ping": True,
+        }
+        if connection.db_type not in ("oracledb", "oracle", "databricks"):
+            create_engine_kwargs["connect_args"] = {"connect_timeout": 10}
+
         test_engine = create_engine(
             decrypted_connection_string,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 10}
+            **create_engine_kwargs
         )
 
         # Attempt to connect and execute a simple query

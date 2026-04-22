@@ -1,5 +1,6 @@
 import logging
 from sqlalchemy import create_engine, inspect
+from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,16 @@ def extract_table_names(connection_string: str):
 
         # Create inspector to examine database schema
         inspector = inspect(engine)
+
+        parsed_url = urlparse(connection_string)
+        if parsed_url.scheme and "databricks" in parsed_url.scheme.lower():
+            query_params = parse_qs(parsed_url.query or "")
+            catalog_name = (query_params.get("catalog", [None])[0] or "").strip()
+            schema_name = (query_params.get("schema", [None])[0] or "").strip()
+            if catalog_name and schema_name:
+                schema_ref = f"{catalog_name}.{schema_name}"
+                table_names = inspector.get_table_names(schema=schema_ref)
+                return table_names
 
         # Get all table names
         table_names = inspector.get_table_names()
