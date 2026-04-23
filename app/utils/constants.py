@@ -29,7 +29,9 @@ class Permissions(str, Enum):
     EDIT_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb52"
     DELETE_DATASOURCE = "0a4d0f7e-3ae5-4c13-9cc4-dc7e487cdb53"
 
-POOL_RECYCLE = 3600
+# Keep this lower for cross-server Postgres so stale idle sockets are recycled
+# before intermediate network devices/NAT drop them.
+POOL_RECYCLE = 300
 POOL_SIZE = 20
 MAX_OVERFLOW = 10
 POOL_TIMEOUT = 30

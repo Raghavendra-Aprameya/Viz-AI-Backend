@@ -1,5 +1,6 @@
 from fastapi import APIRouter, status, Depends, Response, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 from uuid import UUID
 import logging
 
@@ -142,6 +143,14 @@ async def login_user(login_data: LoginData, response: Response, db: Session = No
             "refresh_token": refresh_token
         }
 
+    except OperationalError as e:
+        logger.error(f"Database connectivity issue during login for {login_data.username}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unreachable. Please try again."
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

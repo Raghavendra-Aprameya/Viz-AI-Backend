@@ -24,11 +24,13 @@ engine = create_engine(
     url=settings.DB_URI,
     pool_pre_ping=True,
     pool_recycle=POOL_RECYCLE,
+    pool_use_lifo=True,
     pool_size=POOL_SIZE,
     max_overflow=MAX_OVERFLOW,
     pool_timeout=POOL_TIMEOUT,
     connect_args={
         "connect_timeout": 10,  # Fail fast if DB is unreachable
+        # Keepalive probes help detect half-open network paths between app and DB hosts
         "keepalives": 1,
         "keepalives_idle": 30,
         "keepalives_interval": 10,

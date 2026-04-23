@@ -53,9 +53,11 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("Shutting down VizAI Backend...")
-    from app.core.db import external_engine_manager
+    from app.core.db import external_engine_manager, engine
     external_engine_manager.dispose_all()
     logger.info("All external engines disposed successfully")
+    engine.dispose()
+    logger.info("Main database engine disposed successfully")
 
 
 # For SQLAlchemy session, if used elsewhere
@@ -90,4 +92,3 @@ async def ws_test(ws: WebSocket):
     await ws.accept()
     await ws.send_text("Hello WS!")
     await ws.close()
-
