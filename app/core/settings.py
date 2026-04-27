@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # LLM_URI: str
     ENCRYPTION_KEY: str
     GEMINI_API_KEY: str
+    # Keep both for backward compatibility: some modules currently reference OPENAPI_API_KEY.
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAPI_API_KEY: Optional[str] = None
     REDIS_URL: Optional[str] = None
 
     class Config:

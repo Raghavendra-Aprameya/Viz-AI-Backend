@@ -20,7 +20,7 @@ import redis
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
-import google.generativeai as genai
+from langchain_openai import ChatOpenAI
 
 from app.models.schema_models import (
     DatabaseConnectionModel,
@@ -67,7 +67,7 @@ async def generate_business_insights_service(
         dict: Business insights including KPIs, query results, and AI analysis
         
     Note:
-        Gemini API key is loaded from environment variable GEMINI_API_KEY
+        OpenAI API key is loaded from environment variable OPENAI_API_KEY
     """
     try:
         user_id = UUID(token_payload.get("sub"))
@@ -323,7 +323,7 @@ async def generate_kpi_queries_with_llm(
         list: List of KPI queries with title, description, and SQL
         
     Note:
-        Gemini API key is loaded from environment variable GEMINI_API_KEY
+        OpenAI API key is loaded from environment variable OPENAI_API_KEY
     """
     try:
         # Default to postgres if db_type is None
@@ -332,16 +332,21 @@ async def generate_kpi_queries_with_llm(
             logger.warning("Database type not specified, defaulting to postgres")
         db_type = db_type.lower()
         
-        # Configure Gemini API from environment
-        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
+        # Configure OpenAI API from settings (fallback supports legacy OPENAPI_API_KEY key name)
+        openai_api_key = (
+            (settings.OPENAI_API_KEY or "").strip()
+            or (settings.OPENAPI_API_KEY or "").strip()
+        )
+        if not openai_api_key:
             raise HTTPException(
                 status_code=500,
-                detail="GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your .env file."
+                detail="OpenAI API key is not configured. Set OPENAI_API_KEY in .env (or legacy OPENAPI_API_KEY)."
             )
-        
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.2,
+            api_key=openai_api_key,
+        )
         
         soql_guidelines = """
 Write queries ONLY using SOQL (Salesforce Object Query Language) syntax - NOT SQL.
@@ -469,10 +474,10 @@ Just the raw JSON array starting with [ and ending with ].
 """
         
         logger.debug("Generating KPI queries with LLM...")
-        response = model.generate_content(prompt)
+        response = llm.invoke(prompt)
         
         # Parse JSON response
-        response_text = response.text.strip()
+        response_text = (response.content or "").strip()
         
         # Remove markdown code blocks if present
         if response_text.startswith("```json"):
@@ -625,19 +630,24 @@ async def generate_insights_from_results(
         dict: Business insights and recommendations
         
     Note:
-        Gemini API key is loaded from environment variable GEMINI_API_KEY
+        OpenAI API key is loaded from environment variable OPENAI_API_KEY
     """
     try:
-        # Configure Gemini API from environment
-        if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.strip() == "":
+        # Configure OpenAI API from settings (fallback supports legacy OPENAPI_API_KEY key name)
+        openai_api_key = (
+            (settings.OPENAI_API_KEY or "").strip()
+            or (settings.OPENAPI_API_KEY or "").strip()
+        )
+        if not openai_api_key:
             raise HTTPException(
                 status_code=500,
-                detail="GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your .env file."
+                detail="OpenAI API key is not configured. Set OPENAI_API_KEY in .env (or legacy OPENAPI_API_KEY)."
             )
-        
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.2,
+            api_key=openai_api_key,
+        )
         
         # Prepare query results summary
         results_summary = []
@@ -719,10 +729,10 @@ Just the raw JSON object starting with {{ and ending with }}.
 """
         
         logger.debug("Generating business insights with LLM...")
-        response = model.generate_content(prompt)
+        response = llm.invoke(prompt)
         
         # Parse JSON response
-        response_text = response.text.strip()
+        response_text = (response.content or "").strip()
         
         # Remove markdown code blocks if present
         if response_text.startswith("```json"):
