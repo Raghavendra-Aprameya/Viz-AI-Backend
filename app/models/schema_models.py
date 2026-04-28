@@ -275,7 +275,11 @@ class UserProjectRoleModel(Base):
     __tablename__ = "user_project_role"
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), primary_key=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), primary_key=True)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     role_id = Column(UUID(as_uuid=True), ForeignKey("role.id"), primary_key=True)
     is_owner = Column(Boolean, nullable=True, default=False)
 
