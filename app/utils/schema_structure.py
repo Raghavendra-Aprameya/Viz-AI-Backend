@@ -205,8 +205,108 @@ def get_schema_structure(connection_string: str, queue, loop):
                             {"schema_name": databricks_schema, "table_name": table_name},
                         ).mappings().all()
                         columns = [{"name": col["column_name"], "type": str(col["data_type"])} for col in column_rows]
-                        primary_keys = {"constrained_columns": []}
+                        # Databricks PK/FK extraction from information_schema
+                        pk_sql = text(
+                            f"""
+                            SELECT kcu.column_name
+                            FROM {databricks_catalog}.information_schema.table_constraints tc
+                            JOIN {databricks_catalog}.information_schema.key_column_usage kcu
+                              ON tc.constraint_catalog = kcu.constraint_catalog
+                             AND tc.constraint_schema = kcu.constraint_schema
+                             AND tc.constraint_name = kcu.constraint_name
+                             AND tc.table_catalog = kcu.table_catalog
+                             AND tc.table_schema = kcu.table_schema
+                             AND tc.table_name = kcu.table_name
+                            WHERE tc.table_schema = :schema_name
+                              AND tc.table_name = :table_name
+                              AND tc.constraint_type = 'PRIMARY KEY'
+                            ORDER BY kcu.ordinal_position
+                            """
+                        )
+                        try:
+                            pk_rows = connection.execute(
+                                pk_sql,
+                                {"schema_name": databricks_schema, "table_name": table_name},
+                            ).mappings().all()
+                            primary_keys = {
+                                "constrained_columns": [r["column_name"] for r in pk_rows if r.get("column_name")]
+                            }
+                        except Exception as pk_error:
+                            logger.warning(
+                                "Databricks PK lookup failed for %s.%s.%s: %s",
+                                databricks_catalog,
+                                databricks_schema,
+                                table_name,
+                                pk_error,
+                            )
+                            primary_keys = {"constrained_columns": []}
+
+                        fk_sql = text(
+                            f"""
+                            SELECT
+                                src_kcu.column_name AS constrained_column,
+                                dst_kcu.table_catalog AS referred_table_catalog,
+                                dst_kcu.table_schema AS referred_table_schema,
+                                dst_kcu.table_name AS referred_table_name,
+                                dst_kcu.column_name AS referred_column_name
+                            FROM {databricks_catalog}.information_schema.table_constraints tc
+                            JOIN {databricks_catalog}.information_schema.referential_constraints rc
+                              ON tc.constraint_catalog = rc.constraint_catalog
+                             AND tc.constraint_schema = rc.constraint_schema
+                             AND tc.constraint_name = rc.constraint_name
+                            JOIN {databricks_catalog}.information_schema.key_column_usage src_kcu
+                              ON tc.constraint_catalog = src_kcu.constraint_catalog
+                             AND tc.constraint_schema = src_kcu.constraint_schema
+                             AND tc.constraint_name = src_kcu.constraint_name
+                             AND tc.table_catalog = src_kcu.table_catalog
+                             AND tc.table_schema = src_kcu.table_schema
+                             AND tc.table_name = src_kcu.table_name
+                            LEFT JOIN {databricks_catalog}.information_schema.key_column_usage dst_kcu
+                              ON rc.unique_constraint_catalog = dst_kcu.constraint_catalog
+                             AND rc.unique_constraint_schema = dst_kcu.constraint_schema
+                             AND rc.unique_constraint_name = dst_kcu.constraint_name
+                             AND src_kcu.ordinal_position = dst_kcu.ordinal_position
+                            WHERE tc.table_schema = :schema_name
+                              AND tc.table_name = :table_name
+                              AND tc.constraint_type = 'FOREIGN KEY'
+                            ORDER BY src_kcu.ordinal_position
+                            """
+                        )
+                        try:
+                            fk_rows = connection.execute(
+                                fk_sql,
+                                {"schema_name": databricks_schema, "table_name": table_name},
+                            ).mappings().all()
+                        except Exception as fk_error:
+                            logger.warning(
+                                "Databricks FK lookup failed for %s.%s.%s: %s",
+                                databricks_catalog,
+                                databricks_schema,
+                                table_name,
+                                fk_error,
+                            )
+                            fk_rows = []
+
                         foreign_keys = []
+                        for row in fk_rows:
+                            constrained_column = row.get("constrained_column")
+                            referred_table_name = row.get("referred_table_name")
+                            if not constrained_column or not referred_table_name:
+                                continue
+
+                            referred_catalog = row.get("referred_table_catalog")
+                            referred_schema = row.get("referred_table_schema")
+                            referred_column = row.get("referred_column_name")
+                            referred_parts = [p for p in [referred_catalog, referred_schema, referred_table_name] if p]
+
+                            foreign_keys.append(
+                                {
+                                    "column": constrained_column,
+                                    "references": ".".join(referred_parts) if referred_parts else referred_table_name,
+                                    "referred_column": referred_column,
+                                }
+                            )
+
                         qualified_table_name = f"{databricks_catalog}.{databricks_schema}.{table_name}"
                     # Get table schema - for Oracle, specify schema if available
                     elif is_oracle and oracle_schema:
