@@ -63,6 +63,7 @@ from app.schemas import (
 from app.utils.crypt import encrypt_string, decrypt_string
 from app.utils.schema_structure import get_schema_structure, get_salesforce_schema_structure
 from app.utils.extract_table_name import extract_table_names
+from app.services.ds_graph import DSGraphBuilder
 
 # Salesforce support is optional - only import if available
 try:
@@ -155,11 +156,14 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
                     db_entry = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == db_entry_id).first()
                     if db_entry:
                         schema_json = json.dumps(schema_structure)
+                        ds_graph_json = json.dumps(DSGraphBuilder(db_type=db_type).build(schema_structure))
                         logger.debug(f"Saving schema to DB entry {db_entry_id}, schema size: {len(schema_json)} bytes")
                         db_entry.db_schema = schema_json
+                        db_entry.ds_graph_json = ds_graph_json
                         db.commit()
                         logger.info(f"Successfully saved schema with {num_tables} tables to DB entry {db_entry_id}")
                         await queue.put({"type": "info", "message": f"Successfully saved schema with {num_tables} tables"})
+                        await queue.put({"type": "graph_completed", "message": "Data source graph generated"})
                     else:
                         error_msg = f"Database entry not found for ID: {db_entry_id}"
                         logger.error(error_msg)
@@ -708,7 +712,7 @@ async def create_database_connection(
         tables_count = len(extract_table_names(connection_string))
 
     # --- Return immediately ---
-    return {"taskId": task_id, "tablesCount": tables_count}
+    return {"taskId": task_id, "tablesCount": tables_count, "connectionId": str(db_entry.id)}
 
 
 
@@ -763,6 +767,7 @@ async def get_connections(
                     "project_id": str(conn.project_id),
                     "db_connection_string": decrypted_connection_string,
                     "db_schema": conn.db_schema,
+                    "ds_graph_json": conn.ds_graph_json,
                     "db_username": conn.db_username,
                     "db_password": decrypted_password,
                     "db_host_link": conn.db_host_link,
@@ -770,6 +775,7 @@ async def get_connections(
                     "db_type": conn.db_type,
                     "name": conn.connection_name,
                     "consent_given": conn.consent_given,
+                    "has_ds_graph": bool(conn.ds_graph_json),
                 }
             )
 
@@ -886,6 +892,46 @@ async def delete_db_connection(
     db.commit()
 
     return {"message": "Database connection deleted successfully"}
+
+
+@require_permission(Permission.VIEW_DATASOURCE)
+async def get_connection_ds_graph(
+    connection_id: UUID,
+    db: Session,
+    token_payload: dict,
+):
+    db_connection = (
+        db.query(DatabaseConnectionModel)
+        .filter(DatabaseConnectionModel.id == connection_id)
+        .first()
+    )
+    if not db_connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Database connection not found",
+        )
+
+    if not db_connection.ds_graph_json:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Data source graph not available yet. Complete setup first.",
+        )
+
+    try:
+        graph_payload = json.loads(db_connection.ds_graph_json)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stored DS graph is invalid: {str(e)}",
+        ) from e
+
+    return {
+        "message": "DS graph retrieved successfully",
+        "connection_id": str(db_connection.id),
+        "connection_name": db_connection.connection_name,
+        "db_type": db_connection.db_type,
+        "graph": graph_payload,
+    }
 
 
 async def get_connection_stats(

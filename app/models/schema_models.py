@@ -393,6 +393,7 @@ class DatabaseConnectionModel(Base):
     connection_name = Column(String, nullable=False)
     db_connection_string = Column(Text, nullable=False)
     db_schema = Column(String, nullable=True)
+    ds_graph_json = Column(Text, nullable=True)
     db_username = Column(String, nullable=True)
     db_password = Column(String, nullable=True)
     db_host_link = Column(String, nullable=True)

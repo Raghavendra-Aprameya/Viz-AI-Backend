@@ -109,16 +109,35 @@ def get_schema_structure(connection_string: str, queue, loop):
                 if not re.match(r"^[A-Za-z0-9_]+$", databricks_schema):
                     raise Exception("Invalid Databricks schema name format")
 
+                # Databricks Unity Catalog does not always use 'BASE TABLE'.
+                # Common table_type values include MANAGED/EXTERNAL/VIEW.
                 tables_sql = text(
                     f"""
-                    SELECT table_catalog, table_schema, table_name
+                    SELECT table_catalog, table_schema, table_name, table_type
                     FROM {databricks_catalog}.information_schema.tables
                     WHERE table_schema = :schema_name
-                      AND table_type = 'BASE TABLE'
+                      AND table_type IN ('MANAGED', 'EXTERNAL', 'BASE TABLE')
                     ORDER BY table_name
                     """
                 )
-                table_rows = connection.execute(tables_sql, {"schema_name": databricks_schema}).mappings().all()
+                table_rows = connection.execute(
+                    tables_sql, {"schema_name": databricks_schema}
+                ).mappings().all()
+
+                # Fallback: some environments expose only VIEW rows or unexpected table_type values.
+                if not table_rows:
+                    fallback_sql = text(
+                        f"""
+                        SELECT table_catalog, table_schema, table_name, table_type
+                        FROM {databricks_catalog}.information_schema.tables
+                        WHERE table_schema = :schema_name
+                        ORDER BY table_name
+                        """
+                    )
+                    table_rows = connection.execute(
+                        fallback_sql, {"schema_name": databricks_schema}
+                    ).mappings().all()
+
                 table_names = [r.get("table_name") for r in table_rows]
                 logger.info(
                     "Found %d Databricks tables in %s.%s",

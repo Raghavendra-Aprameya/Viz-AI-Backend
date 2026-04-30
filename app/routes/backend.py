@@ -104,6 +104,7 @@ from app.services.project import (
 from app.services.db_connection import (
     create_database_connection,
     get_connections,
+    get_connection_ds_graph,
     update_db_connection,
     delete_db_connection,
     get_connection_stats,
@@ -273,6 +274,17 @@ async def get_connections_route(
         dict: The connections for the project.
     """
     return await get_connections(project_id, db, token_payload)
+
+
+@backend_router.get(
+    "/connections/{connection_id}/ds-graph", status_code=status.HTTP_200_OK
+)
+async def get_connection_ds_graph_route(
+    connection_id: UUID = Path(..., description="Connection ID to get DS graph for"),
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await get_connection_ds_graph(connection_id, db, token_payload)
 
 
 @backend_router.get(
@@ -1730,5 +1742,4 @@ async def delete_home_insight(
         db=db,
         token_payload=token_payload
     )
-
 

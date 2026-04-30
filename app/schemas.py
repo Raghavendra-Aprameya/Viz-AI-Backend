@@ -73,6 +73,7 @@ class DBConnectionRequest(BaseModel):
 class DBConnectionResponse(BaseModel):
     taskId: str
     tablesCount: int
+    connectionId: Optional[str] = None
 
 
 class DBConnectionListResponse(BaseModel):
