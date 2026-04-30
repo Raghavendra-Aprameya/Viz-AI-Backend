@@ -113,8 +113,16 @@ def get_schema_structure(connection_string: str, queue, loop):
                     f"""
                     SELECT table_catalog, table_schema, table_name
                     FROM {databricks_catalog}.information_schema.tables
-                    WHERE table_schema = :schema_name
-                      AND table_type = 'BASE TABLE'
+                    WHERE lower(table_schema) = lower(:schema_name)
+                      AND table_type IN (
+                        'MANAGED',
+                        'EXTERNAL',
+                        'FOREIGN',
+                        'STREAMING_TABLE',
+                        'MANAGED_SHALLOW_CLONE',
+                        'EXTERNAL_SHALLOW_CLONE',
+                        'BASE TABLE'
+                      )
                     ORDER BY table_name
                     """
                 )
@@ -176,8 +184,8 @@ def get_schema_structure(connection_string: str, queue, loop):
                             f"""
                             SELECT column_name, data_type
                             FROM {databricks_catalog}.information_schema.columns
-                            WHERE table_schema = :schema_name
-                              AND table_name = :table_name
+                            WHERE lower(table_schema) = lower(:schema_name)
+                              AND lower(table_name) = lower(:table_name)
                             ORDER BY ordinal_position
                             """
                         )
