@@ -85,8 +85,8 @@ async def create_project(
         new_project = ProjectModel(
             name=project.name,
             description=project.description,
-            kpi_info=project.kpi_info,
-            prod_desc=project.prod_desc,
+            primary_domain=project.primary_domain,
+            additional_kpis=project.additional_kpis,
             super_user_id=user_id,
         )
 
@@ -126,8 +126,8 @@ async def create_project(
                 "id": new_project.id,
                 "name": new_project.name,
                 "description": new_project.description,
-                "kpi_info": new_project.kpi_info,
-                "prod_desc": new_project.prod_desc,
+                "primary_domain": new_project.primary_domain,
+                "additional_kpis": new_project.additional_kpis,
                 "super_user_id": new_project.super_user_id,
                 "created_at": new_project.created_at,
             },
@@ -249,8 +249,8 @@ async def get_projects(
                     "id": str(project.id),
                     "name": project.name,
                     "description": project.description,
-                    "kpi_info": project.kpi_info,
-                    "prod_desc": project.prod_desc,
+                    "primary_domain": project.primary_domain,
+                    "additional_kpis": project.additional_kpis,
                     "super_user_id": str(project.super_user_id),
                     "created_at": project.created_at.isoformat(),
                     "created_at_relative": time_ago_str,
@@ -663,10 +663,10 @@ async def update_project(
             project.name = data.name
         if data.description is not None:
             project.description = data.description
-        if data.kpi_info is not None:
-            project.kpi_info = data.kpi_info
-        if data.prod_desc is not None:
-            project.prod_desc = data.prod_desc
+        if data.primary_domain is not None:
+            project.primary_domain = data.primary_domain
+        if data.additional_kpis is not None:
+            project.additional_kpis = data.additional_kpis
 
         db.commit()
         db.refresh(project)
@@ -708,7 +708,7 @@ async def update_project_kpi_info(
                 detail="Request body required",
             )
 
-        project.kpi_info = data.kpi_info
+        project.additional_kpis = data.additional_kpis
 
         db.commit()
         db.refresh(project)

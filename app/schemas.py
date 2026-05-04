@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DBConnectionRequest(BaseModel):
@@ -150,8 +150,8 @@ class ProjectRequest(BaseModel):
 
     name: str
     description: Optional[str] = None
-    kpi_info: Optional[str] = None
-    prod_desc: Optional[str] = None
+    primary_domain: str = Field(..., max_length=255)
+    additional_kpis: Optional[str] = Field(None, max_length=500)
     created_at: Optional[datetime] = None
 
     class Config:
@@ -173,8 +173,8 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str] = None
-    kpi_info: Optional[str] = None
-    prod_desc: Optional[str] = None
+    primary_domain: str
+    additional_kpis: Optional[str] = None
     super_user_id: UUID
     created_at: datetime
 
@@ -610,8 +610,8 @@ class UpdateProjectRequest(BaseModel):
 
     name: Optional[str] = None
     description: Optional[str] = None
-    kpi_info: Optional[str] = None
-    prod_desc: Optional[str] = None
+    primary_domain: Optional[str] = Field(None, max_length=255)
+    additional_kpis: Optional[str] = Field(None, max_length=500)
 
 
 class UpdateProjectKpiInfoRequest(BaseModel):
@@ -619,7 +619,7 @@ class UpdateProjectKpiInfoRequest(BaseModel):
     Request model for updating only the project KPI info.
     """
 
-    kpi_info: Optional[str] = None
+    additional_kpis: Optional[str] = Field(None, max_length=500)
 
 
 class UpdateDashboardRequest(BaseModel):

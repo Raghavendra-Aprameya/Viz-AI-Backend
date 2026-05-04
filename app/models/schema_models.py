@@ -205,9 +205,8 @@ class ProjectModel(Base):
     name = Column(String, nullable=False)
     super_user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"))
     description = Column(Text)
-    kpi_info = Column(String, nullable=True)
-    prod_desc = Column(String, nullable=True)
-    summarised_desc=Column(String, nullable=True)
+    primary_domain = Column(String(255), nullable=False)
+    additional_kpis = Column(String(500), nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
