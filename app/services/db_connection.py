@@ -54,7 +54,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
 
 from app.core.db import get_db
-from app.models.schema_models import ConnectionTableNameModel, DatabaseConnectionModel
+from app.models.schema_models import (
+    ConnectionTableNameModel,
+    DatabaseConnectionModel,
+    DatabaseConnectionScopeModel,
+)
 from app.schemas import (
     DBConnectionRequest,
     DBConnectionResponse,
@@ -101,7 +105,56 @@ def _normalize_databricks_workspace_host(workspace_url: str) -> str:
     host = (parsed.netloc or parsed.path or "").strip().strip("/")
     return host
 
-async def extract_tables_in_background(task_id: str, connection_string: str, db_entry_id, db_type: str = None, salesforce_credentials: dict = None):
+
+def _normalize_databricks_scopes(scopes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized_scopes: List[Dict[str, Any]] = []
+    seen = set()
+
+    for scope in scopes:
+        catalog_name = (scope.get("catalog_name") or "").strip()
+        schema_name = (scope.get("schema_name") or "").strip()
+        is_default = bool(scope.get("is_default", False))
+
+        if not catalog_name or not schema_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Each Databricks scope requires both catalog_name and schema_name",
+            )
+
+        scope_key = (catalog_name.lower(), schema_name.lower())
+        if scope_key in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Duplicate Databricks scope detected: {catalog_name}.{schema_name}",
+            )
+        seen.add(scope_key)
+        normalized_scopes.append(
+            {
+                "catalog_name": catalog_name,
+                "schema_name": schema_name,
+                "is_default": is_default,
+            }
+        )
+
+    if not normalized_scopes:
+        raise HTTPException(status_code=400, detail="At least one Databricks scope is required")
+
+    default_count = sum(1 for scope in normalized_scopes if scope["is_default"])
+    if default_count > 1:
+        raise HTTPException(status_code=400, detail="Only one Databricks scope can be default")
+    if default_count == 0:
+        normalized_scopes[0]["is_default"] = True
+
+    return normalized_scopes
+
+async def extract_tables_in_background(
+    task_id: str,
+    connection_string: str,
+    db_entry_id,
+    db_type: str = None,
+    salesforce_credentials: dict = None,
+    databricks_scopes: Optional[List[Dict[str, Any]]] = None,
+):
     # ensure the async queue exists and frontend can connect immediately
     queue = progress_queues.setdefault(task_id, asyncio.Queue())
 
@@ -130,7 +183,8 @@ async def extract_tables_in_background(task_id: str, connection_string: str, db_
                 get_schema_structure,       # blocking function that now takes (connection_string, queue, loop)
                 connection_string,
                 queue,
-                loop
+                loop,
+                databricks_scopes,
             )
         logger.debug(f"Schema extraction completed for task_id: {task_id}, got schema: {schema_structure is not None}")
     except Exception as e:
@@ -460,6 +514,8 @@ async def create_database_connection(
     db: Session,
     background_tasks: BackgroundTasks
 ):
+    databricks_scopes: List[Dict[str, Any]] = []
+
     # --- Parse connection string or construct from fields ---
     if data.connection_string:
         # Parse and properly encode the connection string
@@ -491,11 +547,29 @@ async def create_database_connection(
             schema_name = (query_params.get("schema", [None])[0] or "").strip()
             http_path = (query_params.get("http_path", [None])[0] or "").strip()
             token_password = parsed_url.password or ""
-            db_name = f"{catalog_name}.{schema_name}" if catalog_name and schema_name else (data.db_name or "")
-            if not host or not db_name or not http_path or not token_password:
+            raw_scopes = [
+                {
+                    "catalog_name": getattr(scope, "catalog_name", None),
+                    "schema_name": getattr(scope, "schema_name", None),
+                    "is_default": getattr(scope, "is_default", False),
+                }
+                for scope in (data.scopes or [])
+            ]
+            if not raw_scopes and catalog_name and schema_name:
+                raw_scopes = [
+                    {
+                        "catalog_name": catalog_name,
+                        "schema_name": schema_name,
+                        "is_default": True,
+                    }
+                ]
+            databricks_scopes = _normalize_databricks_scopes(raw_scopes)
+            default_scope = next(scope for scope in databricks_scopes if scope["is_default"])
+            db_name = f"{default_scope['catalog_name']}.{default_scope['schema_name']}"
+            if not host or not http_path or not token_password:
                 raise HTTPException(
                     status_code=400,
-                    detail="Databricks connection string must include host, http_path, catalog, schema and token password",
+                    detail="Databricks connection string must include host, http_path, and token password",
                 )
             username = username or "token"
             password = token_password or data.password or ""
@@ -619,17 +693,33 @@ async def create_database_connection(
         elif db_type == "databricks":
             workspace_url = getattr(data, "workspace_url", None) or data.host or ""
             http_path = getattr(data, "http_path", None) or ""
-            catalog_name = getattr(data, "catalog_name", None) or ""
-            schema_name = getattr(data, "schema_name", None) or ""
             access_token = getattr(data, "access_token", None) or data.password or ""
+            raw_scopes = [
+                {
+                    "catalog_name": getattr(scope, "catalog_name", None),
+                    "schema_name": getattr(scope, "schema_name", None),
+                    "is_default": getattr(scope, "is_default", False),
+                }
+                for scope in (data.scopes or [])
+            ]
+            if not raw_scopes and getattr(data, "catalog_name", None) and getattr(data, "schema_name", None):
+                raw_scopes = [
+                    {
+                        "catalog_name": getattr(data, "catalog_name"),
+                        "schema_name": getattr(data, "schema_name"),
+                        "is_default": True,
+                    }
+                ]
+            databricks_scopes = _normalize_databricks_scopes(raw_scopes)
+            default_scope = next(scope for scope in databricks_scopes if scope["is_default"])
 
             host = _normalize_databricks_workspace_host(workspace_url)
-            if not all([host, http_path.strip(), catalog_name.strip(), schema_name.strip(), access_token.strip()]):
+            if not all([host, http_path.strip(), access_token.strip()]):
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Databricks requires workspace_url, http_path, catalog_name, "
-                        "schema_name, and access_token"
+                        "Databricks requires workspace_url, http_path, at least one scope, "
+                        "and access_token"
                     ),
                 )
 
@@ -644,13 +734,13 @@ async def create_database_connection(
 
             username = "token"
             password = access_token
-            db_name = f"{catalog_name.strip()}.{schema_name.strip()}"
+            db_name = f"{default_scope['catalog_name']}.{default_scope['schema_name']}"
             host = host
             connection_string = (
                 f"databricks://token:{quote_plus(str(access_token))}@{host}"
                 f"?http_path={quote_plus(normalized_http_path, safe='/')}"
-                f"&catalog={quote_plus(catalog_name.strip())}"
-                f"&schema={quote_plus(schema_name.strip())}"
+                f"&catalog={quote_plus(default_scope['catalog_name'])}"
+                f"&schema={quote_plus(default_scope['schema_name'])}"
             )
         else:
             raise HTTPException(status_code=400, detail="Unsupported database type.")
@@ -678,6 +768,20 @@ async def create_database_connection(
         db_type=db_type,
     )
     db.add(db_entry)
+    db.flush()
+
+    if db_type == "databricks":
+        for scope in databricks_scopes:
+            db.add(
+                DatabaseConnectionScopeModel(
+                    connection_id=db_entry.id,
+                    catalog_name=scope["catalog_name"],
+                    schema_name=scope["schema_name"],
+                    is_default=scope["is_default"],
+                    is_active=True,
+                )
+            )
+
     db.commit()
     db.refresh(db_entry)
 
@@ -704,8 +808,21 @@ async def create_database_connection(
         # For Salesforce, we don't know the table count upfront
         tables_count = 0
     else:
-        background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db_entry.id, db_type)
-        tables_count = len(extract_table_names(connection_string))
+        background_tasks.add_task(
+            extract_tables_in_background,
+            task_id,
+            connection_string,
+            db_entry.id,
+            db_type,
+            None,
+            databricks_scopes if db_type == "databricks" else None,
+        )
+        tables_count = len(
+            extract_table_names(
+                connection_string,
+                databricks_scopes=databricks_scopes if db_type == "databricks" else None,
+            )
+        )
 
     # --- Return immediately ---
     return {"taskId": task_id, "tablesCount": tables_count}
@@ -757,6 +874,17 @@ async def get_connections(
                 decrypted_password = decrypt_string(conn.db_password)
                 decrypted_connection_string = decrypt_string(conn.db_connection_string)
 
+            scopes = [
+                {
+                    "id": str(scope.id),
+                    "catalog_name": scope.catalog_name,
+                    "schema_name": scope.schema_name,
+                    "is_default": scope.is_default,
+                    "is_active": scope.is_active,
+                }
+                for scope in conn.scopes
+            ]
+
             connections_list.append(
                 {
                     "id": str(conn.id),
@@ -770,6 +898,7 @@ async def get_connections(
                     "db_type": conn.db_type,
                     "name": conn.connection_name,
                     "consent_given": conn.consent_given,
+                    "scopes": scopes,
                 }
             )
 

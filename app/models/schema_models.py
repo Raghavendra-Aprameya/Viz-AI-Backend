@@ -410,6 +410,11 @@ class DatabaseConnectionModel(Base):
         back_populates="connection",
         cascade="all, delete-orphan",
     )
+    scopes = relationship(
+        "DatabaseConnectionScopeModel",
+        back_populates="connection",
+        cascade="all, delete-orphan",
+    )
 
     related_databases = relationship(
         "RelatedDatabaseModel",
@@ -441,6 +446,30 @@ class DatabaseConnectionModel(Base):
             f"<DatabaseConnectionModel(id={self.id}, connection_name={self.connection_name}, "
             f"db_type={self.db_type})>"
         )
+
+
+class DatabaseConnectionScopeModel(Base):
+    """
+    Represents a logical namespace scope for a database connection.
+    For Databricks this is catalog + schema.
+    """
+
+    __tablename__ = "database_connection_scope"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("database_connection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    catalog_name = Column(String, nullable=False)
+    schema_name = Column(String, nullable=False)
+    is_default = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+
+    connection = relationship("DatabaseConnectionModel", back_populates="scopes")
 
 
 class ConnectionTableNameModel(Base):

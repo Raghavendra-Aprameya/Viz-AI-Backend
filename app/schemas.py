@@ -12,6 +12,16 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class DatabricksScopeRequest(BaseModel):
+    """
+    Databricks scope request model (catalog + schema).
+    """
+
+    catalog_name: str
+    schema_name: str
+    is_default: Optional[bool] = False
+
+
 class DBConnectionRequest(BaseModel):
     """
     Request model for creating or updating a database connection.
@@ -57,6 +67,7 @@ class DBConnectionRequest(BaseModel):
     http_path: Optional[str] = None
     catalog_name: Optional[str] = None
     schema_name: Optional[str] = None
+    scopes: Optional[List[DatabricksScopeRequest]] = None
     access_token: Optional[str] = None
 
 

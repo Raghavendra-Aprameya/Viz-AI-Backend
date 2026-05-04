@@ -64,7 +64,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ---- get_schema_structure (blocking; run in thread) ----
-def get_schema_structure(connection_string: str, queue, loop):
+def get_schema_structure(connection_string: str, queue, loop, databricks_scopes=None):
     engine = None
     schema_info = {"tables": []}
     min_date = datetime.fromisoformat("2003-01-06")
@@ -79,6 +79,9 @@ def get_schema_structure(connection_string: str, queue, loop):
         query_params = parse_qs(parsed_url.query or "")
         databricks_catalog = (query_params.get("catalog", [None])[0] or "").strip() if is_databricks else ""
         databricks_schema = (query_params.get("schema", [None])[0] or "").strip() if is_databricks else ""
+        active_scopes = databricks_scopes or []
+        if is_databricks and not active_scopes and databricks_catalog and databricks_schema:
+            active_scopes = [{"catalog_name": databricks_catalog, "schema_name": databricks_schema}]
         
         if is_databricks:
             logger.info(
@@ -99,41 +102,62 @@ def get_schema_structure(connection_string: str, queue, loop):
             
             # Databricks: use information_schema to preserve 3-level namespace
             if is_databricks:
-                if not databricks_catalog or not databricks_schema:
-                    error_msg = "Databricks connection string is missing catalog or schema query parameters."
+                if not active_scopes:
+                    error_msg = "Databricks connection requires at least one catalog/schema scope."
                     logger.error(error_msg)
                     loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": error_msg})
                     raise Exception(error_msg)
-                if not re.match(r"^[A-Za-z0-9_]+$", databricks_catalog):
-                    raise Exception("Invalid Databricks catalog name format")
-                if not re.match(r"^[A-Za-z0-9_]+$", databricks_schema):
-                    raise Exception("Invalid Databricks schema name format")
 
-                tables_sql = text(
-                    f"""
-                    SELECT table_catalog, table_schema, table_name
-                    FROM {databricks_catalog}.information_schema.tables
-                    WHERE lower(table_schema) = lower(:schema_name)
-                      AND table_type IN (
-                        'MANAGED',
-                        'EXTERNAL',
-                        'FOREIGN',
-                        'STREAMING_TABLE',
-                        'MANAGED_SHALLOW_CLONE',
-                        'EXTERNAL_SHALLOW_CLONE',
-                        'BASE TABLE'
-                      )
-                    ORDER BY table_name
-                    """
-                )
-                table_rows = connection.execute(tables_sql, {"schema_name": databricks_schema}).mappings().all()
-                table_names = [r.get("table_name") for r in table_rows]
-                logger.info(
-                    "Found %d Databricks tables in %s.%s",
-                    len(table_names),
-                    databricks_catalog,
-                    databricks_schema,
-                )
+                table_targets = []
+                for scope in active_scopes:
+                    scope_catalog = (scope.get("catalog_name") or "").strip()
+                    scope_schema = (scope.get("schema_name") or "").strip()
+                    if not scope_catalog or not scope_schema:
+                        raise Exception("Invalid Databricks scope: missing catalog_name or schema_name")
+                    if not re.match(r"^[A-Za-z0-9_]+$", scope_catalog):
+                        raise Exception(f"Invalid Databricks catalog name format: {scope_catalog}")
+                    if not re.match(r"^[A-Za-z0-9_]+$", scope_schema):
+                        raise Exception(f"Invalid Databricks schema name format: {scope_schema}")
+
+                    tables_sql = text(
+                        f"""
+                        SELECT table_catalog, table_schema, table_name
+                        FROM {scope_catalog}.information_schema.tables
+                        WHERE lower(table_schema) = lower(:schema_name)
+                          AND table_type IN (
+                            'MANAGED',
+                            'EXTERNAL',
+                            'FOREIGN',
+                            'STREAMING_TABLE',
+                            'MANAGED_SHALLOW_CLONE',
+                            'EXTERNAL_SHALLOW_CLONE',
+                            'BASE TABLE'
+                          )
+                        ORDER BY table_name
+                        """
+                    )
+                    table_rows = connection.execute(
+                        tables_sql, {"schema_name": scope_schema}
+                    ).mappings().all()
+                    for row in table_rows:
+                        table_name = row.get("table_name")
+                        if table_name:
+                            table_targets.append(
+                                {
+                                    "catalog": scope_catalog,
+                                    "schema": scope_schema,
+                                    "table_name": table_name,
+                                }
+                            )
+
+                    logger.info(
+                        "Found %d Databricks tables in %s.%s",
+                        len(table_rows),
+                        scope_catalog,
+                        scope_schema,
+                    )
+
+                table_names = [item["table_name"] for item in table_targets]
             # For Oracle, try with schema first
             elif is_oracle and oracle_schema:
                 logger.info(f"Oracle detected, trying to get tables from schema: {oracle_schema.upper()}")
@@ -180,10 +204,13 @@ def get_schema_structure(connection_string: str, queue, loop):
 
                     # Databricks column extraction from information_schema
                     if is_databricks:
+                        target = table_targets[idx - 1]
+                        scope_catalog = target["catalog"]
+                        scope_schema = target["schema"]
                         columns_sql = text(
                             f"""
                             SELECT column_name, data_type
-                            FROM {databricks_catalog}.information_schema.columns
+                            FROM {scope_catalog}.information_schema.columns
                             WHERE lower(table_schema) = lower(:schema_name)
                               AND lower(table_name) = lower(:table_name)
                             ORDER BY ordinal_position
@@ -191,12 +218,12 @@ def get_schema_structure(connection_string: str, queue, loop):
                         )
                         column_rows = connection.execute(
                             columns_sql,
-                            {"schema_name": databricks_schema, "table_name": table_name},
+                            {"schema_name": scope_schema, "table_name": table_name},
                         ).mappings().all()
                         columns = [{"name": col["column_name"], "type": str(col["data_type"])} for col in column_rows]
                         primary_keys = {"constrained_columns": []}
                         foreign_keys = []
-                        qualified_table_name = f"{databricks_catalog}.{databricks_schema}.{table_name}"
+                        qualified_table_name = f"{scope_catalog}.{scope_schema}.{table_name}"
                     # Get table schema - for Oracle, specify schema if available
                     elif is_oracle and oracle_schema:
                         columns = inspector.get_columns(table_name, schema=oracle_schema.upper())
@@ -221,8 +248,8 @@ def get_schema_structure(connection_string: str, queue, loop):
 
                     schema_info["tables"].append({
                         "name": qualified_table_name,
-                        "catalog": databricks_catalog if is_databricks else None,
-                        "schema": databricks_schema if is_databricks else (oracle_schema.upper() if is_oracle and oracle_schema else None),
+                        "catalog": (scope_catalog if is_databricks else None),
+                        "schema": (scope_schema if is_databricks else (oracle_schema.upper() if is_oracle and oracle_schema else None)),
                         "table": table_name,
                         "columns": columns if is_databricks else [{"name": col["name"], "type": str(col["type"])} for col in columns],
                         "primary_keys": primary_keys,
