@@ -46,12 +46,14 @@ from uuid import UUID, uuid4
 from urllib.parse import urlparse, quote_plus, parse_qs, urlencode, urlunparse
 import re
 import json
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
 from fastapi import HTTPException, status, Depends, Request, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
+import requests
 
 from app.core.db import get_db
 from app.models.schema_models import ConnectionTableNameModel, DatabaseConnectionModel
@@ -100,6 +102,109 @@ def _normalize_databricks_workspace_host(workspace_url: str) -> str:
     parsed = urlparse(raw if "://" in raw else f"https://{raw}")
     host = (parsed.netloc or parsed.path or "").strip().strip("/")
     return host
+
+
+def _extract_databricks_endpoint_ids(http_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract Databricks SQL warehouse ID or cluster ID from HTTP path.
+
+    Returns:
+        (warehouse_id, cluster_id)
+    """
+    normalized = (http_path or "").strip()
+    if not normalized:
+        return None, None
+
+    warehouse_match = re.search(r"/sql/1\.0/warehouses/([^/?]+)", normalized)
+    if warehouse_match:
+        return warehouse_match.group(1), None
+
+    # Typical cluster path example:
+    # /sql/protocolv1/o/<org_id>/<cluster_id>
+    cluster_match = re.search(r"/sql/protocolv1/o/[^/]+/([^/?]+)", normalized)
+    if cluster_match:
+        return None, cluster_match.group(1)
+
+    return None, None
+
+
+def _ensure_databricks_compute_running(
+    workspace_host: str,
+    access_token: str,
+    http_path: str,
+    timeout_seconds: int = 180,
+) -> None:
+    """
+    Ensure Databricks SQL warehouse or cluster is running before use.
+    """
+    warehouse_id, cluster_id = _extract_databricks_endpoint_ids(http_path)
+    if not warehouse_id and not cluster_id:
+        logger.warning("Could not infer Databricks warehouse/cluster ID from http_path; skipping auto-start.")
+        return
+
+    base_url = f"https://{workspace_host}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    deadline = time.time() + timeout_seconds
+
+    if warehouse_id:
+        warehouse_url = f"{base_url}/api/2.0/sql/warehouses/{warehouse_id}"
+        state = None
+        try:
+            resp = requests.get(warehouse_url, headers=headers, timeout=20)
+            resp.raise_for_status()
+            state = (resp.json().get("state") or "").upper()
+        except Exception as e:
+            logger.warning(f"Failed to fetch Databricks warehouse state: {e}")
+
+        if state != "RUNNING":
+            logger.info(f"Starting Databricks SQL warehouse {warehouse_id} (current_state={state or 'unknown'})")
+            requests.post(f"{warehouse_url}/start", headers=headers, timeout=20).raise_for_status()
+
+        while time.time() < deadline:
+            resp = requests.get(warehouse_url, headers=headers, timeout=20)
+            resp.raise_for_status()
+            state = (resp.json().get("state") or "").upper()
+            if state == "RUNNING":
+                logger.info(f"Databricks SQL warehouse {warehouse_id} is RUNNING")
+                return
+            if state in {"DELETED", "DELETING"}:
+                raise HTTPException(status_code=400, detail=f"Databricks warehouse {warehouse_id} is not available (state={state}).")
+            time.sleep(5)
+
+        raise HTTPException(status_code=504, detail=f"Timed out waiting for Databricks warehouse {warehouse_id} to start.")
+
+    if cluster_id:
+        cluster_get_url = f"{base_url}/api/2.0/clusters/get"
+        cluster_start_url = f"{base_url}/api/2.0/clusters/start"
+        state = None
+        try:
+            resp = requests.get(cluster_get_url, headers=headers, params={"cluster_id": cluster_id}, timeout=20)
+            resp.raise_for_status()
+            state = (resp.json().get("state") or "").upper()
+        except Exception as e:
+            logger.warning(f"Failed to fetch Databricks cluster state: {e}")
+
+        if state != "RUNNING":
+            logger.info(f"Starting Databricks cluster {cluster_id} (current_state={state or 'unknown'})")
+            requests.post(
+                cluster_start_url,
+                headers=headers,
+                json={"cluster_id": cluster_id},
+                timeout=20,
+            ).raise_for_status()
+
+        while time.time() < deadline:
+            resp = requests.get(cluster_get_url, headers=headers, params={"cluster_id": cluster_id}, timeout=20)
+            resp.raise_for_status()
+            state = (resp.json().get("state") or "").upper()
+            if state == "RUNNING":
+                logger.info(f"Databricks cluster {cluster_id} is RUNNING")
+                return
+            if state in {"ERROR", "TERMINATED"}:
+                raise HTTPException(status_code=400, detail=f"Databricks cluster {cluster_id} is not available (state={state}).")
+            time.sleep(5)
+
+        raise HTTPException(status_code=504, detail=f"Timed out waiting for Databricks cluster {cluster_id} to start.")
 
 async def extract_tables_in_background(task_id: str, connection_string: str, db_entry_id, db_type: str = None, salesforce_credentials: dict = None):
     # ensure the async queue exists and frontend can connect immediately
@@ -640,6 +745,13 @@ async def create_database_connection(
             logger.info(
                 "Creating Databricks connection using %s HTTP path",
                 endpoint_kind,
+            )
+
+            # Try to auto-start Databricks compute endpoint if it is down.
+            _ensure_databricks_compute_running(
+                workspace_host=host,
+                access_token=access_token.strip(),
+                http_path=normalized_http_path,
             )
 
             username = "token"
