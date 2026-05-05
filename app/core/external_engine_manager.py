@@ -14,6 +14,7 @@ for each query execution to external databases.
 
 import logging
 import threading
+import time
 from collections import OrderedDict
 from typing import Optional, Dict, Tuple
 from uuid import UUID
@@ -82,8 +83,10 @@ class ExternalEngineManager:
         if hasattr(self, '_initialized'):
             return
 
-        self._engines: OrderedDict[UUID, Tuple[str, Engine]] = OrderedDict()
+        # value tuple: (connection_string, engine, last_used_timestamp)
+        self._engines: OrderedDict[UUID, Tuple[str, Engine, float]] = OrderedDict()
         self._max_cache_size = max_cache_size
+        self._idle_ttl_seconds = 900  # Dispose cached engines idle for 15 minutes
         self._instance_lock = threading.Lock()
         self._initialized = True
         logger.info(f"ExternalEngineManager initialized with cache size {max_cache_size}")
@@ -119,12 +122,16 @@ class ExternalEngineManager:
                 "Use SalesforceClientManager from app.services.salesforce_client instead."
             )
         with self._instance_lock:
+            now = time.time()
+            self._evict_idle_engines(now)
+
             # Check if engine exists and connection string hasn't changed
             if connection_id in self._engines:
-                cached_conn_str, cached_engine = self._engines[connection_id]
+                cached_conn_str, cached_engine, _ = self._engines[connection_id]
 
                 if cached_conn_str == connection_string:
                     # Move to end (LRU: most recently used)
+                    self._engines[connection_id] = (cached_conn_str, cached_engine, now)
                     self._engines.move_to_end(connection_id)
                     logger.debug(f"Reusing cached engine for connection {connection_id}")
                     return cached_engine
@@ -143,7 +150,7 @@ class ExternalEngineManager:
 
             # Create new engine
             engine = self._create_engine(connection_string, db_type)
-            self._engines[connection_id] = (connection_string, engine)
+            self._engines[connection_id] = (connection_string, engine, now)
             logger.info(
                 f"Created new engine for connection {connection_id} "
                 f"(db_type={db_type}, cache_size={len(self._engines)}/{self._max_cache_size})"
@@ -220,6 +227,8 @@ class ExternalEngineManager:
                 "max_overflow": ORACLE_MAX_OVERFLOW,
                 "pool_pre_ping": True,
                 "pool_recycle": EXTERNAL_POOL_RECYCLE,
+                "pool_use_lifo": True,
+                "pool_timeout": 30,
             }
         elif db_type in ("spreadsheet", "databricks"):
             # Google Sheets or similar - no pooling needed
@@ -231,6 +240,8 @@ class ExternalEngineManager:
                 "max_overflow": EXTERNAL_MAX_OVERFLOW,
                 "pool_pre_ping": True,
                 "pool_recycle": EXTERNAL_POOL_RECYCLE,
+                "pool_use_lifo": True,
+                "pool_timeout": 30,
             }
 
     def _evict_oldest(self):
@@ -240,7 +251,7 @@ class ExternalEngineManager:
         Called when cache is full and a new engine needs to be added.
         """
         if self._engines:
-            conn_id, (conn_str, engine) = self._engines.popitem(last=False)
+            conn_id, (conn_str, engine, _) = self._engines.popitem(last=False)
             try:
                 engine.dispose()
                 logger.info(
@@ -248,6 +259,24 @@ class ExternalEngineManager:
                 )
             except Exception as e:
                 logger.error(f"Error disposing evicted engine for {conn_id}: {e}")
+
+    def _evict_idle_engines(self, now_ts: float):
+        """Dispose cached engines that have been idle beyond the configured TTL."""
+        stale_ids = [
+            conn_id
+            for conn_id, (_, _, last_used_ts) in self._engines.items()
+            if now_ts - last_used_ts > self._idle_ttl_seconds
+        ]
+        for conn_id in stale_ids:
+            _, engine, _ = self._engines.pop(conn_id)
+            try:
+                engine.dispose()
+                logger.info(
+                    f"Evicted idle engine for connection {conn_id} "
+                    f"(idle>{self._idle_ttl_seconds}s)"
+                )
+            except Exception as e:
+                logger.error(f"Error disposing idle engine for {conn_id}: {e}")
 
     def invalidate_engine(self, connection_id: UUID):
         """
@@ -262,7 +291,7 @@ class ExternalEngineManager:
         """
         with self._instance_lock:
             if connection_id in self._engines:
-                conn_str, engine = self._engines[connection_id]
+                conn_str, engine, _ = self._engines[connection_id]
                 try:
                     engine.dispose()
                     logger.info(f"Disposed engine for connection {connection_id}")
@@ -290,7 +319,7 @@ class ExternalEngineManager:
             engine_count = len(self._engines)
             logger.info(f"Disposing all {engine_count} cached engines")
 
-            for conn_id, (conn_str, engine) in list(self._engines.items()):
+            for conn_id, (conn_str, engine, _) in list(self._engines.items()):
                 try:
                     engine.dispose()
                     logger.debug(f"Disposed engine for connection {conn_id}")
