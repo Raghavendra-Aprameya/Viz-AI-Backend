@@ -381,7 +381,9 @@ async def create_dashboard(
 
         # Ensure dashboard title is unique
         dashboard_title = (
-            db.query(DashboardModel).filter(DashboardModel.title == data.title).first()
+            db.query(DashboardModel)
+            .filter(DashboardModel.title == data.dashboard_name)
+            .first()
         )
         if dashboard_title:
             raise HTTPException(
@@ -391,7 +393,7 @@ async def create_dashboard(
 
         # Create new dashboard
         new_dashboard = DashboardModel(
-            title=data.title,
+            title=data.dashboard_name,
             description=data.description,
             project_id=project_id,
             created_by=user_id,

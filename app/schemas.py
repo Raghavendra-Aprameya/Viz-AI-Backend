@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class DBConnectionRequest(BaseModel):
@@ -368,12 +368,17 @@ class CreateDashboardRequest(BaseModel):
     Request model for creating a dashboard.
 
     Attributes:
-        title: Title of the dashboard
+        dashboard_name: Name of the dashboard
         description: Optional description of the dashboard
     """
 
-    title: str
+    dashboard_name: str = Field(
+        ...,
+        validation_alias=AliasChoices("dashboard_name", "title"),
+    )
     description: Optional[str] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DashboardResponse(BaseModel):
