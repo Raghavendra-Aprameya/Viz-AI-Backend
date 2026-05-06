@@ -7,7 +7,7 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 from datetime import datetime
 
-from app.core.db import get_db
+from app.core.db import SessionLocal
 from app.models.schema_models import ResponseTimeModel
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,8 @@ class ResponseTimeMiddleware(BaseHTTPMiddleware):
         
         # Store the processing time in the database
         try:
-            # Get database session
-            db = next(get_db())
+            # Create a dedicated session for middleware bookkeeping
+            db = SessionLocal()
             try:
                 # Check if there's an existing record for this path
                 existing_record = db.query(ResponseTimeModel).filter(

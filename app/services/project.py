@@ -702,7 +702,12 @@ async def delete_project(
         inspector = inspect(db.get_bind())
         table_exists = "home_insights" in inspector.get_table_names()
 
-        # 3. Choose deletion strategy
+        # 3. Remove project membership rows first to avoid FK violations
+        db.query(UserProjectRoleModel).filter(
+            UserProjectRoleModel.project_id == project_id
+        ).delete(synchronize_session=False)
+
+        # 4. Choose deletion strategy
         if table_exists:
             # Table exists: safe to use ORM delete which handles Cascades
             db.delete(project)
