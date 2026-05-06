@@ -374,7 +374,6 @@ class CreateDashboardRequest(BaseModel):
 
     title: str
     description: Optional[str] = None
-    kpi_info: Optional[str] = None
 
 
 class DashboardResponse(BaseModel):
@@ -392,7 +391,6 @@ class DashboardResponse(BaseModel):
     id: UUID
     title: str
     description: Optional[str] = None
-    kpi_info: Optional[str] = None
     project_id: UUID
     created_by: UUID
 
@@ -614,14 +612,6 @@ class UpdateProjectRequest(BaseModel):
     additional_kpis: Optional[str] = Field(None, max_length=500)
 
 
-class UpdateProjectKpiInfoRequest(BaseModel):
-    """
-    Request model for updating only the project KPI info.
-    """
-
-    additional_kpis: Optional[str] = Field(None, max_length=500)
-
-
 class UpdateDashboardRequest(BaseModel):
     """
     Request model for updating a dashboard.
@@ -633,7 +623,6 @@ class UpdateDashboardRequest(BaseModel):
 
     title: Optional[str] = None
     description: Optional[str] = None
-    kpi_info: Optional[str] = None
 
 
 class UpdateRoleRequest(BaseModel):

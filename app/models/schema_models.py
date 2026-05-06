@@ -312,7 +312,6 @@ class DashboardModel(Base):
     title = Column(String, nullable=False)
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
     description = Column(Text)
-    kpi_info = Column(String, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
     user = relationship("UserModel", back_populates="dashboards")
     project = relationship("ProjectModel", back_populates="dashboards")

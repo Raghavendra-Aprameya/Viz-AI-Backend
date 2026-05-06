@@ -37,7 +37,6 @@ from app.schemas import (
     ProjectRequest,
     ReadDataRequest,
     UpdateDashboardRequest,
-    UpdateProjectKpiInfoRequest,
     UpdateProjectRequest,
     UpdateRoleRequest,
 )
@@ -394,7 +393,6 @@ async def create_dashboard(
         new_dashboard = DashboardModel(
             title=data.title,
             description=data.description,
-            kpi_info=data.kpi_info,
             project_id=project_id,
             created_by=user_id,
         )
@@ -552,7 +550,6 @@ async def list_users_all_dashboard(
                     "id": dashboard.id,
                     "title": dashboard.title,
                     "description": dashboard.description,
-                    "kpi_info": dashboard.kpi_info,
                     "project_id": dashboard.project_id,
                     "created_by": dashboard.created_by,
                     "is_favorite": user_dashboard.is_favorite,
@@ -665,8 +662,9 @@ async def update_project(
             project.description = data.description
         if data.primary_domain is not None:
             project.primary_domain = data.primary_domain
-        if data.additional_kpis is not None:
+        if getattr(data, "additional_kpis", None) is not None:
             project.additional_kpis = data.additional_kpis
+        
 
         db.commit()
         db.refresh(project)
@@ -677,51 +675,6 @@ async def update_project(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
         ) from e
 
-
-@require_permission(Permission.EDIT_PROJECT)
-async def update_project_kpi_info(
-    project_id: UUID,
-    data: UpdateProjectKpiInfoRequest,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user),
-):
-    """
-    Update the KPI information for a project.
-    """
-    try:
-        user_id = UUID(token_payload.get("sub"))
-
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
-            )
-
-        project = db.query(ProjectModel).filter(ProjectModel.id == project_id).first()
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
-            )
-
-        if data is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request body required",
-            )
-
-        project.additional_kpis = data.additional_kpis
-
-        db.commit()
-        db.refresh(project)
-
-        return {
-            "message": "Project KPI info updated successfully",
-            "project": project,
-        }
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
-        ) from e
 
 @require_permission(Permission.DELETE_PROJECT)
 async def delete_project(
@@ -817,8 +770,6 @@ async def update_dashboard(
             dashboard.title = data.title
         if data.description is not None:
             dashboard.description = data.description
-        if data.kpi_info is not None:
-            dashboard.kpi_info = data.kpi_info
 
         db.commit()
         db.refresh(dashboard)
