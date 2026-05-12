@@ -140,6 +140,50 @@ from app.schemas import QueryRequest  # Import the QueryRequest schema
 
 logger = logging.getLogger(__name__)
 
+
+def _build_ontology_constraints(ontology_payload: dict) -> dict:
+    classes = ontology_payload.get("classes", []) if isinstance(ontology_payload, dict) else []
+    relationships = ontology_payload.get("relationships", []) if isinstance(ontology_payload, dict) else []
+    metrics = ontology_payload.get("metrics", []) if isinstance(ontology_payload, dict) else []
+    rules = ontology_payload.get("rules", {}) if isinstance(ontology_payload, dict) else {}
+
+    allowed_joins = []
+    for rel in relationships:
+        src = rel.get("source")
+        tgt = rel.get("target")
+        if src and tgt:
+            allowed_joins.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "source_column": rel.get("source_column"),
+                    "target_column": rel.get("target_column"),
+                    "label": rel.get("label"),
+                }
+            )
+
+    metric_defs = []
+    for metric in metrics:
+        metric_defs.append(
+            {
+                "name": metric.get("name"),
+                "definition": metric.get("definition"),
+                "formula": metric.get("formula"),
+                "denominator": metric.get("denominator"),
+                "default_filter": metric.get("default_filter"),
+            }
+        )
+
+    return {
+        "class_count": len(classes),
+        "allowed_joins": allowed_joins,
+        "metrics": metric_defs,
+        "default_time_dimension": rules.get("default_time_dimension"),
+        "default_time_granularity": rules.get("default_time_granularity"),
+        "success_status_values": rules.get("status_success_values", []),
+        "default_filters": rules.get("default_filters", {}),
+    }
+
 # Celery app config with properly configured serializer
 celery_app = Celery(
     "tasks", broker="redis://localhost:6379/0", backend="redis://localhost:6379/0"
@@ -268,12 +312,139 @@ from app.models.schema_models import (
     UserProjectRoleModel,
     DatabaseConnectionModel,
     ChartModel,
+    OntologyVersionModel,
 )
 from app.schemas import Nl2SQLChatRequest
 from uuid import UUID
 import logging
+import os
+import re
 
 logger = logging.getLogger(__name__)
+
+def _tokenize_text(value: str) -> list[str]:
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
+    s = re.sub(r"[^A-Za-z0-9]+", " ", s).lower()
+    return [t for t in s.split() if t]
+
+
+def _table_name_from_payload(table_payload: dict) -> str:
+    return table_payload.get("table") or table_payload.get("name") or ""
+
+
+def _focus_schema_by_intent(
+    nl_query: str,
+    schema_str: str,
+    ontology_constraints: dict | None,
+    ontology_payload: dict | None,
+) -> tuple[str, dict]:
+    """
+    Recall-first schema focusing.
+    Keeps core/neighbor tables and all PK/FK-bearing kept tables.
+    Falls back to full schema if parsing fails.
+    """
+    try:
+        schema = json.loads(schema_str or "{}")
+        tables = schema.get("tables") or []
+        if not isinstance(tables, list) or not tables:
+            return schema_str, {"mode": "full", "reason": "no_tables"}
+
+        max_tables = int(os.getenv("ONTOLOGY_SCHEMA_MAX_TABLES", "25"))
+        if len(tables) <= max_tables:
+            return schema_str, {"mode": "full", "reason": "already_small", "table_count": len(tables)}
+
+        nl_tokens = set(_tokenize_text(nl_query))
+
+        alias_tokens = set()
+        metric_tokens = set()
+        class_table_map: dict[str, str] = {}
+        if isinstance(ontology_payload, dict):
+            for a in ontology_payload.get("aliases", []) or []:
+                alias = a.get("alias")
+                if alias:
+                    alias_tokens.update(_tokenize_text(alias))
+            for m in ontology_payload.get("metrics", []) or []:
+                metric_tokens.update(_tokenize_text(m.get("name", "")))
+                metric_tokens.update(_tokenize_text(m.get("definition", "")))
+            for c in ontology_payload.get("classes", []) or []:
+                cid = c.get("id")
+                tname = c.get("table") or c.get("name")
+                if cid and tname:
+                    class_table_map[cid] = tname
+
+        join_pairs: set[tuple[str, str]] = set()
+        for rel in (ontology_constraints or {}).get("allowed_joins", []) or []:
+            src = rel.get("source")
+            tgt = rel.get("target")
+            if src and tgt:
+                src_name = class_table_map.get(src, src).split(".")[-1].lower()
+                tgt_name = class_table_map.get(tgt, tgt).split(".")[-1].lower()
+                join_pairs.add((src_name, tgt_name))
+                join_pairs.add((tgt_name, src_name))
+
+        scored: list[tuple[float, dict]] = []
+        for t in tables:
+            tname = _table_name_from_payload(t)
+            tname_l = tname.lower()
+            tokens = set(_tokenize_text(tname_l))
+            for col in t.get("columns", []) or []:
+                tokens.update(_tokenize_text(col.get("name", "")))
+
+            score = 0.0
+            score += 4.0 * len(tokens & nl_tokens)
+            score += 3.0 * len(tokens & alias_tokens)
+            score += 2.0 * len(tokens & metric_tokens)
+            # Keep structurally important tables biased up.
+            if t.get("primary_keys"):
+                score += 0.5
+            if t.get("foreign_keys"):
+                score += 0.5
+
+            scored.append((score, t))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        # Keep enough core tables first.
+        core_count = max(6, min(max_tables - 4, 12))
+        kept = scored[:core_count]
+        kept_tables = {_table_name_from_payload(t).lower() for _, t in kept}
+
+        # Expand by one-hop ontology joins to protect join paths.
+        expanded = True
+        while expanded and len(kept_tables) < max_tables:
+            expanded = False
+            for a, b in list(join_pairs):
+                if a in kept_tables and b not in kept_tables:
+                    kept_tables.add(b)
+                    expanded = True
+                elif b in kept_tables and a not in kept_tables:
+                    kept_tables.add(a)
+                    expanded = True
+                if len(kept_tables) >= max_tables:
+                    break
+
+        filtered_tables = []
+        for t in tables:
+            tname = _table_name_from_payload(t).lower()
+            if tname in kept_tables:
+                filtered_tables.append(t)
+
+        if not filtered_tables:
+            return schema_str, {"mode": "full", "reason": "empty_after_filter"}
+
+        focused_schema = dict(schema)
+        focused_schema["tables"] = filtered_tables
+        return (
+            json.dumps(focused_schema),
+            {
+                "mode": "focused",
+                "original_table_count": len(tables),
+                "focused_table_count": len(filtered_tables),
+                "kept_tables": [(_table_name_from_payload(t)) for t in filtered_tables],
+            },
+        )
+    except Exception as exc:
+        logger.warning("Schema focusing failed; falling back to full schema: %s", str(exc))
+        return schema_str, {"mode": "full", "reason": "focus_error"}
 
 
 async def generate_nl_sql(
@@ -309,6 +480,27 @@ async def generate_nl_sql(
             "api_key": getattr(data, "api_key", None),
         }
 
+        # Enriched ontology context (if available) for hybrid NL->SQL grounding.
+        ontology_version = (
+            db.query(OntologyVersionModel)
+            .filter(OntologyVersionModel.datasource_connection_id == datasource_connection_id)
+            .order_by(OntologyVersionModel.version_number.desc())
+            .first()
+        )
+        if ontology_version and ontology_version.ontology_json:
+            payload["ontology_context"] = ontology_version.ontology_json
+            try:
+                ontology_payload = json.loads(ontology_version.ontology_json)
+                payload["ontology_constraints"] = _build_ontology_constraints(ontology_payload)
+                # User preference: always pass full schema (no trimming).
+                payload["db_schema"] = schema_str
+                payload["schema_focus"] = {
+                    "mode": "full",
+                    "reason": "user_disabled_schema_trimming",
+                }
+            except Exception:
+                logger.warning("Failed to parse ontology JSON for structured constraints.")
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(llm_endpoint, json=payload)
             response.raise_for_status()
@@ -332,9 +524,21 @@ async def generate_nl_sql(
         # db.add(new_chart)
         # db.commit()
 
+        ontology_explanation = {
+            "ontology_enabled": bool(ontology_version and ontology_version.ontology_json),
+            "ontology_version_id": str(ontology_version.id) if ontology_version else None,
+            "ontology_version_label": ontology_version.version_label if ontology_version else None,
+            "constraints_summary": payload.get("ontology_constraints", {}),
+            "llm_explanation": llm_result.get("explanation"),
+        }
+
         return {
             "status": "success",
+            "sql": sql_query,
             "sql_query": sql_query,
+            "explanation": llm_result.get("explanation", "Generated SQL using schema and ontology context."),
+            "ontology_explanation": ontology_explanation,
+            "schema_focus": payload.get("schema_focus", {"mode": "full"}),
             # "chart_id": str(new_chart.id)
         }
 

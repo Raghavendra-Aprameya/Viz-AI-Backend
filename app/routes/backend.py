@@ -24,6 +24,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect
 )
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -64,6 +65,9 @@ from app.schemas import (
     TrinoQueryRequest,
     TrinoQueryResponse,
     QueryExecutionRequest,
+    SubmitOntologyAnswersRequest,
+    EnrichmentChatRequest,
+    EnrichmentChatResponse,
     DashboardStatsResponse,
     PinnedChartsCountResponse,
     BusinessInsightsRequest,
@@ -75,6 +79,8 @@ from app.schemas import (
     SaveHomeInsightRequest,
     SaveHomeInsightResponse,
     GetHomeInsightsResponse,
+    OntologyVersionResponse,
+    StartOntologyEnrichmentResponse,
 )
 
 # Service imports
@@ -154,6 +160,15 @@ from app.services.generate_queries import (
 )
 
 from app.services.nl2sql import generate_nl_sql
+from app.services.ontology import (
+    bootstrap_ontology,
+    get_latest_ontology,
+    get_latest_ontology_ttl,
+    start_enrichment,
+    enrichment_chat_message,
+    submit_enrichment_answers,
+    validate_latest_ontology_ttl,
+)
 
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
 
@@ -283,6 +298,101 @@ async def get_connection_ds_graph_route(
     token_payload: dict = Depends(get_current_user),
 ):
     return await get_connection_ds_graph(connection_id, db, token_payload)
+
+
+@backend_router.post(
+    "/connections/{connection_id}/ontology/bootstrap",
+    status_code=status.HTTP_200_OK,
+    response_model=OntologyVersionResponse,
+)
+async def bootstrap_ontology_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await bootstrap_ontology(connection_id, db, token_payload)
+
+
+@backend_router.get(
+    "/connections/{connection_id}/ontology/latest",
+    status_code=status.HTTP_200_OK,
+    response_model=OntologyVersionResponse,
+)
+async def get_latest_ontology_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await get_latest_ontology(connection_id, db, token_payload)
+
+
+@backend_router.get(
+    "/connections/{connection_id}/ontology/latest.ttl",
+    status_code=status.HTTP_200_OK,
+    response_class=PlainTextResponse,
+)
+async def get_latest_ontology_ttl_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await get_latest_ontology_ttl(connection_id, db, token_payload)
+
+
+@backend_router.get(
+    "/connections/{connection_id}/ontology/latest.ttl/validate",
+    status_code=status.HTTP_200_OK,
+)
+async def validate_latest_ontology_ttl_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await validate_latest_ontology_ttl(connection_id, db, token_payload)
+
+
+@backend_router.post(
+    "/connections/{connection_id}/ontology/enrichment/start",
+    status_code=status.HTTP_200_OK,
+    response_model=StartOntologyEnrichmentResponse,
+)
+async def start_enrichment_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await start_enrichment(connection_id, db, token_payload)
+
+
+@backend_router.post(
+    "/connections/{connection_id}/ontology/enrichment/{session_id}/chat",
+    status_code=status.HTTP_200_OK,
+    response_model=EnrichmentChatResponse,
+)
+async def enrichment_chat_route(
+    connection_id: UUID,
+    session_id: UUID,
+    payload: EnrichmentChatRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await enrichment_chat_message(connection_id, session_id, payload.message, db, token_payload)
+
+
+@backend_router.post(
+    "/connections/{connection_id}/ontology/enrichment/{session_id}/apply",
+    status_code=status.HTTP_200_OK,
+    response_model=OntologyVersionResponse,
+)
+async def apply_enrichment_route(
+    connection_id: UUID,
+    session_id: UUID,
+    payload: SubmitOntologyAnswersRequest,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    normalized_answers = [{"question_id": a.question_id, "answer": a.answer} for a in payload.answers]
+    return await submit_enrichment_answers(connection_id, session_id, normalized_answers, db, token_payload)
 
 
 @backend_router.get(
@@ -1722,4 +1832,3 @@ async def delete_home_insight(
         db=db,
         token_payload=token_payload
     )
-

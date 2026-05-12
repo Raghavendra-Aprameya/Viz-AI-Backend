@@ -848,6 +848,73 @@ class Nl2SQLChatRequest(BaseModel):
     api_key: Optional[str]
 
 
+class OntologyNode(BaseModel):
+    id: str
+    label: str
+    type: str
+    meta: Optional[Dict[str, Any]] = None
+
+
+class OntologyEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    label: str
+    type: str
+    meta: Optional[Dict[str, Any]] = None
+
+
+class OntologyGraphPayload(BaseModel):
+    nodes: List[OntologyNode]
+    edges: List[OntologyEdge]
+    stats: Dict[str, int]
+
+
+class OntologyQuestion(BaseModel):
+    question_id: str
+    target_term: str
+    question: str
+    reason: str
+    answer_type: Literal["single_select", "multi_select", "text"]
+    options: List[str] = Field(default_factory=list)
+    priority: int = 100
+
+
+class StartOntologyEnrichmentResponse(BaseModel):
+    session_id: str
+    ontology_version_id: str
+    initial_message: str
+
+
+class OntologyAnswerItem(BaseModel):
+    question_id: str
+    answer: Union[str, List[str]]
+
+
+class SubmitOntologyAnswersRequest(BaseModel):
+    answers: List[OntologyAnswerItem]
+
+
+class EnrichmentChatRequest(BaseModel):
+    message: str
+
+
+class EnrichmentChatResponse(BaseModel):
+    session_id: str
+    assistant_message: str
+    extracted_updates: Dict[str, Any] = Field(default_factory=dict)
+    chat_history: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class OntologyVersionResponse(BaseModel):
+    ontology_version_id: str
+    version_label: str
+    status: str
+    is_base: bool
+    graph: OntologyGraphPayload
+    ontology: Dict[str, Any]
+
+
 class AccessStatus(str, Enum):
     """
     Enumeration of possible access request statuses.

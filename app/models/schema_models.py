@@ -30,7 +30,7 @@ Classes:
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Double
+from sqlalchemy import Boolean, Column, DateTime, Double, Integer
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -642,3 +642,53 @@ class HomeInsightModel(Base):
 
     user = relationship("UserModel", back_populates="home_insights")
     project = relationship("ProjectModel", back_populates="home_insights")
+
+
+class OntologyVersionModel(Base):
+    """
+    Stores ontology versions generated for a datasource connection.
+    """
+
+    __tablename__ = "ontology_version"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    datasource_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("database_connection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_number = Column(Integer, nullable=False, default=1)
+    version_label = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="draft")
+    is_base = Column(Boolean, nullable=False, default=False)
+    ontology_json = Column(Text, nullable=False)
+    ontology_ttl = Column(Text, nullable=True)
+    graph_json = Column(Text, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class OntologyEnrichmentSessionModel(Base):
+    """
+    Stores one enrichment Q&A session tied to an ontology version.
+    """
+
+    __tablename__ = "ontology_enrichment_session"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    datasource_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("database_connection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    base_ontology_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ontology_version.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status = Column(String, nullable=False, default="in_progress")
+    questions_json = Column(Text, nullable=False, default="[]")
+    answers_json = Column(Text, nullable=False, default="{}")
+    created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
