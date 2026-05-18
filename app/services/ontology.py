@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
@@ -834,11 +835,19 @@ async def _llm_apply_enrichment(
         "ontology": compact_ontology,
         "updates": updates,
     }
+    start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             resp = await client.post(endpoint, json=payload)
             resp.raise_for_status()
             data = resp.json()
+        elapsed = round(time.perf_counter() - start, 3)
+        logger.info(
+            "LLM enrichment apply completed | elapsed_s=%s | endpoint=%s | updates_keys=%s",
+            elapsed,
+            endpoint,
+            list((updates or {}).keys()),
+        )
         enriched_compact = data.get("ontology") if isinstance(data, dict) else None
         if isinstance(enriched_compact, dict):
             # Merge the LLM-enriched semantic sections back into the full ontology.
@@ -851,13 +860,46 @@ async def _llm_apply_enrichment(
                 out["aliases"] = enriched_compact["aliases"]
             return out
     except Exception as exc:
-        logger.warning("LLM enrichment apply failed: %s", str(exc))
+        elapsed = round(time.perf_counter() - start, 3)
+        logger.warning(
+            "LLM enrichment apply failed | elapsed_s=%s | endpoint=%s | error=%s",
+            elapsed,
+            endpoint,
+            str(exc),
+        )
         out = dict(ontology)
         meta = out.setdefault("metadata", {}) if isinstance(out, dict) else {}
         if isinstance(meta, dict):
             meta["llm_enrichment_apply_error"] = True
             meta["llm_enrichment_apply_error_at"] = datetime.now(timezone.utc).isoformat()
             meta["llm_enrichment_apply_error_reason"] = str(exc)[:300]
+        # Best-effort semantic merge so user changes are not lost on timeout/failure.
+        if isinstance(updates, dict):
+            if isinstance(updates.get("metrics"), dict):
+                metrics_out = []
+                for m_name, m_val in updates["metrics"].items():
+                    if not isinstance(m_val, dict):
+                        continue
+                    formula = str(m_val.get("formula") or "").strip()
+                    if not formula:
+                        continue
+                    metrics_out.append(
+                        {
+                            "id": f"metric:{m_name}",
+                            "name": str(m_name),
+                            "definition": str(m_val.get("description") or ""),
+                            "formula": formula,
+                            "based_on_class": (out.get("classes") or [{}])[0].get("id") if out.get("classes") else None,
+                        }
+                    )
+                if metrics_out:
+                    out["metrics"] = metrics_out
+            if isinstance(updates.get("rules"), dict):
+                rules = out.get("rules") if isinstance(out.get("rules"), dict) else {}
+                rules.update(updates["rules"])
+                out["rules"] = rules
+            if isinstance(updates.get("aliases"), list):
+                out["aliases"] = updates["aliases"]
         return out
     return ontology
 
@@ -1872,6 +1914,7 @@ async def submit_enrichment_answers(
     db: Session = Depends(get_db),
     token_payload: dict = None,
 ):
+    submit_start = time.perf_counter()
     db_connection = _get_connection_or_404(db, connection_id)
 
     session = (
@@ -1912,12 +1955,14 @@ async def submit_enrichment_answers(
         answers_map[qid] = answer
 
     base_ontology = _safe_json_loads(base_version.ontology_json, {})
+    apply_start = time.perf_counter()
     try:
         enriched_ontology = await _apply_answers_to_ontology(base_ontology, answers_map)
     except Exception as exc:
         logger.warning("apply_answers_to_ontology failed, using base ontology: %s", str(exc))
         enriched_ontology = dict(base_ontology)
         enriched_ontology.setdefault("metadata", {})["enrichment_apply_error"] = True
+    apply_elapsed = round(time.perf_counter() - apply_start, 3)
 
     # Validate metric formulas against the actual schema. Metrics referencing
     # columns that don't exist would be ignored by NL2SQL anyway (it has strict
@@ -1938,6 +1983,7 @@ async def submit_enrichment_answers(
     except Exception as exc:
         logger.warning("_ontology_to_graph failed, building empty graph: %s", str(exc))
         enriched_graph = {"nodes": [], "edges": [], "stats": {"class_count": 0, "metric_count": 0, "relation_count": 0}}
+    graph_elapsed = round(time.perf_counter() - apply_start, 3) - apply_elapsed
 
     latest = _get_latest_ontology_version(db, connection_id)
     next_version = 1 if not latest else latest.version_number + 1
@@ -1964,6 +2010,16 @@ async def submit_enrichment_answers(
     db.add(new_version)
     db.commit()
     db.refresh(new_version)
+    total_elapsed = round(time.perf_counter() - submit_start, 3)
+    logger.info(
+        "Ontology apply completed | connection_id=%s | session_id=%s | apply_s=%s | graph_s=%s | total_s=%s | updates_keys=%s",
+        str(connection_id),
+        str(session_id),
+        apply_elapsed,
+        round(max(graph_elapsed, 0.0), 3),
+        total_elapsed,
+        list(answers_map.keys()),
+    )
 
     return {
         "ontology_version_id": str(new_version.id),
