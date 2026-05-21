@@ -9,6 +9,8 @@ Routes:
     DELETE /api/v1/backend/dashboards/{id}/share-token   → revoke (set is_active = false)
     GET    /api/v1/embed/{token_id}                      → render standalone embed HTML
     GET    /api/v1/embed/{token_id}/data/{chart_id}      → serve chart data (token-gated)
+    GET    /api/v1/embed/{token_id}/dashboard             → current dashboard metadata
+    POST   /api/v1/embed/token/refresh                   → refresh access token
 """
 
 import logging
@@ -17,6 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -33,6 +36,9 @@ from app.services.embed import (
     validate_embed_token,
     get_embed_dashboard_data,
     get_embed_chart_data,
+    issue_access_token,
+    validate_access_token,
+    refresh_access_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,7 +136,7 @@ async def revoke_share_token_route(
 # ============================================================================
 
 
-def _get_embed_html(dashboard_title: str, dashboard_data: dict, token_id: str, api_base: str) -> str:
+def _get_embed_html(dashboard_title: str, dashboard_data: dict, token_id: str, api_base: str, token_bundle: dict) -> str:
     """Generate the standalone embed HTML shell (ECharts bundle loaded from static assets)."""
     import json
 
@@ -142,6 +148,9 @@ def _get_embed_html(dashboard_title: str, dashboard_data: dict, token_id: str, a
         "dashboardTitle": dashboard_title,
         "charts": charts,
         "assetsBase": assets_base,
+        "accessToken": token_bundle["access_token"],
+        "refreshToken": token_bundle["refresh_token"],
+        "expiresIn": token_bundle["expires_in"],
     }
     config_json = json.dumps(embed_config)
 
@@ -187,12 +196,16 @@ async def render_embed_page(
     # Get dashboard data (STEP 8)
     dashboard_data = await get_embed_dashboard_data(token, db)
 
+    # Issue access + refresh token pair for this session
+    token_bundle = issue_access_token(token.token_id, db)
+
     api_base = str(request.base_url).rstrip("/")
     html = _get_embed_html(
         dashboard_title=dashboard_data["dashboard_title"],
         dashboard_data=dashboard_data,
         token_id=str(token_id),
         api_base=api_base,
+        token_bundle=token_bundle,
     )
 
     duration_ms = int((time.time() - start_time) * 1000)
@@ -218,20 +231,104 @@ async def get_embed_chart_data_route(
 ):
     """
     Serve chart data for an embedded dashboard chart.
-    Token validated on each data request (same as STEP 10-12).
+    Validates access_token from Authorization header.
+    Falls back to share-token validation for backward compatibility.
 
     [STEP 14] Charts fetch data via API.
     """
-    # Extract Origin header for domain-lock check
     origin = request.headers.get("origin") or request.headers.get("Origin")
 
-    # Validate token
-    token = await validate_embed_token(token_id, db, origin=origin)
+    # Extract Bearer token from Authorization header
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    bearer_token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        bearer_token = auth_header[7:]
+
+    # Try access_token validation first; fall back to share_token for backward compat
+    if bearer_token and bearer_token != str(token_id):
+        access_row = validate_access_token(bearer_token, db)
+        # Load the parent share token for the chart query
+        from app.models.schema_models import ShareTokenModel
+        token = db.query(ShareTokenModel).filter(
+            ShareTokenModel.token_id == access_row.share_token_id
+        ).first()
+    else:
+        # Backward compatibility: old frontends pass tokenId as bearer
+        token = await validate_embed_token(token_id, db, origin=origin)
 
     # Get chart data (STEP 10)
     data = await get_embed_chart_data(token, chart_id, db)
 
     response = JSONResponse(content=data)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Cache-Control"] = "no-store"
+
+    return response
+
+
+@embed_router.get("/{token_id}/dashboard")
+async def get_embed_dashboard_metadata_route(
+    request: Request,
+    token_id: UUID = Path(..., description="Share token ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return current dashboard metadata (title + chart list).
+    Used by the frontend refresh cycle to discover newly added/removed charts.
+    """
+    origin = request.headers.get("origin") or request.headers.get("Origin")
+
+    # Extract Bearer token from Authorization header
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    bearer_token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        bearer_token = auth_header[7:]
+
+    if bearer_token and bearer_token != str(token_id):
+        access_row = validate_access_token(bearer_token, db)
+        from app.models.schema_models import ShareTokenModel
+        token = db.query(ShareTokenModel).filter(
+            ShareTokenModel.token_id == access_row.share_token_id
+        ).first()
+    else:
+        token = await validate_embed_token(token_id, db, origin=origin)
+
+    data = await get_embed_dashboard_data(token, db)
+
+    response = JSONResponse(content=data)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Cache-Control"] = "no-store"
+
+    return response
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+    share_token: str
+
+
+@embed_router.post("/token/refresh")
+async def refresh_token_route(
+    request: Request,
+    body: RefreshTokenRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Exchange a valid refresh token for a new access + refresh token pair.
+    POST /api/v1/embed/token/refresh
+    """
+    origin = request.headers.get("origin") or request.headers.get("Origin")
+
+    share_token_id = UUID(body.share_token)
+
+    result = await refresh_access_token(
+        raw_refresh=body.refresh_token,
+        share_token_id=share_token_id,
+        db=db,
+        origin=origin,
+    )
+
+    response = JSONResponse(content=result)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Cache-Control"] = "no-store"
 
