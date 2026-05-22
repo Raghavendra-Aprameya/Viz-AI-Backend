@@ -2,14 +2,13 @@
 Embed Service
 
 Handles creation, validation, and revocation of share tokens for
-dashboard embedding. Implements HMAC-SHA256 signing, token persistence,
-access/refresh token lifecycle, and embed data retrieval.
+dashboard embedding. Implements HMAC-SHA256 signing, share-token persistence,
+stateless embed JWT sessions, and embed data retrieval.
 """
 
 import hashlib
 import hmac
 import logging
-import secrets
 import time
 from datetime import date as _date_type, datetime, timedelta, timezone
 from decimal import Decimal
@@ -26,18 +25,17 @@ from app.models.schema_models import (
     DashboardChartsModel,
     ChartModel,
     DatabaseConnectionModel,
-    EmbedAccessTokenModel,
     ShareTokenModel,
     UserProjectRoleModel,
 )
 from app.services.allowed_domains import get_allowed_domains_list
 from app.services.app_service import normalize_domain
+from app.utils.embed_jwt import (
+    decode_embed_jwt_for_refresh,
+    issue_embed_jwt,
+)
 
 logger = logging.getLogger(__name__)
-
-# Access / refresh token lifetimes
-ACCESS_TOKEN_TTL_MINUTES = 15
-REFRESH_TOKEN_TTL_DAYS = 7
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -143,139 +141,31 @@ def check_origin(origin: str | None, allowed_domains: list[str]) -> tuple[bool, 
     return False, "rejected"
 
 
-# ------------------------------------------------------------------ #
-# ACCESS / REFRESH TOKEN helpers
-# ------------------------------------------------------------------ #
-
-def _hash_token(raw: str) -> str:
-    """SHA-256 hash a raw token string for storage."""
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def issue_access_token(share_token_id: UUID, db: Session) -> dict:
-    """
-    Create a new access_token + refresh_token pair for a share token.
-    Returns the **raw** tokens (only time they are available in plaintext).
-    """
-    raw_access = secrets.token_urlsafe(48)
-    raw_refresh = secrets.token_urlsafe(48)
-    now = datetime.now(timezone.utc)
-
-    row = EmbedAccessTokenModel(
-        id=uuid4(),
-        share_token_id=share_token_id,
-        access_token_hash=_hash_token(raw_access),
-        refresh_token_hash=_hash_token(raw_refresh),
-        is_active=True,
-        access_expires_at=now + timedelta(minutes=ACCESS_TOKEN_TTL_MINUTES),
-        refresh_expires_at=now + timedelta(days=REFRESH_TOKEN_TTL_DAYS),
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-
-    logger.info(
-        f"[EMBED] Access token issued for share_token {str(share_token_id)[:8]}... "
-        f"expires in {ACCESS_TOKEN_TTL_MINUTES}min"
-    )
-    return {
-        "access_token": raw_access,
-        "refresh_token": raw_refresh,
-        "expires_in": ACCESS_TOKEN_TTL_MINUTES * 60,
-    }
-
-
-def validate_access_token(raw_access: str, db: Session) -> EmbedAccessTokenModel:
-    """
-    Validate a raw access token. Returns the DB row if valid.
-    Raises 403 with a distinguishable error code on expiry vs invalid.
-    """
-    h = _hash_token(raw_access)
-    row = db.query(EmbedAccessTokenModel).filter(
-        EmbedAccessTokenModel.access_token_hash == h,
-    ).first()
-
-    if not row or not row.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "access_token_invalid", "message": "Invalid access token."},
-        )
-
-    # Check parent share token is still active
-    share = db.query(ShareTokenModel).filter(
-        ShareTokenModel.token_id == row.share_token_id
-    ).first()
-    if not share or not share.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "embed_invalid", "message": "This embed link has been revoked."},
-        )
-
-    if row.access_expires_at < datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "access_token_expired", "message": "Access token expired."},
-        )
-
-    return row
-
-
-async def refresh_access_token(
-    raw_refresh: str,
+async def refresh_embed_jwt(
+    raw_jwt: str,
     share_token_id: UUID,
     db: Session,
     origin: str | None = None,
 ) -> dict:
     """
-    Exchange a valid refresh token for a new access/refresh pair.
-    The old pair is deactivated.
+    Refresh embed session: verify current JWT (signature + grace), recheck share
+    token in DB, issue a new 30-minute JWT.
     """
-    h = _hash_token(raw_refresh)
-    row = db.query(EmbedAccessTokenModel).filter(
-        and_(
-            EmbedAccessTokenModel.refresh_token_hash == h,
-            EmbedAccessTokenModel.share_token_id == share_token_id,
-            EmbedAccessTokenModel.is_active == True,
-        )
-    ).first()
-
-    if not row:
+    claims = decode_embed_jwt_for_refresh(raw_jwt)
+    if claims.share_token_id != share_token_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "refresh_token_invalid", "message": "Invalid refresh token."},
+            detail={
+                "error": "jwt_invalid",
+                "message": "Share token does not match session.",
+            },
         )
 
-    if row.refresh_expires_at < datetime.now(timezone.utc):
-        row.is_active = False
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "refresh_token_expired", "message": "Refresh token expired. Please reload the page."},
-        )
-
-    # Validate parent share token (active + HMAC + domain)
     share = await validate_embed_token(share_token_id, db, origin=origin)
-
-    # Deactivate old pair
-    row.is_active = False
-    db.commit()
-
-    # Issue new pair
-    return issue_access_token(share.token_id, db)
-
-
-def revoke_access_tokens_for_share(share_token_id: UUID, db: Session) -> int:
-    """Deactivate all active access tokens for a share token."""
-    rows = db.query(EmbedAccessTokenModel).filter(
-        and_(
-            EmbedAccessTokenModel.share_token_id == share_token_id,
-            EmbedAccessTokenModel.is_active == True,
-        )
-    ).all()
-    for r in rows:
-        r.is_active = False
-    db.commit()
-    return len(rows)
+    logger.info(
+        f"[EMBED] Embed JWT refreshed for share_token {str(share_token_id)[:8]}..."
+    )
+    return issue_embed_jwt(share)
 
 
 async def create_share_token(
@@ -484,11 +374,8 @@ async def revoke_share_token(
             detail="No active share token found for this dashboard",
         )
 
-    revoked_access_count = 0
     for token in active_tokens:
         token.is_active = False
-        # Cascade: also revoke all child access/refresh tokens
-        revoked_access_count += revoke_access_tokens_for_share(token.token_id, db)
 
     db.commit()
 
@@ -669,24 +556,15 @@ async def validate_embed_token(
     return token
 
 
-async def get_embed_dashboard_data(
-    token: ShareTokenModel,
+async def get_embed_dashboard_data_by_dashboard_id(
+    dashboard_id: UUID,
     db: Session,
 ) -> dict:
-    """
-    Get all dashboard and chart data for rendering in the embed page.
-
-    Args:
-        token: Validated ShareTokenModel
-        db: SQLAlchemy session
-
-    Returns:
-        dict with dashboard title and charts info
-    """
+    """Dashboard metadata for embed (title + charts) by dashboard id."""
     start_time = time.time()
 
     dashboard = db.query(DashboardModel).filter(
-        DashboardModel.id == token.dashboard_id
+        DashboardModel.id == dashboard_id
     ).first()
 
     if not dashboard:
@@ -720,7 +598,7 @@ async def get_embed_dashboard_data(
     duration_ms = int((time.time() - start_time) * 1000)
     logger.info(
         f"[EMBED][STEP 8] Embed HTML rendered for dashboard "
-        f"{str(token.dashboard_id)[:8]}... — {len(charts)} charts — duration: {duration_ms}ms"
+        f"{str(dashboard_id)[:8]}... — {len(charts)} charts — duration: {duration_ms}ms"
     )
 
     return {
@@ -730,29 +608,28 @@ async def get_embed_dashboard_data(
     }
 
 
-async def get_embed_chart_data(
+async def get_embed_dashboard_data(
     token: ShareTokenModel,
+    db: Session,
+) -> dict:
+    """Dashboard metadata using a validated share token."""
+    return await get_embed_dashboard_data_by_dashboard_id(token.dashboard_id, db)
+
+
+async def get_embed_chart_data_by_dashboard(
+    dashboard_id: UUID,
     chart_id: UUID,
     db: Session,
 ) -> dict:
     """
-    Get data for a specific chart in an embedded dashboard.
-    Executes the chart's query against the external database.
-
-    Args:
-        token: Validated ShareTokenModel
-        chart_id: UUID of the chart
-        db: SQLAlchemy session
-
-    Returns:
-        dict with chart data
+    Get chart data for an embedded dashboard using dashboard_id from JWT claims.
+    Verifies chart membership via DashboardChartsModel, then runs the chart query.
     """
     start_time = time.time()
 
-    # Verify this chart belongs to the token's dashboard
     dc = db.query(DashboardChartsModel).filter(
         and_(
-            DashboardChartsModel.dashboard_id == token.dashboard_id,
+            DashboardChartsModel.dashboard_id == dashboard_id,
             DashboardChartsModel.chart_id == chart_id,
         )
     ).first()
@@ -760,7 +637,10 @@ async def get_embed_chart_data(
     if not dc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Chart not found in this dashboard",
+            detail={
+                "error": "chart_not_in_dashboard",
+                "message": "Chart not found in this dashboard",
+            },
         )
 
     chart = db.query(ChartModel).filter(ChartModel.id == chart_id).first()
@@ -833,3 +713,14 @@ async def get_embed_chart_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch chart data",
         )
+
+
+async def get_embed_chart_data(
+    token: ShareTokenModel,
+    chart_id: UUID,
+    db: Session,
+) -> dict:
+    """Legacy entry point — delegates to dashboard-scoped fetch."""
+    return await get_embed_chart_data_by_dashboard(
+        token.dashboard_id, chart_id, db
+    )

@@ -679,49 +679,6 @@ class ShareTokenModel(Base):
 
     dashboard = relationship("DashboardModel", backref="share_tokens")
     creator = relationship("UserModel")
-    access_tokens = relationship(
-        "EmbedAccessTokenModel",
-        back_populates="share_token",
-        cascade="all, delete-orphan",
-    )
-
-
-class EmbedAccessTokenModel(Base):
-    """
-    Short-lived access tokens and refresh tokens issued from a ShareToken.
-
-    The embedded iframe uses the access_token for data requests and
-    silently refreshes via the refresh_token when it expires.
-    Only SHA-256 hashes of the tokens are stored; raw values are
-    returned to the client exactly once at issuance.
-    """
-
-    __tablename__ = "embed_access_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    share_token_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("share_tokens.token_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    access_token_hash = Column(Text, nullable=False)
-    refresh_token_hash = Column(Text, nullable=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    access_expires_at = Column(DateTime(timezone=True), nullable=False)
-    refresh_expires_at = Column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index("idx_embed_access_token_hash", "access_token_hash"),
-        Index("idx_embed_refresh_token_hash", "refresh_token_hash"),
-        Index("idx_embed_access_share_token", "share_token_id", "is_active"),
-    )
-
-    share_token = relationship(
-        "ShareTokenModel", back_populates="access_tokens"
-    )
 
 
 # Migration pending — run manually:

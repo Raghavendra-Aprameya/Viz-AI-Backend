@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     OPENAPI_API_KEY: Optional[str] = None
     REDIS_URL: Optional[str] = None
     EMBED_SERVER_SECRET: Optional[str] = None  # Used for HMAC-signing embed tokens; falls back to SECRET_KEY
+    EMBED_JWT_EXPIRE_MINUTES: int = 30  # Stateless embed session JWT lifetime
 
     class Config:
         """
