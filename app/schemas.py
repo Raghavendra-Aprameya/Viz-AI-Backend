@@ -1625,3 +1625,221 @@ class SaveHomeInsightResponse(BaseModel):
     
     message: str
     insight: HomeInsightResponse
+
+
+# ============================================================================
+# SHARE TOKEN / EMBED SCHEMAS
+# ============================================================================
+
+class CreateShareTokenRequest(BaseModel):
+    """
+    Request model for creating a share token for dashboard embedding.
+
+    Attributes:
+        expires_in_days: Optional expiry duration in days (None = no expiry)
+    """
+
+    expires_in_days: Optional[int] = None  # None = no expiry, 7, 30, 90
+
+
+class ShareTokenDetail(BaseModel):
+    """
+    Detail model for a share token.
+
+    Attributes:
+        token_id: UUID of the share token
+        dashboard_id: UUID of the dashboard
+        embed_url: Full embed URL for the dashboard
+        iframe_snippet: Ready-to-paste HTML iframe snippet
+        is_active: Whether the token is currently active
+        created_at: Creation timestamp
+        expires_at: Optional expiry timestamp
+        access_count: Number of times the embed has been accessed
+    """
+
+    token_id: UUID
+    dashboard_id: UUID
+    embed_url: str
+    iframe_snippet: str
+    is_active: bool
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    access_count: int = 0
+
+
+class CreateShareTokenResponse(BaseModel):
+    """
+    Response model for creating a share token.
+
+    Attributes:
+        message: Status message
+        token: Share token details
+    """
+
+    message: str
+    token: ShareTokenDetail
+
+
+class RevokeShareTokenResponse(BaseModel):
+    """
+    Response model for revoking a share token.
+
+    Attributes:
+        message: Status message
+        dashboard_id: UUID of the dashboard whose token was revoked
+    """
+
+    message: str
+    dashboard_id: UUID
+
+
+# ============================================================================
+# APP REGISTRATION SCHEMAS
+# ============================================================================
+
+class CreateAppRequest(BaseModel):
+    """
+    Request model for creating an app registration.
+
+    Attributes:
+        company_name: Name of the company
+        domain_url: Domain URL (bare hostname, e.g. 'fedex.com')
+    """
+
+    company_name: str
+    domain_url: str
+
+
+class AppResponse(BaseModel):
+    """
+    Response model for an app.
+
+    Attributes:
+        app_id: UUID of the app
+        company_name: Company name
+        domain_url: Normalized bare hostname
+        is_active: Whether the app is active
+        created_at: Creation timestamp
+    """
+
+    app_id: UUID
+    company_name: str
+    domain_url: str
+    is_active: bool
+    created_at: datetime
+
+
+class CreateAppResponse(BaseModel):
+    """
+    Response model for creating an app.
+
+    Attributes:
+        message: Status message
+        app: Created app details
+    """
+
+    message: str
+    app: AppResponse
+
+
+class ListAppsResponse(BaseModel):
+    """
+    Response model for listing apps.
+
+    Attributes:
+        message: Status message
+        apps: List of app details
+    """
+
+    message: str
+    apps: List[AppResponse]
+
+
+class DeleteAppResponse(BaseModel):
+    """
+    Response model for soft-deleting an app.
+
+    Attributes:
+        message: Status message
+        app_id: UUID of the deleted app
+    """
+
+    message: str
+    app_id: UUID
+
+
+# ============================================================================
+# DASHBOARD ALLOWED DOMAINS SCHEMAS
+# ============================================================================
+
+class SetAllowedDomainsRequest(BaseModel):
+    """
+    Request model for attaching allowed app domains to a dashboard.
+
+    Attributes:
+        app_ids: List of app UUIDs to attach
+    """
+
+    app_ids: List[UUID]
+
+
+class AllowedDomainDetail(BaseModel):
+    """
+    Detail model for an allowed domain on a dashboard.
+
+    Attributes:
+        app_id: UUID of the app
+        company_name: Company name
+        domain_url: Bare hostname
+        added_at: When the domain was added
+    """
+
+    app_id: UUID
+    company_name: str
+    domain_url: str
+    added_at: datetime
+
+
+class ListAllowedDomainsResponse(BaseModel):
+    """
+    Response model for listing allowed domains on a dashboard.
+
+    Attributes:
+        message: Status message
+        dashboard_id: UUID of the dashboard
+        allowed_domains: List of allowed domain details
+    """
+
+    message: str
+    dashboard_id: UUID
+    allowed_domains: List[AllowedDomainDetail]
+
+
+class SetAllowedDomainsResponse(BaseModel):
+    """
+    Response model for setting allowed domains on a dashboard.
+
+    Attributes:
+        message: Status message
+        dashboard_id: UUID of the dashboard
+        allowed_domains: List of attached domain details
+    """
+
+    message: str
+    dashboard_id: UUID
+    allowed_domains: List[AllowedDomainDetail]
+
+
+class RemoveAllowedDomainResponse(BaseModel):
+    """
+    Response model for removing an allowed domain from a dashboard.
+
+    Attributes:
+        message: Status message
+        dashboard_id: UUID of the dashboard
+        app_id: UUID of the removed app
+    """
+
+    message: str
+    dashboard_id: UUID
+    app_id: UUID

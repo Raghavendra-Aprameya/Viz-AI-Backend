@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAPI_API_KEY: Optional[str] = None
     REDIS_URL: Optional[str] = None
+    EMBED_SERVER_SECRET: Optional[str] = None  # Used for HMAC-signing embed tokens; falls back to SECRET_KEY
 
     class Config:
         """

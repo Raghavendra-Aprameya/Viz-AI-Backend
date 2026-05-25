@@ -30,10 +30,10 @@ Classes:
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Double, Integer
+from sqlalchemy import Boolean, Column, DateTime, Double, Index, Integer, Integer
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import relationship
 
 from app.core.base import Base
@@ -642,6 +642,104 @@ class HomeInsightModel(Base):
 
     user = relationship("UserModel", back_populates="home_insights")
     project = relationship("ProjectModel", back_populates="home_insights")
+
+
+class ShareTokenModel(Base):
+    """
+    Stores share tokens for embedding dashboards in external sites.
+    Each token grants unauthenticated, read-only access to a specific dashboard
+    when accessed via the embed route.
+    """
+
+    __tablename__ = "share_tokens"
+
+    token_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    dashboard_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("dashboard.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("user.id"), nullable=False
+    )
+    hmac_signature = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_accessed = Column(DateTime(timezone=True), nullable=True)
+    access_count = Column(Integer, nullable=False, default=0)
+    allowed_domains_snapshot = Column(ARRAY(Text), nullable=True)
+
+    __table_args__ = (
+        Index("idx_share_tokens_dashboard", "dashboard_id"),
+        Index("idx_share_tokens_active", "is_active", "expires_at"),
+    )
+
+    dashboard = relationship("DashboardModel", backref="share_tokens")
+    creator = relationship("UserModel")
+
+
+# Migration pending — run manually:
+#   alembic revision --autogenerate -m "add_apps"
+#   alembic upgrade head
+class AppModel(Base):
+    """
+    Represents a registered external application (e.g. a customer's website)
+    that can embed dashboards via domain-locked iframe links.
+    """
+
+    __tablename__ = "apps"
+
+    app_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("user.id"), nullable=False
+    )
+    company_name = Column(Text, nullable=False)
+    domain_url = Column(Text, nullable=False)  # bare hostname, e.g. "fedex.com"
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_apps_created_by", "created_by"),
+        Index("idx_apps_active", "is_active"),
+    )
+
+    creator = relationship("UserModel")
+
+
+# Migration pending — run manually:
+#   alembic revision --autogenerate -m "add_dashboard_allowed_domains"
+#   alembic upgrade head
+class DashboardAllowedDomainModel(Base):
+    """
+    Join table linking dashboards to allowed app domains.
+    A dashboard can have multiple allowed domains, and each domain
+    is an app registered by the user.
+    """
+
+    __tablename__ = "dashboard_allowed_domains"
+
+    dashboard_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("dashboard.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("apps.app_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    added_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    dashboard = relationship("DashboardModel")
+    app = relationship("AppModel")
+
 
 
 class OntologyVersionModel(Base):

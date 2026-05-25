@@ -3,5 +3,7 @@ from app.models.schema_models import (
     DashboardChartsModel, DashboardModel, ChartModel, 
     PermissionModel, ProjectModel, ApiKeyModel, UserModel,
     UserProjectRoleModel,  RoleModel,
-    UserDashboardModel, UserChartModel
+    UserDashboardModel, UserChartModel,
+    ShareTokenModel,
+    AppModel, DashboardAllowedDomainModel
 )

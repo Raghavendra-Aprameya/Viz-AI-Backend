@@ -3,8 +3,9 @@ import logging
 import os
 import sys
 
-from fastapi import FastAPI, Request,WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.middleware.response_time import ResponseTimeMiddleware
 from app.middleware.request_logging import RequestResponseLoggingMiddleware
@@ -13,6 +14,9 @@ from app.middleware.request_logging import RequestResponseLoggingMiddleware
 from app.routes.auth import auth_router
 from app.routes.backend import backend_router
 from app.routes.llm import llm_router
+from app.routes.embed import share_token_router, embed_router
+from app.routes.apps import apps_router
+from app.routes.allowed_domains import allowed_domains_router
 from app.utils.constants import (
     ALLOWED_ORIGINS,
     ALLOWED_CREDENTIALS,
@@ -78,6 +82,19 @@ app.add_middleware(
 app.include_router(auth_router)  # Include auth-related endpoints
 app.include_router(backend_router)
 app.include_router(llm_router)  # Include backend-related endpoints
+app.include_router(share_token_router)  # Include share token management endpoints
+app.include_router(embed_router)  # Include public embed endpoints
+app.include_router(apps_router)  # Include app registration endpoints
+app.include_router(allowed_domains_router)  # Include allowed domains endpoints
+
+# Embedded dashboard ECharts bundle (built via VIZ-AI-FRONTEND `npm run build:embed`)
+_embed_static_dir = os.path.join(os.path.dirname(__file__), "static", "embed")
+if os.path.isdir(_embed_static_dir):
+    app.mount(
+        "/api/v1/embed/assets",
+        StaticFiles(directory=_embed_static_dir),
+        name="embed_assets",
+    )
 
 app.add_middleware(RequestResponseLoggingMiddleware)
 # app.add_middleware(ResponseTimeMiddleware)
