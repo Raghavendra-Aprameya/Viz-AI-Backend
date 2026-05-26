@@ -26,17 +26,42 @@ def upgrade() -> None:
     op.create_foreign_key(None, 'api_key', 'project', ['project_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key(None, 'api_key', 'user', ['user_id'], ['id'], ondelete='CASCADE')
 
-    # Add columns with default values to avoid NOT NULL constraint violations
-    op.add_column('role', sa.Column('is_global', sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.add_column('user', sa.Column('is_super', sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.add_column('user_dashboard', sa.Column('is_owner', sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.add_column('user_project_role', sa.Column('is_owner', sa.Boolean(), nullable=False, server_default=sa.false()))
+    # Add columns with default values to avoid NOT NULL constraint violations.
+    # This migration can run on DBs where some columns already exist.
+    inspector = sa.inspect(op.get_bind())
 
-    # Then remove server defaults
-    op.alter_column('role', 'is_global', server_default=None)
-    op.alter_column('user', 'is_super', server_default=None)
-    op.alter_column('user_dashboard', 'is_owner', server_default=None)
-    op.alter_column('user_project_role', 'is_owner', server_default=None)
+    role_cols = {col["name"] for col in inspector.get_columns("role")}
+    user_cols = {col["name"] for col in inspector.get_columns("user")}
+    user_dashboard_cols = {col["name"] for col in inspector.get_columns("user_dashboard")}
+    user_project_role_cols = {col["name"] for col in inspector.get_columns("user_project_role")}
+
+    added_role_is_global = False
+    added_user_is_super = False
+    added_user_dashboard_is_owner = False
+    added_user_project_role_is_owner = False
+
+    if "is_global" not in role_cols:
+        op.add_column('role', sa.Column('is_global', sa.Boolean(), nullable=False, server_default=sa.false()))
+        added_role_is_global = True
+    if "is_super" not in user_cols:
+        op.add_column('user', sa.Column('is_super', sa.Boolean(), nullable=False, server_default=sa.false()))
+        added_user_is_super = True
+    if "is_owner" not in user_dashboard_cols:
+        op.add_column('user_dashboard', sa.Column('is_owner', sa.Boolean(), nullable=False, server_default=sa.false()))
+        added_user_dashboard_is_owner = True
+    if "is_owner" not in user_project_role_cols:
+        op.add_column('user_project_role', sa.Column('is_owner', sa.Boolean(), nullable=False, server_default=sa.false()))
+        added_user_project_role_is_owner = True
+
+    # Remove server defaults only for newly added columns
+    if added_role_is_global:
+        op.alter_column('role', 'is_global', server_default=None)
+    if added_user_is_super:
+        op.alter_column('user', 'is_super', server_default=None)
+    if added_user_dashboard_is_owner:
+        op.alter_column('user_dashboard', 'is_owner', server_default=None)
+    if added_user_project_role_is_owner:
+        op.alter_column('user_project_role', 'is_owner', server_default=None)
 
     op.drop_constraint('user_chart_user_id_fkey', 'user_chart', type_='foreignkey')
     op.drop_constraint('user_chart_chart_id_fkey', 'user_chart', type_='foreignkey')

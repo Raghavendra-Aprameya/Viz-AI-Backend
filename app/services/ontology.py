@@ -1,0 +1,2032 @@
+import json
+import logging
+import os
+import re
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Set, Tuple
+from uuid import UUID, uuid4
+
+import httpx
+from fastapi import Depends, HTTPException, status
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy.orm import Session
+
+from app.configs.config import llm
+from app.core.db import get_db
+from app.models.schema_models import (
+    DatabaseConnectionModel,
+    OntologyEnrichmentSessionModel,
+    OntologyVersionModel,
+)
+from app.utils.constants import Permissions as Permission
+from app.utils.access import require_permission
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_json_loads(value: Optional[str], fallback: Any) -> Any:
+    if not value:
+        return fallback
+    try:
+        return json.loads(value)
+    except Exception:
+        return fallback
+
+
+def _normalize_free_text(value: str) -> str:
+    """
+    Lightweight normalization for enrichment text answers.
+    Handles common typos and sentence casing without hard failing.
+    """
+    if not value:
+        return value
+
+    text = " ".join(str(value).strip().split())
+    if not text:
+        return text
+
+    typo_map = {
+        "reenue": "revenue",
+        "revnue": "revenue",
+        "averge": "average",
+        "avrage": "average",
+        "defne": "define",
+        "sumof": "sum of",
+        "peryear": "per year",
+    }
+
+    tokens = text.split(" ")
+    normalized_tokens = []
+    for token in tokens:
+        raw = token
+        low = raw.lower()
+        # preserve trailing punctuation
+        punct = ""
+        if low and low[-1] in {".", ",", ";", ":"}:
+            punct = low[-1]
+            low = low[:-1]
+        rep = typo_map.get(low, low)
+        normalized_tokens.append(rep + punct)
+
+    text = " ".join(normalized_tokens)
+    text = text[0].upper() + text[1:] if text else text
+    if text and text[-1] not in {".", "!", "?"}:
+        text += "."
+    return text
+
+
+import re
+
+
+async def _llm_normalize_free_text(value: str, purpose: str) -> str:
+    """
+    Optional LLM-based text normalization for user enrichment answers.
+    Falls back to heuristic normalization if endpoint is unavailable.
+    """
+    fallback = _normalize_free_text(value)
+    endpoint = os.getenv("ONTOLOGY_TEXT_NORMALIZER_URL", "http://127.0.0.1:8001/api/ontology/normalize-text")
+    timeout_seconds = float(os.getenv("ONTOLOGY_TEXT_NORMALIZER_TIMEOUT", "10"))
+    payload = {
+        "text": value,
+        "purpose": purpose,
+        "instructions": "Correct spelling and grammar only. Keep original meaning.",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(endpoint, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        normalized = data.get("text") if isinstance(data, dict) else None
+        if isinstance(normalized, str) and normalized.strip():
+            return _normalize_free_text(normalized.strip())
+    except Exception:
+        pass
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# Typed Pydantic models for direct LangChain structured-output enrichment chat
+# ---------------------------------------------------------------------------
+
+class _MetricItem(BaseModel):
+    """One metric row — use a list (not a dict keyed by name) so the LLM cannot emit {\"formula\": \"...\"} at the wrong level."""
+
+    name: str = Field(
+        description=(
+            "Business name of the metric, e.g. 'Revenue per Customer' or 'Average Order Value'. "
+            "Required on every metric row."
+        )
+    )
+    description: str = Field(
+        default="",
+        description="Plain English description of what the metric measures.",
+    )
+    formula: str = Field(
+        default="",
+        description=(
+            "SQL expression using ONLY real column names from schema_columns. "
+            "Examples: SUM(price_after_discount)/COUNT(DISTINCT order_id), AVG(payment_value). "
+            "NEVER use human-readable labels as the formula. "
+            "Leave empty when status is 'pending' (awaiting user clarification)."
+        ),
+    )
+    status: str = Field(
+        default="active",
+        description="'pending' when awaiting clarification; 'active' when formula is set.",
+    )
+
+
+class _EnrichmentChatOutput(BaseModel):
+    assistant_message: str = Field(
+        description=(
+            "Short, friendly reply in plain English. "
+            "When clarifying: list column options as a numbered list using readable labels. "
+            "When confirming: acknowledge what was captured — no SQL or column names shown. "
+            "When greeting: welcome and invite the user to share metrics."
+        )
+    )
+    needs_clarification: bool = Field(
+        default=False,
+        description=(
+            "True ONLY when the user's metric description is ambiguous and "
+            "multiple columns/tables could match. Ask which one they mean."
+        ),
+    )
+    metrics: List[_MetricItem] = Field(
+        default_factory=list,
+        description=(
+            "Array of metrics. Each object MUST include: name, description, formula, status. "
+            "Example: [{\"name\": \"Revenue per Customer\", \"description\": \"...\", "
+            "\"formula\": \"SUM(price)/COUNT(DISTINCT customer_id)\", \"status\": \"active\"}]. "
+            "When needs_clarification=true, set formula to \"\" and status to \"pending\". "
+            "Do NOT put formula at the top level of metrics — only inside each array element."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_metrics_shape(cls, data: Any) -> Any:
+        """LLMs often return metrics as {\"formula\": \"SQL\"} or {MetricName: {...}} instead of a list."""
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("metrics")
+        if raw is None:
+            return data
+        if isinstance(raw, list):
+            return data
+        if not isinstance(raw, dict):
+            return data
+
+        # Wrong shape: keys are field names (formula, description, status) not metric names
+        if ("formula" in raw or "description" in raw or "status" in raw) and not any(
+            isinstance(v, dict) for v in raw.values()
+        ):
+            name = raw.get("name") or raw.get("metric_name") or "Metric"
+            return {
+                **data,
+                "metrics": [
+                    {
+                        "name": str(name),
+                        "description": str(raw.get("description", "")),
+                        "formula": str(raw.get("formula", "")),
+                        "status": str(raw.get("status", "active")),
+                    }
+                ],
+            }
+
+        # Dict keyed by metric name: {"Revenue per Customer": {"formula": "...", ...}}
+        out: List[Dict[str, Any]] = []
+        for key, val in raw.items():
+            if isinstance(val, dict):
+                out.append(
+                    {
+                        "name": str(val.get("name") or key),
+                        "description": str(val.get("description", "")),
+                        "formula": str(val.get("formula", "")),
+                        "status": str(val.get("status", "active")),
+                    }
+                )
+            elif isinstance(val, str):
+                # e.g. {"Revenue": "SUM(...)"}  — treat value as formula
+                out.append(
+                    {
+                        "name": str(key),
+                        "description": "",
+                        "formula": val,
+                        "status": "active",
+                    }
+                )
+        return {**data, "metrics": out}
+    time_granularity: str = Field(
+        default="",
+        description=(
+            "If the user specifies a reporting period: one of day | week | month | quarter | year. "
+            "Empty string if not mentioned."
+        ),
+    )
+    time_dimension: str = Field(
+        default="",
+        description=(
+            "Actual column name from schema_columns the user wants to use as the date axis. "
+            "Empty string if not mentioned."
+        ),
+    )
+    status_values: List[str] = Field(
+        default_factory=list,
+        description="Success/active status values if the user defines them (e.g. ['delivered']).",
+    )
+    aliases: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Term-to-column mappings. Each item: {\"term\": \"Revenue\", \"maps_to\": \"price_after_discount\"}."
+        ),
+    )
+
+
+_ENRICHMENT_SYSTEM_PROMPT = """\
+You are an ontology enrichment assistant for a NL2SQL system.
+Your job is to extract business metric definitions and rules, then store them as
+SQL formulas using ONLY real column names found in schema_columns.
+
+══════════════════════════════════════════════════
+GREETINGS / SMALL TALK
+══════════════════════════════════════════════════
+If the user sends only a greeting (hi, hello, thanks) with no business content:
+- Set needs_clarification=false, metrics=[], all other fields empty/default.
+- Reply warmly and invite them to share business metrics or rules.
+- NEVER say "I captured that" when nothing was captured.
+
+══════════════════════════════════════════════════
+METRIC FORMULA — CRITICAL RULE
+══════════════════════════════════════════════════
+The `formula` field MUST always be a valid SQL expression using real column names.
+
+✓ CORRECT:  SUM(price_after_discount) / COUNT(DISTINCT customer_id)
+✓ CORRECT:  AVG(payment_value)
+✓ CORRECT:  SUM(order_items.price) / COUNT(DISTINCT orders.order_id)
+✗ WRONG:    Price After Discount / Number of Orders
+✗ WRONG:    total sales / unique customers
+
+SQL formula guide:
+  "total X"         → SUM(actual_col_name)
+  "average X"       → AVG(actual_col_name) or SUM(x)/COUNT(y)
+  "number of Y"     → COUNT(DISTINCT y_id_column)
+  "per customer"    → divide by COUNT(DISTINCT customer_id_column)
+  "per order"       → divide by COUNT(DISTINCT order_id_column)
+
+══════════════════════════════════════════════════
+CASES
+══════════════════════════════════════════════════
+CASE A — User gives an explicit SQL formula:
+  Preserve verbatim. needs_clarification=false.
+
+CASE B — Natural language + ONE clear column match:
+  Derive SQL formula. needs_clarification=false.
+  assistant_message: confirm in friendly plain English (no SQL shown).
+  metrics: include one object with name, description, formula (SQL), status=\"active\".
+
+CASE C — Natural language + MULTIPLE plausible columns or tables:
+  needs_clarification=true.
+  metrics: include one object with name, description, formula=\"\", status=\"pending\".
+  assistant_message: list options as numbered list with READABLE LABELS only
+  (price_after_discount → "Price After Discount", order_header → "Order Header").
+  Example:
+    "To calculate Revenue per Customer I found a few options — which one is total sales?
+     1. Price After Discount (Order Header)
+     2. Payment Value (Payments)
+    Just reply with the number!"
+  NEVER show raw column names to the user.
+
+CASE D — User answers a clarification (e.g. "1", "price after discount", "the second"):
+  Map their answer to the real column from the previous list.
+  Build the SQL formula. needs_clarification=false.
+  assistant_message: friendly confirmation in plain English.
+
+══════════════════════════════════════════════════
+OTHER EXTRACTION RULES
+══════════════════════════════════════════════════
+- TIME GRANULARITY ("weekly", "monthly"): set time_granularity = "week" | "month" | etc.
+- DATE COLUMN ("use order_date for trends"): set time_dimension = actual_column_name.
+- STATUS VALUES ("delivered = success"): set status_values = ["delivered"].
+- ALIASES ("Revenue means price_after_discount"): set aliases = [{"term": "Revenue", "maps_to": "price_after_discount"}].
+
+══════════════════════════════════════════════════
+HARD CONSTRAINTS
+══════════════════════════════════════════════════
+- formula must be SQL — never plain English labels.
+- Never invent column names not in schema_columns.
+- assistant_message is always plain English — never expose SQL or column names.
+"""
+
+
+def _build_enrichment_schema_columns(
+    ontology: Dict[str, Any],
+    max_per_table: int = 25,
+    max_tables: int = 40,
+) -> Dict[str, list]:
+    """Build a compact table_name → [{name, type}] mapping for the enrichment prompt."""
+    id_to_table: Dict[str, str] = {}
+    for cls in ontology.get("classes", []):
+        if not isinstance(cls, dict):
+            continue
+        cid = str(cls.get("id") or "")
+        table = (cls.get("table") or cls.get("name") or cid or "unknown").strip()
+        if cid:
+            id_to_table[cid] = table
+
+    by_table: Dict[str, list] = {}
+    for attr in ontology.get("attributes", []):
+        if not isinstance(attr, dict):
+            continue
+        raw_cid = str(attr.get("class_id") or attr.get("class") or "unknown")
+        table = id_to_table.get(raw_cid, raw_cid)
+        col = {"name": attr.get("name"), "type": attr.get("type", "unknown")}
+        by_table.setdefault(table, []).append(col)
+
+    def _priority(c: dict) -> int:
+        t = str(c.get("type", "")).upper()
+        if any(k in t for k in ("INT", "FLOAT", "DECIMAL", "NUMERIC", "DOUBLE", "MONEY")):
+            return 0
+        if any(k in t for k in ("DATE", "TIME", "TIMESTAMP")):
+            return 1
+        return 2
+
+    result: Dict[str, list] = {}
+    for idx, (table, cols) in enumerate(by_table.items()):
+        if idx >= max_tables:
+            break
+        result[table] = sorted(cols, key=_priority)[:max_per_table]
+    return result
+
+
+def _friendly_label(raw: str) -> str:
+    if not raw:
+        return "Field"
+    text = str(raw).replace(".", " ").replace("_", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.title() if text else "Field"
+
+
+def _schema_column_index(schema_columns: Dict[str, list]) -> Dict[str, List[Tuple[str, str]]]:
+    """
+    Build a lowercase column-name index:
+      column_name -> [(table_name, original_column_name), ...]
+    """
+    index: Dict[str, List[Tuple[str, str]]] = {}
+    for table, cols in (schema_columns or {}).items():
+        if not isinstance(cols, list):
+            continue
+        for col in cols:
+            if not isinstance(col, dict):
+                continue
+            name = str(col.get("name") or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            index.setdefault(key, []).append((str(table), name))
+    return index
+
+
+def _customer_identifier_candidates(schema_columns: Dict[str, list]) -> List[Tuple[str, str]]:
+    """
+    Find likely columns that can represent a unique customer key.
+    Returns unique pairs of (table_name, column_name).
+    """
+    entity_terms = {"customer", "client", "buyer", "shopper", "user", "account", "member", "subscriber"}
+    id_terms = {"id", "key", "uuid", "guid", "code", "number", "no"}
+    found: List[Tuple[str, str]] = []
+    seen: Set[Tuple[str, str]] = set()
+    for table, cols in (schema_columns or {}).items():
+        if not isinstance(cols, list):
+            continue
+        for col in cols:
+            if not isinstance(col, dict):
+                continue
+            name = str(col.get("name") or "").strip()
+            if not name:
+                continue
+            words = set(_split_words(name))
+            has_entity = bool(words & entity_terms)
+            has_id = bool(words & id_terms) or name.lower().endswith("_id")
+            if not (has_entity and has_id):
+                continue
+            pair = (str(table), name)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            found.append(pair)
+    return found[:8]
+
+
+def _mentions_customer_uniqueness(text: str) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    return any(
+        phrase in low
+        for phrase in (
+            "per customer",
+            "per unique customer",
+            "unique customer",
+            "distinct customer",
+            "customer count",
+        )
+    )
+
+
+def _chat_mentions_customer_uniqueness(chat_history: List[Dict[str, str]]) -> bool:
+    for msg in chat_history or []:
+        content = str((msg or {}).get("content") or "")
+        if _mentions_customer_uniqueness(content):
+            return True
+    return False
+
+
+def _looks_like_numeric_choice(text: str) -> bool:
+    return bool(re.match(r"^\s*\d+\s*[\.\)]?.*$", text or ""))
+
+
+def _last_assistant_requested_customer_identifier(chat_history: List[Dict[str, str]]) -> bool:
+    for msg in reversed(chat_history or []):
+        if str((msg or {}).get("role") or "").lower() != "assistant":
+            continue
+        content = str((msg or {}).get("content") or "").lower()
+        if (
+            "which column should represent a unique customer" in content
+            or "which one should represent a unique customer" in content
+            or "unique customer" in content
+        ):
+            return True
+        return False
+    return False
+
+
+def _message_mentions_any_column(text: str, columns: Set[str]) -> bool:
+    """
+    True when user explicitly references a schema column token (snake_case style)
+    in their message, which is treated as an intentional technical selection.
+    """
+    low = (text or "").lower()
+    if not low:
+        return False
+    for col in columns:
+        if col and re.search(rf"\b{re.escape(col)}\b", low):
+            return True
+    return False
+
+
+def _build_customer_clarification_message(metric_name: str, candidates: List[Tuple[str, str]]) -> str:
+    metric_label = metric_name or "this metric"
+    if not candidates:
+        return (
+            f"To calculate {metric_label}, I still need one detail: which column should represent a unique customer? "
+            "Please share the exact table and column."
+        )
+
+    lines = [
+        f"To calculate {metric_label}, I still need one detail: which column should represent a unique customer?"
+    ]
+    for idx, (table, col) in enumerate(candidates, start=1):
+        lines.append(f"{idx}. {_friendly_label(col)} ({_friendly_label(table)})")
+    lines.append("Just reply with the number.")
+    return "\n".join(lines)
+
+
+def _normalize_label_text(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", (text or "").lower())).strip()
+
+
+def _resolve_customer_candidate_selection(
+    user_message: str,
+    candidates: List[Tuple[str, str]],
+) -> Optional[str]:
+    """
+    Resolve user clarification answer to a concrete customer identifier column name.
+    Supports numeric choices and label/table-text choices like:
+      "2", "Customer Id (Order Header)", "customer_id"
+    """
+    if not candidates:
+        return None
+
+    msg = (user_message or "").strip()
+    if not msg:
+        return None
+
+    num_match = re.match(r"^\s*(\d+)\s*[\.\)]?\s*$", msg)
+    if num_match:
+        idx = int(num_match.group(1)) - 1
+        if 0 <= idx < len(candidates):
+            return candidates[idx][1]
+
+    msg_norm = _normalize_label_text(msg)
+    for table, col in candidates:
+        raw_col = (col or "").lower()
+        if raw_col and re.search(rf"\b{re.escape(raw_col)}\b", msg.lower()):
+            return col
+
+        col_label = _normalize_label_text(_friendly_label(col))
+        table_label = _normalize_label_text(_friendly_label(table))
+        combined = f"{col_label} {table_label}".strip()
+        if col_label and col_label in msg_norm:
+            if table_label and table_label in msg_norm:
+                return col
+            # if user specified only column label and duplicates exist, keep scanning
+            # for an exact table match first.
+            fallback = col
+            # If this label appears only once across candidates, accept immediately.
+            dup_count = sum(
+                1 for t2, c2 in candidates
+                if _normalize_label_text(_friendly_label(c2)) == col_label
+            )
+            if dup_count == 1:
+                return fallback
+        if combined and combined in msg_norm:
+            return col
+
+    return None
+
+
+def _enforce_customer_denominator(formula: str, customer_col: str) -> str:
+    """
+    Ensure formula denominator uses the selected customer column.
+    """
+    base = (formula or "").strip()
+    if not base or not customer_col:
+        return base
+    target = f"COUNT(DISTINCT {customer_col})"
+    # Collapse accidental duplicated denominator chains of the same selected column.
+    target_chain_pattern = re.compile(
+        rf"(\s*/\s*COUNT\s*\(\s*DISTINCT\s*{re.escape(customer_col)}\s*\))+",
+        flags=re.IGNORECASE,
+    )
+    collapsed = target_chain_pattern.sub(f" / {target}", base)
+
+    # If selected denominator already exists anywhere, keep it (idempotent).
+    selected_exists_pattern = re.compile(
+        rf"COUNT\s*\(\s*DISTINCT\s*{re.escape(customer_col)}\s*\)",
+        flags=re.IGNORECASE,
+    )
+    if selected_exists_pattern.search(collapsed):
+        return collapsed
+
+    # Replace first COUNT(DISTINCT <any_col>) with selected one.
+    any_count_distinct_pattern = re.compile(
+        r"COUNT\s*\(\s*DISTINCT\s+[A-Za-z_\"`][A-Za-z0-9_\.\"`]*\s*\)",
+        flags=re.IGNORECASE,
+    )
+    replaced = any_count_distinct_pattern.sub(target, collapsed, count=1)
+    if replaced != collapsed:
+        # Guard against accidental double append segments after replacement.
+        replaced = re.sub(
+            rf"(\s*/\s*{re.escape(target)}){{2,}}",
+            f" / {target}",
+            replaced,
+            flags=re.IGNORECASE,
+        )
+        return replaced
+
+    # No denominator found; append one exactly once.
+    return f"{collapsed} / {target}"
+
+
+async def _llm_enrichment_chat(
+    ontology: Dict[str, Any],
+    chat_history: List[Dict[str, str]],
+    user_message: str,
+    thread_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Call OpenAI directly via LangChain with fully-typed structured output.
+    Bypasses the LLM microservice httpx hop entirely — no intermediate timeout.
+    Uses a typed Pydantic model (not Dict[str,Any]) so the LLM reliably fills every field.
+    """
+    schema_columns = _build_enrichment_schema_columns(ontology)
+    column_index = _schema_column_index(schema_columns)
+    schema_column_names = set(column_index.keys())
+    user_payload = json.dumps(
+        {
+            "schema_columns": schema_columns,
+            "recent_chat_history": chat_history[-10:],
+            "latest_user_message": user_message,
+        },
+        ensure_ascii=False,
+    )
+    try:
+        # method="function_calling" avoids the strict additionalProperties constraint
+        # imposed by json_schema mode on nested dicts.
+        structured_llm = llm.with_structured_output(
+            _EnrichmentChatOutput, method="function_calling"
+        )
+        result: _EnrichmentChatOutput = await structured_llm.ainvoke(
+            [
+                SystemMessage(content=_ENRICHMENT_SYSTEM_PROMPT),
+                HumanMessage(content=user_payload),
+            ]
+        )
+
+        assistant_message = (result.assistant_message or "").strip()
+        needs_clarification = bool(result.needs_clarification)
+        forced_clarification_message = ""
+
+        # Hard guardrail: never allow hallucinated columns in metric formulas.
+        for metric in result.metrics or []:
+            formula = (metric.formula or "").strip()
+            if not formula:
+                continue
+            identifiers = _extract_identifiers_from_formula(formula)
+            missing = sorted(i for i in identifiers if i not in schema_column_names)
+            if not missing:
+                continue
+            metric.formula = ""
+            metric.status = "pending"
+            needs_clarification = True
+            if any("customer" in m for m in missing):
+                forced_clarification_message = _build_customer_clarification_message(
+                    _friendly_label(metric.name),
+                    _customer_identifier_candidates(schema_columns),
+                )
+                break
+            lines = [
+                f"I want to confirm one thing before saving {_friendly_label(metric.name)}.",
+                "I could not map all formula fields to your schema yet.",
+            ]
+            # Show top field candidates to keep the follow-up actionable.
+            candidates: List[Tuple[str, str]] = []
+            for table, cols in schema_columns.items():
+                if not isinstance(cols, list):
+                    continue
+                for col in cols:
+                    if isinstance(col, dict) and str(col.get("name") or "").strip():
+                        candidates.append((str(table), str(col.get("name"))))
+                if len(candidates) >= 6:
+                    break
+            if candidates:
+                lines.append("Please pick the right field:")
+                for idx, (table, col) in enumerate(candidates[:6], start=1):
+                    lines.append(f"{idx}. {_friendly_label(col)} ({_friendly_label(table)})")
+                lines.append("Reply with the number.")
+            else:
+                lines.append("Please share the exact table and column to use.")
+            forced_clarification_message = "\n".join(lines)
+            break
+
+        # Hard guardrail: for 'per unique customer' style metrics, do not auto-guess denominator.
+        customer_intent_in_context = (
+            _mentions_customer_uniqueness(user_message)
+            or _chat_mentions_customer_uniqueness(chat_history)
+        )
+        if not forced_clarification_message and customer_intent_in_context:
+            customer_candidates = _customer_identifier_candidates(schema_columns)
+            user_explicitly_named_customer_column = _message_mentions_any_column(
+                user_message, {c.lower() for _, c in customer_candidates}
+            )
+            user_selected_number = _looks_like_numeric_choice(user_message)
+            last_assistant_asked_customer = _last_assistant_requested_customer_identifier(chat_history)
+            selected_customer_column = _resolve_customer_candidate_selection(
+                user_message, customer_candidates
+            )
+            for metric in result.metrics or []:
+                formula = (metric.formula or "").strip()
+                if not formula:
+                    continue
+                metric_text = f"{metric.name} {metric.description}".lower()
+                metric_is_customer_based = (
+                    "per customer" in metric_text
+                    or "unique customer" in metric_text
+                    or "distinct customer" in metric_text
+                    or "customer" in metric_text
+                )
+                if not metric_is_customer_based and not _mentions_customer_uniqueness(formula):
+                    continue
+                formula_identifiers = _extract_identifiers_from_formula(formula)
+                uses_customer_column = bool(
+                    formula_identifiers & {c.lower() for _, c in customer_candidates}
+                )
+                denominator_confirmed = (
+                    user_explicitly_named_customer_column
+                    or bool(selected_customer_column)
+                    or (
+                        last_assistant_asked_customer
+                        and user_selected_number
+                        and uses_customer_column
+                    )
+                )
+                if selected_customer_column:
+                    metric.formula = _enforce_customer_denominator(formula, selected_customer_column)
+                    formula_identifiers = _extract_identifiers_from_formula(metric.formula or "")
+                    uses_customer_column = selected_customer_column.lower() in formula_identifiers
+                if user_explicitly_named_customer_column and uses_customer_column:
+                    continue
+                needs_more_customer_clarification = (
+                    (len(customer_candidates) > 1 and not denominator_confirmed)
+                    or (not uses_customer_column and not denominator_confirmed)
+                )
+                if needs_more_customer_clarification:
+                    metric.formula = ""
+                    metric.status = "pending"
+                    needs_clarification = True
+                    forced_clarification_message = _build_customer_clarification_message(
+                        _friendly_label(metric.name), customer_candidates
+                    )
+                    break
+
+        # Build extracted_updates from the flat typed fields
+        extracted_updates: Dict[str, Any] = {}
+
+        if result.metrics:
+            metrics_dict: Dict[str, Any] = {}
+            for m in result.metrics:
+                name = (m.name or "").strip() or "Metric"
+                entry: Dict[str, Any] = {}
+                if m.description:
+                    entry["description"] = m.description
+                formula = (m.formula or "").strip()
+                if formula:
+                    entry["formula"] = formula
+                    entry["status"] = "active"
+                else:
+                    entry["status"] = "pending"
+                metrics_dict[name] = entry
+            if metrics_dict:
+                extracted_updates["metrics"] = metrics_dict
+
+        if needs_clarification and forced_clarification_message:
+            assistant_message = forced_clarification_message
+
+        if result.time_granularity:
+            extracted_updates.setdefault("rules", {})["default_time_granularity"] = result.time_granularity
+        if result.time_dimension:
+            extracted_updates.setdefault("rules", {})["default_time_dimension"] = result.time_dimension
+        if result.status_values:
+            extracted_updates.setdefault("rules", {})["status_success_values"] = result.status_values
+        if result.aliases:
+            extracted_updates["aliases"] = result.aliases
+
+        if not assistant_message:
+            assistant_message = (
+                "Could you clarify which column or table you mean?" if needs_clarification
+                else "Got it! Feel free to share more metrics, rules, or date preferences."
+            )
+
+        logger.info(
+            "Enrichment chat | thread_id=%s | needs_clarification=%s | updates_keys=%s",
+            thread_id, needs_clarification, list(extracted_updates.keys()),
+        )
+        return {
+            "assistant_message": assistant_message,
+            "extracted_updates": extracted_updates,
+            "needs_clarification": needs_clarification,
+        }
+
+    except Exception as exc:
+        logger.warning(
+            "Enrichment chat fallback | thread_id=%s | error=%s", thread_id, str(exc)
+        )
+        return {
+            "assistant_message": (
+                "I'm here to help! Feel free to share your business metrics, "
+                "reporting rules, or any date preferences you'd like to set up."
+            ),
+            "extracted_updates": {},
+            "needs_clarification": False,
+        }
+
+
+async def _llm_apply_enrichment(
+    ontology: Dict[str, Any],
+    updates: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Ask LLM service to apply enrichment updates into ontology JSON.
+
+    Only the semantic sections (metrics, rules, aliases, class names for context) are
+    sent to the LLM — never the full schema with hundreds of attributes/relationships.
+    This avoids LLM output-token limits and timeouts that occurred when sending the
+    full ontology (~80-100 KB) and expecting an equally large response back.
+    After the LLM returns the updated semantic sections, they are merged back into
+    the full in-memory ontology before returning.
+    """
+    if not updates:
+        # Nothing to apply — return the ontology unchanged (fast path).
+        return ontology
+
+    endpoint = os.getenv("ONTOLOGY_ENRICHMENT_APPLY_URL", "http://127.0.0.1:8001/api/ontology/apply-enrichment")
+    timeout_seconds = float(os.getenv("ONTOLOGY_ENRICHMENT_APPLY_TIMEOUT", "120"))
+
+    # Build a compact payload: just the semantic parts the LLM needs to enrich.
+    # Class names are provided for context so the LLM can reference them in formulas/aliases.
+    # schema_columns is intentionally excluded here to keep the payload small — the chat
+    # phase (enrichment_chat_message) already resolved natural-language terms to real column
+    # names, so the apply stage only needs to persist the extracted formula verbatim.
+    compact_ontology = {
+        "metrics": ontology.get("metrics", []),
+        "rules": ontology.get("rules", {}),
+        "aliases": ontology.get("aliases", []),
+        "class_names": [
+            {"id": c.get("id"), "name": c.get("name"), "table": c.get("table")}
+            for c in ontology.get("classes", [])
+            if isinstance(c, dict)
+        ],
+    }
+
+    payload = {
+        "ontology": compact_ontology,
+        "updates": updates,
+    }
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(endpoint, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        elapsed = round(time.perf_counter() - start, 3)
+        logger.info(
+            "LLM enrichment apply completed | elapsed_s=%s | endpoint=%s | updates_keys=%s",
+            elapsed,
+            endpoint,
+            list((updates or {}).keys()),
+        )
+        enriched_compact = data.get("ontology") if isinstance(data, dict) else None
+        if isinstance(enriched_compact, dict):
+            # Merge the LLM-enriched semantic sections back into the full ontology.
+            out = dict(ontology)
+            if isinstance(enriched_compact.get("metrics"), list):
+                out["metrics"] = enriched_compact["metrics"]
+            if isinstance(enriched_compact.get("rules"), dict):
+                out["rules"] = enriched_compact["rules"]
+            if isinstance(enriched_compact.get("aliases"), list):
+                out["aliases"] = enriched_compact["aliases"]
+            return out
+    except Exception as exc:
+        elapsed = round(time.perf_counter() - start, 3)
+        logger.warning(
+            "LLM enrichment apply failed | elapsed_s=%s | endpoint=%s | error=%s",
+            elapsed,
+            endpoint,
+            str(exc),
+        )
+        out = dict(ontology)
+        meta = out.setdefault("metadata", {}) if isinstance(out, dict) else {}
+        if isinstance(meta, dict):
+            meta["llm_enrichment_apply_error"] = True
+            meta["llm_enrichment_apply_error_at"] = datetime.now(timezone.utc).isoformat()
+            meta["llm_enrichment_apply_error_reason"] = str(exc)[:300]
+        # Best-effort semantic merge so user changes are not lost on timeout/failure.
+        if isinstance(updates, dict):
+            if isinstance(updates.get("metrics"), dict):
+                metrics_out = []
+                for m_name, m_val in updates["metrics"].items():
+                    if not isinstance(m_val, dict):
+                        continue
+                    formula = str(m_val.get("formula") or "").strip()
+                    if not formula:
+                        continue
+                    metrics_out.append(
+                        {
+                            "id": f"metric:{m_name}",
+                            "name": str(m_name),
+                            "definition": str(m_val.get("description") or ""),
+                            "formula": formula,
+                            "based_on_class": (out.get("classes") or [{}])[0].get("id") if out.get("classes") else None,
+                        }
+                    )
+                if metrics_out:
+                    out["metrics"] = metrics_out
+            if isinstance(updates.get("rules"), dict):
+                rules = out.get("rules") if isinstance(out.get("rules"), dict) else {}
+                rules.update(updates["rules"])
+                out["rules"] = rules
+            if isinstance(updates.get("aliases"), list):
+                out["aliases"] = updates["aliases"]
+        return out
+    return ontology
+
+
+def _iri_safe(raw: str) -> str:
+    base = "".join(ch if ch.isalnum() else "_" for ch in (raw or "Thing"))
+    return base.strip("_") or "Thing"
+
+
+def _split_words(raw: str) -> List[str]:
+    if not raw:
+        return []
+    # split snake_case, kebab-case, dots, camelCase
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(raw))
+    s = re.sub(r"[^A-Za-z0-9]+", " ", s)
+    return [w.lower() for w in s.split() if w]
+
+
+def _to_class_name(raw: str) -> str:
+    name = raw.split(".")[-1]
+    clean = "".join(ch if ch.isalnum() else " " for ch in name)
+    return "".join(part.capitalize() for part in clean.split()) or "Entity"
+
+
+def _to_relation_label(source_column: str, target_table: str) -> str:
+    """
+    Generic relation naming from FK column and target entity.
+    Avoids domain hardcoding (customer/seller/etc.).
+    """
+    words = _split_words(source_column)
+    # Drop very common FK suffixes/prefixes for cleaner property names.
+    stop = {"id", "pk", "fk", "key", "uuid", "guid", "ref", "code"}
+    core = [w for w in words if w not in stop]
+    if core:
+        base = "".join(w.capitalize() for w in core)
+        if base:
+            return f"has{base}"
+    return f"relatedTo{_to_class_name(target_table)}"
+
+
+def _is_date_like(column_name: str, column_type: str) -> bool:
+    words = _split_words(column_name)
+    ctype = (column_type or "").lower()
+    generic_terms = {"date", "time", "timestamp", "datetime", "created", "updated", "modified"}
+    return bool(set(words) & generic_terms) or any(k in ctype for k in ["date", "time"])
+
+
+def _is_revenue_like(column_name: str) -> bool:
+    words = _split_words(column_name)
+    generic_terms = {"revenue", "amount", "payment", "price", "total", "value", "cost", "sales", "income"}
+    return bool(set(words) & generic_terms)
+
+
+def _build_base_ontology(db_connection: DatabaseConnectionModel) -> Dict[str, Any]:
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {"nodes": [], "edges": [], "stats": {}})
+    schema = _safe_json_loads(db_connection.db_schema, {"tables": []})
+
+    class_nodes = []
+    relationships = []
+    attributes = []
+
+    for node in ds_graph.get("nodes", []):
+        class_name = _to_class_name(node.get("table") or node.get("label") or node.get("id"))
+        class_nodes.append(
+            {
+                "id": node.get("id"),
+                "name": class_name,
+                "table": node.get("table") or node.get("label"),
+                "schema": node.get("schema"),
+                "column_count": node.get("column_count", 0),
+            }
+        )
+        for col in node.get("columns", []):
+            attributes.append(
+                {
+                    "class_id": node.get("id"),
+                    "name": col.get("name"),
+                    "type": col.get("type"),
+                    "is_primary_key": bool(col.get("is_primary_key")),
+                }
+            )
+
+    seen_pair_edges = set()
+    for edge in ds_graph.get("edges", []):
+        source = edge.get("source")
+        target = edge.get("target")
+        if not source or not target:
+            continue
+        pair_key = (source, target)
+        if pair_key in seen_pair_edges:
+            # Keep ontology graph clean: one semantic edge per table-pair for default view.
+            continue
+        seen_pair_edges.add(pair_key)
+        relationships.append(
+            {
+                "id": edge.get("id"),
+                "source": source,
+                "target": target,
+                "source_column": edge.get("source_column"),
+                "target_column": edge.get("target_column"),
+                "label": _to_relation_label(edge.get("source_column", ""), target),
+                "relationship_type": edge.get("relationship_type", "foreign_key"),
+            }
+        )
+
+    ontology = {
+        "metadata": {
+            "datasource_connection_id": str(db_connection.id),
+            "db_type": db_connection.db_type,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "schema_table_count": len(schema.get("tables", [])),
+        },
+        "classes": class_nodes,
+        "relationships": relationships,
+        "attributes": attributes,
+        "metrics": [],
+        "aliases": [],
+        "rules": {
+            "default_filters": {},
+            "default_time_dimension": None,
+            "status_success_values": [],
+        },
+    }
+
+    return ontology
+
+
+def _merge_refined_with_canonical_mappings(
+    canonical: Dict[str, Any],
+    refined: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Keep technical schema mappings stable while allowing LLM-friendly business text.
+    This prevents NL2SQL/graph regressions from accidental id/source/target rewrites.
+    """
+    if not isinstance(canonical, dict):
+        return refined if isinstance(refined, dict) else {}
+    if not isinstance(refined, dict):
+        return canonical
+
+    out = dict(canonical)
+    out["metadata"] = refined.get("metadata", canonical.get("metadata", {})) if isinstance(refined.get("metadata"), dict) else canonical.get("metadata", {})
+    out["rules"] = refined.get("rules", canonical.get("rules", {})) if isinstance(refined.get("rules"), dict) else canonical.get("rules", {})
+
+    # For metrics: always prefer canonical (user-enriched) metrics over refined ones.
+    # The refine LLM may strip or rename user-provided business formulas; the canonical
+    # ontology is the authoritative source for metrics after enrichment.
+    canonical_metrics = canonical.get("metrics", []) if isinstance(canonical.get("metrics"), list) else []
+    refined_metrics = refined.get("metrics", []) if isinstance(refined.get("metrics"), list) else []
+    if canonical_metrics:
+        # Keep all canonical metrics; supplement with any net-new refined metrics.
+        canonical_metric_names = {m.get("name") for m in canonical_metrics if isinstance(m, dict)}
+        supplemental = [m for m in refined_metrics if isinstance(m, dict) and m.get("name") not in canonical_metric_names]
+        out["metrics"] = canonical_metrics + supplemental
+    else:
+        out["metrics"] = refined_metrics
+
+    out["aliases"] = refined.get("aliases", canonical.get("aliases", [])) if isinstance(refined.get("aliases"), list) else canonical.get("aliases", [])
+
+    canonical_classes = canonical.get("classes", []) if isinstance(canonical.get("classes"), list) else []
+    refined_class_by_id = {
+        str(c.get("id")): c for c in (refined.get("classes", []) if isinstance(refined.get("classes"), list) else []) if isinstance(c, dict) and c.get("id")
+    }
+    merged_classes = []
+    for c in canonical_classes:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("id"))
+        rc = refined_class_by_id.get(cid, {})
+        merged = dict(c)
+        if isinstance(rc.get("name"), str) and rc.get("name").strip():
+            merged["name"] = rc["name"].strip()
+        if isinstance(rc.get("description"), str) and rc.get("description").strip():
+            merged["description"] = rc["description"].strip()
+        merged_classes.append(merged)
+    out["classes"] = merged_classes
+
+    canonical_relationships = canonical.get("relationships", []) if isinstance(canonical.get("relationships"), list) else []
+    refined_rel_by_id = {
+        str(r.get("id")): r for r in (refined.get("relationships", []) if isinstance(refined.get("relationships"), list) else []) if isinstance(r, dict) and r.get("id")
+    }
+    merged_relationships = []
+    for r in canonical_relationships:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("id"))
+        rr = refined_rel_by_id.get(rid, {})
+        merged = dict(r)
+        if isinstance(rr.get("label"), str) and rr.get("label").strip():
+            merged["label"] = rr["label"].strip()
+        if isinstance(rr.get("description"), str) and rr.get("description").strip():
+            merged["description"] = rr["description"].strip()
+        merged_relationships.append(merged)
+    out["relationships"] = merged_relationships
+
+    canonical_attributes = canonical.get("attributes", []) if isinstance(canonical.get("attributes"), list) else []
+    refined_attrs = refined.get("attributes", []) if isinstance(refined.get("attributes"), list) else []
+    refined_attr_by_key = {}
+    for a in refined_attrs:
+        if not isinstance(a, dict):
+            continue
+        key = f"{a.get('class_id')}::{a.get('name')}"
+        refined_attr_by_key[key] = a
+    merged_attributes = []
+    for a in canonical_attributes:
+        if not isinstance(a, dict):
+            continue
+        key = f"{a.get('class_id')}::{a.get('name')}"
+        ra = refined_attr_by_key.get(key, {})
+        merged = dict(a)
+        if isinstance(ra.get("description"), str) and ra.get("description").strip():
+            merged["description"] = ra["description"].strip()
+        merged_attributes.append(merged)
+    out["attributes"] = merged_attributes
+    return out
+
+
+async def _llm_refine_ontology(
+    ontology: Dict[str, Any],
+    db_schema_json: Optional[str],
+    db_type: Optional[str],
+    timeout_seconds: float = 20.0,
+) -> Dict[str, Any]:
+    """
+    Optional LLM-assisted refinement.
+    Fallback-safe: returns original ontology if LLM is unavailable or invalid.
+    """
+    llm_endpoint = os.getenv("ONTOLOGY_REFINER_URL", "http://127.0.0.1:8001/api/ontology/refine")
+    timeout_seconds = float(os.getenv("ONTOLOGY_REFINER_TIMEOUT", str(timeout_seconds)))
+    payload = {
+        "db_type": db_type or "unknown",
+        "db_schema": db_schema_json or "{}",
+        "ontology": ontology,
+        "instructions": (
+            "Refine ontology names and relationship labels to business-friendly terms. "
+            "Keep schema compatibility. Return JSON object only."
+        ),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(llm_endpoint, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        refined = data.get("ontology") if isinstance(data, dict) else None
+        if not isinstance(refined, dict):
+            return ontology
+
+        # Minimal shape checks
+        if not isinstance(refined.get("classes"), list) or not isinstance(refined.get("relationships"), list):
+            return ontology
+
+        refined.setdefault("metadata", {})
+        refined["metadata"]["llm_refined"] = True
+        refined["metadata"]["llm_refined_at"] = datetime.now(timezone.utc).isoformat()
+        return refined
+    except Exception as exc:
+        logger.warning("LLM ontology refinement skipped: %s", str(exc))
+        ontology.setdefault("metadata", {})
+        ontology["metadata"]["llm_refined"] = False
+        return ontology
+
+
+def _ontology_to_graph(ontology: Dict[str, Any]) -> Dict[str, Any]:
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+
+    for cls in ontology.get("classes", []):
+        if not isinstance(cls, dict):
+            continue
+        cls_id = cls.get("id") or cls.get("table") or "unknown"
+        cls_name = cls.get("name") or cls.get("table") or str(cls_id)
+        nodes.append(
+            {
+                "id": str(cls_id),
+                "label": str(cls_name),
+                "type": "class",
+                "meta": {
+                    "table": cls.get("table"),
+                    "schema": cls.get("schema"),
+                    "column_count": cls.get("column_count", 0),
+                },
+            }
+        )
+
+    for metric in ontology.get("metrics", []):
+        if not isinstance(metric, dict):
+            continue
+        metric_id = metric.get("id") or f"metric:{metric.get('name', 'metric')}"
+        nodes.append(
+            {
+                "id": str(metric_id),
+                "label": metric.get("name", "Metric"),
+                "type": "metric",
+                "meta": {"definition": metric.get("definition"), "formula": metric.get("formula")},
+            }
+        )
+        base_class = metric.get("based_on_class")
+        if base_class:
+            edges.append(
+                {
+                    "id": f"{metric_id}->{base_class}",
+                    "source": str(metric_id),
+                    "target": str(base_class),
+                    "label": "based on",
+                    "type": "metric_link",
+                    "meta": {},
+                }
+            )
+
+    for rel in ontology.get("relationships", []):
+        if not isinstance(rel, dict):
+            continue
+        rel_id = rel.get("id") or f"{rel.get('source', 'src')}__{rel.get('target', 'tgt')}"
+        rel_source = rel.get("source") or "unknown"
+        rel_target = rel.get("target") or "unknown"
+        edges.append(
+            {
+                "id": str(rel_id),
+                "source": str(rel_source),
+                "target": str(rel_target),
+                "label": rel.get("label") or rel.get("relationship_type", "relation"),
+                "type": rel.get("relationship_type", "foreign_key"),
+                "meta": {
+                    "source_column": rel.get("source_column"),
+                    "target_column": rel.get("target_column"),
+                },
+            }
+        )
+
+    stats = {
+        "class_count": len([n for n in nodes if n["type"] == "class"]),
+        "metric_count": len([n for n in nodes if n["type"] == "metric"]),
+        "relation_count": len(edges),
+    }
+
+    return {"nodes": nodes, "edges": edges, "stats": stats}
+
+
+def _ontology_to_ttl(ontology: Dict[str, Any]) -> str:
+    """
+    Convert internal ontology JSON to Turtle.
+    Uses rdflib when available, falls back to manual Turtle.
+    """
+    try:
+        from rdflib import Graph, Namespace, RDF, RDFS, OWL, XSD, Literal, URIRef
+
+        ex = Namespace("http://vizai.ai/ontology#")
+        g = Graph()
+        g.bind("ex", ex)
+        g.bind("owl", OWL)
+        g.bind("rdfs", RDFS)
+        g.bind("xsd", XSD)
+
+        class_map: Dict[str, URIRef] = {}
+        for cls in ontology.get("classes", []):
+            cid = cls.get("id", "")
+            cname = _iri_safe(cls.get("name") or cls.get("table") or cid)
+            c_uri = ex[cname]
+            class_map[cid] = c_uri
+            g.add((c_uri, RDF.type, OWL.Class))
+
+        for rel in ontology.get("relationships", []):
+            src = class_map.get(rel.get("source", ""), ex[_iri_safe(rel.get("source", "Source"))])
+            tgt = class_map.get(rel.get("target", ""), ex[_iri_safe(rel.get("target", "Target"))])
+            rel_id = str(rel.get("id") or "")
+            rel_label = str(rel.get("label") or rel.get("relationship_type") or "relatedTo")
+            # Keep each relationship as its own property in OWL to avoid domain/range collapsing
+            # when multiple edges share the same label (e.g., many "hasItem" relations).
+            prop_key = f"{_iri_safe(rel_label)}_{_iri_safe(rel_id)}" if rel_id else _iri_safe(rel_label)
+            prop = ex[prop_key]
+            g.add((prop, RDF.type, OWL.ObjectProperty))
+            g.add((prop, RDFS.domain, src))
+            g.add((prop, RDFS.range, tgt))
+            g.add((prop, RDFS.label, Literal(rel_label)))
+
+        for attr in ontology.get("attributes", []):
+            src = class_map.get(attr.get("class_id", ""), ex[_iri_safe(attr.get("class_id", "Entity"))])
+            prop = ex[_iri_safe(attr.get("name", "attribute"))]
+            dtype_raw = str(attr.get("type", "")).lower()
+            dtype = XSD.string
+            if any(k in dtype_raw for k in ["int", "number"]):
+                dtype = XSD.integer
+            elif any(k in dtype_raw for k in ["float", "double", "decimal", "numeric"]):
+                dtype = XSD.decimal
+            elif any(k in dtype_raw for k in ["date", "time"]):
+                dtype = XSD.dateTime
+            g.add((prop, RDF.type, OWL.DatatypeProperty))
+            g.add((prop, RDFS.domain, src))
+            g.add((prop, RDFS.range, dtype))
+
+        for metric in ontology.get("metrics", []):
+            mid = ex[_iri_safe(metric.get("name", "Metric"))]
+            g.add((mid, RDF.type, ex.BusinessMetric))
+            if metric.get("definition"):
+                g.add((mid, ex.definition, Literal(str(metric["definition"]))))
+            if metric.get("formula"):
+                g.add((mid, ex.formula, Literal(str(metric["formula"]))))
+
+        return g.serialize(format="turtle")
+    except Exception:
+        # Fallback to manual Turtle if rdflib is unavailable.
+        pass
+
+    lines: List[str] = [
+        "@prefix ex: <http://vizai.ai/ontology#> .",
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+        "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .",
+        "",
+    ]
+
+    class_map: Dict[str, str] = {}
+    for cls in ontology.get("classes", []):
+        cid = cls.get("id", "")
+        cname = _iri_safe(cls.get("name") or cls.get("table") or cid)
+        class_map[cid] = cname
+        lines.append(f"ex:{cname} a owl:Class .")
+
+    lines.append("")
+
+    for rel in ontology.get("relationships", []):
+        src = class_map.get(rel.get("source", ""), _iri_safe(rel.get("source", "Source")))
+        tgt = class_map.get(rel.get("target", ""), _iri_safe(rel.get("target", "Target")))
+        rel_id = str(rel.get("id") or "")
+        rel_label = str(rel.get("label") or rel.get("relationship_type") or "relatedTo")
+        prop = f"{_iri_safe(rel_label)}_{_iri_safe(rel_id)}" if rel_id else _iri_safe(rel_label)
+        safe_label = rel_label.replace('"', '\\"')
+        lines.append(
+            f'ex:{prop} a owl:ObjectProperty ; rdfs:domain ex:{src} ; rdfs:range ex:{tgt} ; rdfs:label "{safe_label}" .'
+        )
+
+    lines.append("")
+
+    for attr in ontology.get("attributes", []):
+        src = class_map.get(attr.get("class_id", ""), _iri_safe(attr.get("class_id", "Entity")))
+        prop = _iri_safe(attr.get("name", "attribute"))
+        dtype_raw = str(attr.get("type", "")).lower()
+        dtype = "xsd:string"
+        if any(k in dtype_raw for k in ["int", "number"]):
+            dtype = "xsd:integer"
+        elif any(k in dtype_raw for k in ["float", "double", "decimal", "numeric"]):
+            dtype = "xsd:decimal"
+        elif any(k in dtype_raw for k in ["date", "time"]):
+            dtype = "xsd:dateTime"
+        lines.append(f"ex:{prop} a owl:DatatypeProperty ; rdfs:domain ex:{src} ; rdfs:range {dtype} .")
+
+    lines.append("")
+
+    for metric in ontology.get("metrics", []):
+        mid = _iri_safe(metric.get("name", "Metric"))
+        definition = str(metric.get("definition", "")).replace('"', '\\"')
+        formula = str(metric.get("formula", "")).replace('"', '\\"')
+        lines.append(f"ex:{mid} a ex:BusinessMetric .")
+        if definition:
+            lines.append(f'ex:{mid} ex:definition "{definition}" .')
+        if formula:
+            lines.append(f'ex:{mid} ex:formula "{formula}" .')
+
+    return "\n".join(lines)
+
+
+def _extract_candidate_columns(ontology: Dict[str, Any]) -> Dict[str, List[str]]:
+    date_candidates: List[str] = []
+    revenue_candidates: List[str] = []
+    status_candidates: List[str] = []
+
+    for attr in ontology.get("attributes", []):
+        name = attr.get("name", "")
+        col_type = str(attr.get("type", ""))
+        if _is_date_like(name, col_type):
+            date_candidates.append(name)
+        if _is_revenue_like(name):
+            revenue_candidates.append(name)
+        if "status" in name.lower() or "state" in name.lower():
+            status_candidates.append(name)
+
+    return {
+        "date": sorted(set(date_candidates)),
+        "revenue": sorted(set(revenue_candidates)),
+        "status": sorted(set(status_candidates)),
+    }
+
+
+def _generate_dynamic_questions(ontology: Dict[str, Any], db_type: Optional[str]) -> List[Dict[str, Any]]:
+    candidates = _extract_candidate_columns(ontology)
+    questions: List[Dict[str, Any]] = []
+
+    if len(candidates["date"]) > 1:
+        questions.append(
+            {
+                "question_id": "default_date_dimension",
+                "target_term": "rules.default_time_dimension",
+                "question": "Which date/time column should be used by default for business trends?",
+                "reason": "Multiple date-like columns were found.",
+                "answer_type": "single_select",
+                "options": candidates["date"][:8],
+                "priority": 10,
+            }
+        )
+        questions.append(
+            {
+                "question_id": "default_time_granularity",
+                "target_term": "rules.default_time_granularity",
+                "question": "What default time granularity should we use in trends?",
+                "reason": "Choosing day/week/month improves consistent chart outputs.",
+                "answer_type": "single_select",
+                "options": ["day", "week", "month", "quarter"],
+                "priority": 12,
+            }
+        )
+
+    if len(candidates["revenue"]) > 0:
+        questions.append(
+            {
+                "question_id": "average_revenue_formula",
+                "target_term": "metrics.AverageRevenue",
+                "question": "How should we define Average Revenue for this datasource?",
+                "reason": "Revenue-like columns were detected; definition varies by business.",
+                "answer_type": "text",
+                "options": [],
+                "priority": 20,
+            }
+        )
+        questions.append(
+            {
+                "question_id": "average_revenue_denominator",
+                "target_term": "metrics.AverageRevenue.denominator",
+                "question": "Average revenue should be calculated per what unit?",
+                "reason": "Different businesses define average revenue differently.",
+                "answer_type": "single_select",
+                "options": ["order", "customer", "product", "seller"],
+                "priority": 22,
+            }
+        )
+
+    if len(candidates["status"]) > 0:
+        questions.append(
+            {
+                "question_id": "success_status_values",
+                "target_term": "rules.status_success_values",
+                "question": "Which status values should count as successful records?",
+                "reason": "Status column(s) detected and this impacts business metrics.",
+                "answer_type": "text",
+                "options": [],
+                "priority": 30,
+            }
+        )
+
+    questions.append(
+        {
+            "question_id": "exclude_test_data",
+            "target_term": "rules.default_filters",
+            "question": "Do you want to exclude any test/internal data by default?",
+            "reason": "Default quality filters improve query consistency.",
+            "answer_type": "text",
+            "options": [],
+            "priority": 40,
+        }
+    )
+
+    if (db_type or "").lower() == "salesforce":
+        questions.append(
+            {
+                "question_id": "salesforce_deleted_filter",
+                "target_term": "rules.default_filters.IsDeleted",
+                "question": "Should records with IsDeleted=true be excluded by default?",
+                "reason": "Salesforce objects commonly include soft-deleted records.",
+                "answer_type": "single_select",
+                "options": ["Yes", "No"],
+                "priority": 15,
+            }
+        )
+
+    return sorted(questions, key=lambda q: q.get("priority", 100))
+
+
+async def _apply_answers_to_ontology(ontology: Dict[str, Any], answers: Dict[str, Any]) -> Dict[str, Any]:
+    updated = await _llm_apply_enrichment(json.loads(json.dumps(ontology)), answers or {})
+    updated.setdefault("metadata", {})["last_enriched_at"] = datetime.now(timezone.utc).isoformat()
+    if isinstance(answers, dict):
+        updated.setdefault("metadata", {})["last_enrichment_applied_keys"] = sorted(list(answers.keys()))
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# Metric formula validation against the actual database schema.
+# Prevents users from saving business metrics like
+#   SUM(payment_value) / COUNT(DISTINCT order_id)
+# when `payment_value` does not exist in any real table. The NL2SQL agent
+# (correctly) refuses to use such formulas, so saving them is misleading.
+# ---------------------------------------------------------------------------
+
+_SQL_RESERVED_TOKENS: Set[str] = {
+    # aggregates / window
+    "SUM", "COUNT", "AVG", "MAX", "MIN", "DISTINCT",
+    "ROW_NUMBER", "RANK", "DENSE_RANK", "OVER", "PARTITION",
+    # control flow
+    "CASE", "WHEN", "THEN", "ELSE", "END",
+    "AND", "OR", "NOT", "NULL", "IS", "IN", "BETWEEN", "LIKE", "EXISTS",
+    # clause/structural
+    "SELECT", "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "ON",
+    "WHERE", "GROUP", "BY", "HAVING", "ORDER", "DESC", "ASC", "LIMIT", "OFFSET",
+    "AS", "UNION", "ALL", "INTERSECT", "EXCEPT", "WITH",
+    # functions commonly used in formulas
+    "DATE_TRUNC", "EXTRACT", "TO_CHAR", "TO_DATE", "CAST", "CONVERT",
+    "COALESCE", "NULLIF", "GREATEST", "LEAST",
+    "ROUND", "FLOOR", "CEIL", "CEILING", "ABS", "POWER", "SQRT",
+    "LENGTH", "LOWER", "UPPER", "TRIM", "CONCAT", "SUBSTRING",
+    "CURRENT_DATE", "CURRENT_TIMESTAMP", "NOW",
+    # type names (in CAST expressions)
+    "INT", "INTEGER", "BIGINT", "SMALLINT", "TEXT", "VARCHAR", "CHAR",
+    "DATE", "TIMESTAMP", "TIMESTAMPTZ", "NUMERIC", "DECIMAL", "FLOAT",
+    "DOUBLE", "REAL", "BOOLEAN", "BOOL",
+    # common time grain keywords used inside DATE_TRUNC/EXTRACT
+    "YEAR", "QUARTER", "MONTH", "WEEK", "DAY", "HOUR", "MINUTE", "SECOND",
+    "EPOCH",
+}
+
+
+def _collect_schema_columns(db_connection: DatabaseConnectionModel) -> Set[str]:
+    """
+    Build a lowercase set of every column name present in the datasource schema.
+    We deliberately include columns from all tables because metric formulas may
+    span joins and we only check identifier existence here, not table affinity.
+    """
+    cols: Set[str] = set()
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {})
+    for node in ds_graph.get("nodes", []) or []:
+        for col in node.get("columns", []) or []:
+            name = (col.get("name") or "").strip()
+            if name:
+                cols.add(name.lower())
+    # Some pipelines also stash column lists under db_schema → tables[].columns[]
+    schema = _safe_json_loads(db_connection.db_schema, {})
+    for table in schema.get("tables", []) or []:
+        for col in table.get("columns", []) or []:
+            name = (col.get("name") or "").strip() if isinstance(col, dict) else ""
+            if name:
+                cols.add(name.lower())
+    return cols
+
+
+def _extract_identifiers_from_formula(formula: str) -> Set[str]:
+    """
+    Pull out plausible column-name references from a metric formula string.
+    Handles both `alias.column` (returns "column") and bare `column` tokens,
+    while filtering out SQL keywords, function names, and type names.
+    """
+    if not isinstance(formula, str) or not formula.strip():
+        return set()
+
+    identifiers: Set[str] = set()
+    # Pattern matches either `alias.column` or a bare identifier.
+    # Groups: (1)=alias, (2)=qualified-column; (3)=bare identifier (when no dot).
+    pattern = re.compile(
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*)"
+    )
+    for match in pattern.finditer(formula):
+        _alias, qualified_col, bare = match.group(1), match.group(2), match.group(3)
+        if qualified_col:
+            # Take the column part only; the alias is a SQL-local symbol, not a real column.
+            identifiers.add(qualified_col.lower())
+            continue
+        if bare:
+            if bare.upper() in _SQL_RESERVED_TOKENS:
+                continue
+            # Skip pure numeric-looking tokens (regex already excludes leading digits, but be safe)
+            if bare.isdigit():
+                continue
+            identifiers.add(bare.lower())
+    return identifiers
+
+
+def _validate_metric_formula_columns(
+    ontology: Dict[str, Any],
+    db_connection: DatabaseConnectionModel,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Walk every metric in the enriched ontology and verify that each identifier
+    in its `formula` and `denominator` exists somewhere in the schema.
+    Metrics with unresolvable columns are stripped out and reported.
+
+    Returns (cleaned_ontology, warnings) where each warning is:
+        {
+            "metric_name": "...",
+            "formula": "...",
+            "missing_columns": ["payment_value", ...],
+            "action": "dropped"
+        }
+    """
+    warnings: List[Dict[str, Any]] = []
+    metrics = ontology.get("metrics")
+    if not isinstance(metrics, list) or not metrics:
+        return ontology, warnings
+
+    schema_cols = _collect_schema_columns(db_connection)
+    if not schema_cols:
+        # No schema info available; skip validation rather than wrongly reject everything.
+        return ontology, warnings
+
+    kept: List[Dict[str, Any]] = []
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            kept.append(metric)
+            continue
+
+        formula = (metric.get("formula") or "").strip()
+        denominator = (metric.get("denominator") or "").strip()
+        # If neither is provided there's nothing to validate.
+        if not formula and not denominator:
+            kept.append(metric)
+            continue
+
+        identifiers = _extract_identifiers_from_formula(formula) | _extract_identifiers_from_formula(denominator)
+        if not identifiers:
+            kept.append(metric)
+            continue
+
+        missing = sorted(ident for ident in identifiers if ident not in schema_cols)
+        if not missing:
+            kept.append(metric)
+            continue
+
+        warnings.append({
+            "metric_name": metric.get("name") or "(unnamed metric)",
+            "formula": formula or denominator,
+            "missing_columns": missing,
+            "action": "dropped",
+        })
+        logger.warning(
+            "Dropping metric '%s' from enriched ontology: formula references "
+            "columns that do not exist in schema: %s. Formula: %s",
+            metric.get("name"),
+            missing,
+            formula or denominator,
+        )
+
+    cleaned = dict(ontology)
+    cleaned["metrics"] = kept
+    if warnings:
+        cleaned.setdefault("metadata", {})["metric_validation_warnings"] = warnings
+    return cleaned, warnings
+
+
+def _get_connection_or_404(db: Session, connection_id: UUID) -> DatabaseConnectionModel:
+    connection = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == connection_id).first()
+    if not connection:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Database connection not found")
+    if not connection.ds_graph_json:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Datasource graph not available yet. Please complete schema extraction first.",
+        )
+    return connection
+
+
+def _get_latest_ontology_version(db: Session, connection_id: UUID) -> Optional[OntologyVersionModel]:
+    return (
+        db.query(OntologyVersionModel)
+        .filter(OntologyVersionModel.datasource_connection_id == connection_id)
+        .order_by(OntologyVersionModel.version_number.desc())
+        .first()
+    )
+
+
+@require_permission(Permission.VIEW_DATASOURCE)
+async def get_latest_ontology(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    _get_connection_or_404(db, connection_id)
+    version = _get_latest_ontology_version(db, connection_id)
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not built yet")
+
+    graph_payload = _safe_json_loads(version.graph_json, {"nodes": [], "edges": [], "stats": {}})
+    ontology_payload = _safe_json_loads(version.ontology_json, {})
+
+    return {
+        "ontology_version_id": str(version.id),
+        "version_label": version.version_label,
+        "status": version.status,
+        "is_base": bool(version.is_base),
+        "graph": graph_payload,
+        "ontology": ontology_payload,
+    }
+
+
+@require_permission(Permission.VIEW_DATASOURCE)
+async def get_latest_ontology_ttl(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    _get_connection_or_404(db, connection_id)
+    version = _get_latest_ontology_version(db, connection_id)
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not built yet")
+
+    ttl = version.ontology_ttl
+    if not ttl:
+        ontology_payload = _safe_json_loads(version.ontology_json, {})
+        ttl = _ontology_to_ttl(ontology_payload)
+        version.ontology_ttl = ttl
+        db.commit()
+    return ttl
+
+
+@require_permission(Permission.VIEW_DATASOURCE)
+async def validate_latest_ontology_ttl(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    """
+    Lightweight Turtle validation for current ontology snapshot.
+    """
+    ttl = await get_latest_ontology_ttl(connection_id, db, token_payload)
+    lines = [ln.strip() for ln in ttl.splitlines() if ln.strip()]
+    errors: List[str] = []
+
+    required_prefixes = [
+        "@prefix ex:",
+        "@prefix owl:",
+        "@prefix rdfs:",
+    ]
+    for p in required_prefixes:
+        if not any(ln.startswith(p) for ln in lines):
+            errors.append(f"Missing required prefix: {p}")
+
+    triple_lines = [ln for ln in lines if not ln.startswith("@prefix")]
+    if not triple_lines:
+        errors.append("No triples found in TTL body.")
+
+    malformed = [ln for ln in triple_lines if not ln.endswith(".")]
+    if malformed:
+        errors.append(f"{len(malformed)} triple line(s) do not end with '.'.")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "triple_count": len(triple_lines),
+    }
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def bootstrap_ontology(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    db_connection = _get_connection_or_404(db, connection_id)
+    latest = _get_latest_ontology_version(db, connection_id)
+    if latest:
+        return await get_latest_ontology(connection_id, db, token_payload)
+
+    ontology = _build_base_ontology(db_connection)
+    ontology = await _llm_refine_ontology(
+        ontology=ontology,
+        db_schema_json=db_connection.db_schema,
+        db_type=db_connection.db_type,
+    )
+    graph = _ontology_to_graph(ontology)
+
+    user_id = token_payload.get("sub") if token_payload else None
+
+    version = OntologyVersionModel(
+        id=uuid4(),
+        datasource_connection_id=connection_id,
+        version_number=1,
+        version_label="base_v1",
+        status="published",
+        is_base=True,
+        ontology_json=json.dumps(ontology),
+        ontology_ttl=_ontology_to_ttl(ontology),
+        graph_json=json.dumps(graph),
+        created_by=UUID(user_id) if user_id else None,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    return {
+        "ontology_version_id": str(version.id),
+        "version_label": version.version_label,
+        "status": version.status,
+        "is_base": bool(version.is_base),
+        "graph": graph,
+        "ontology": ontology,
+    }
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def start_enrichment(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    await bootstrap_ontology(connection_id, db, token_payload)
+    base_version = _get_latest_ontology_version(db, connection_id)
+    if not base_version:
+        raise HTTPException(status_code=500, detail="Failed to prepare base ontology")
+
+    ontology = _safe_json_loads(base_version.ontology_json, {})
+
+    user_id = token_payload.get("sub") if token_payload else None
+
+    initial_message = (
+        "Ontology enrichment chat started. "
+        "Tell me your metric definitions, default date dimension/granularity, status meanings, "
+        "and any default filters. You can ask follow-up questions too."
+    )
+    initial_state = {
+        "chat_history": [{"role": "assistant", "content": initial_message}],
+        "updates": {},
+    }
+
+    session = OntologyEnrichmentSessionModel(
+        id=uuid4(),
+        datasource_connection_id=connection_id,
+        base_ontology_version_id=base_version.id,
+        status="in_progress",
+        questions_json=json.dumps({"mode": "chat"}),
+        answers_json=json.dumps(initial_state),
+        created_by=UUID(user_id) if user_id else None,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return {
+        "session_id": str(session.id),
+        "ontology_version_id": str(base_version.id),
+        "initial_message": initial_message,
+    }
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def enrichment_chat_message(
+    connection_id: UUID,
+    session_id: UUID,
+    message: str,
+    db: Session = Depends(get_db),
+    token_payload: dict = None,
+):
+    _get_connection_or_404(db, connection_id)
+    session = (
+        db.query(OntologyEnrichmentSessionModel)
+        .filter(
+            OntologyEnrichmentSessionModel.id == session_id,
+            OntologyEnrichmentSessionModel.datasource_connection_id == connection_id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Enrichment session not found")
+    if session.status != "in_progress":
+        raise HTTPException(status_code=400, detail="Enrichment session is not active")
+
+    base_version = db.query(OntologyVersionModel).filter(OntologyVersionModel.id == session.base_ontology_version_id).first()
+    if not base_version:
+        raise HTTPException(status_code=404, detail="Base ontology version not found")
+
+    state = _safe_json_loads(session.answers_json, {"chat_history": [], "updates": {}})
+    chat_history = state.get("chat_history", [])
+    updates = state.get("updates", {})
+
+    chat_history.append({"role": "user", "content": message})
+    ontology = _safe_json_loads(base_version.ontology_json, {})
+    llm_resp = await _llm_enrichment_chat(ontology, chat_history, message, str(session_id))
+    assistant_message = llm_resp.get("assistant_message") or "I'm here to help! Feel free to share your business metrics, reporting rules, or any date preferences you'd like to set up."
+    extracted_updates = llm_resp.get("extracted_updates") or {}
+    needs_clarification = bool(llm_resp.get("needs_clarification"))
+
+    if isinstance(extracted_updates, dict):
+        # Deep merge so successive messages accumulate correctly.
+        # Shallow update() would wipe earlier rules/metrics if the same top-level key appears again.
+        # e.g. msg1: {"rules": {"default_time_granularity": "week"}}
+        #      msg2: {"rules": {"default_time_dimension": "order_date"}}
+        # → both should survive in updates["rules"] together.
+        for key, value in extracted_updates.items():
+            if key in updates and isinstance(updates[key], dict) and isinstance(value, dict):
+                if key == "metrics":
+                    # Metric-level deep merge so a pending clarification can clear
+                    # previously stored formula fields for the same metric.
+                    for metric_name, metric_update in value.items():
+                        if (
+                            metric_name in updates[key]
+                            and isinstance(updates[key][metric_name], dict)
+                            and isinstance(metric_update, dict)
+                        ):
+                            updates[key][metric_name].update(metric_update)
+                            if (
+                                str(metric_update.get("status") or "").lower() == "pending"
+                                and not str(metric_update.get("formula") or "").strip()
+                            ):
+                                updates[key][metric_name].pop("formula", None)
+                        else:
+                            updates[key][metric_name] = metric_update
+                else:
+                    updates[key].update(value)
+            elif key in updates and isinstance(updates[key], list) and isinstance(value, list):
+                # For lists (e.g. aliases), append new items without duplicating by term
+                existing_terms = {item.get("term") for item in updates[key] if isinstance(item, dict) and "term" in item}
+                for item in value:
+                    if isinstance(item, dict) and item.get("term") not in existing_terms:
+                        updates[key].append(item)
+            else:
+                updates[key] = value
+    chat_history.append({"role": "assistant", "content": assistant_message})
+
+    session.answers_json = json.dumps({"chat_history": chat_history, "updates": updates})
+    db.commit()
+
+    return {
+        "session_id": str(session.id),
+        "assistant_message": assistant_message,
+        "extracted_updates": updates,
+        "chat_history": chat_history,
+        "needs_clarification": needs_clarification,
+    }
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def submit_enrichment_answers(
+    connection_id: UUID,
+    session_id: UUID,
+    answers: List[Dict[str, Any]],
+    db: Session = Depends(get_db),
+    token_payload: dict = None,
+):
+    submit_start = time.perf_counter()
+    db_connection = _get_connection_or_404(db, connection_id)
+
+    session = (
+        db.query(OntologyEnrichmentSessionModel)
+        .filter(
+            OntologyEnrichmentSessionModel.id == session_id,
+            OntologyEnrichmentSessionModel.datasource_connection_id == connection_id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Enrichment session not found")
+
+    base_version = db.query(OntologyVersionModel).filter(OntologyVersionModel.id == session.base_ontology_version_id).first()
+    if not base_version:
+        raise HTTPException(status_code=404, detail="Base ontology version not found")
+
+    state = _safe_json_loads(session.answers_json, {})
+    answers_map = {}
+    if isinstance(state, dict):
+        answers_map = state.get("updates", {}) or {}
+    if not answers_map:
+        answers_map = {}
+    # Merge any additional frontend-provided answers, but only if they are richer
+    # than what the session already has. This prevents the frontend from overwriting
+    # correctly-typed nested dicts with "[object Object]" strings.
+    for item in answers:
+        qid = item.get("question_id")
+        answer = item.get("answer")
+        if not qid or answer is None:
+            continue
+        existing = answers_map.get(qid)
+        # Skip if the incoming value is a plain string and the session already holds a dict
+        if isinstance(existing, dict) and isinstance(answer, str):
+            continue
+        if isinstance(existing, list) and isinstance(answer, str):
+            continue
+        answers_map[qid] = answer
+
+    base_ontology = _safe_json_loads(base_version.ontology_json, {})
+    apply_start = time.perf_counter()
+    try:
+        enriched_ontology = await _apply_answers_to_ontology(base_ontology, answers_map)
+    except Exception as exc:
+        logger.warning("apply_answers_to_ontology failed, using base ontology: %s", str(exc))
+        enriched_ontology = dict(base_ontology)
+        enriched_ontology.setdefault("metadata", {})["enrichment_apply_error"] = True
+    apply_elapsed = round(time.perf_counter() - apply_start, 3)
+
+    # Validate metric formulas against the actual schema. Metrics referencing
+    # columns that don't exist would be ignored by NL2SQL anyway (it has strict
+    # "no column hallucination" rules), so we drop them here and tell the user.
+    try:
+        enriched_ontology, metric_warnings = _validate_metric_formula_columns(
+            enriched_ontology, db_connection
+        )
+    except Exception as exc:
+        logger.warning("Metric formula validation failed (non-fatal): %s", str(exc))
+        metric_warnings = []
+
+    # Skip post-enrichment LLM refinement: the ontology was already refined at bootstrap
+    # and re-running refinement on large ontologies (80–100 KB) causes timeouts that
+    # would strip the user-provided business definitions before they can be saved.
+    try:
+        enriched_graph = _ontology_to_graph(enriched_ontology)
+    except Exception as exc:
+        logger.warning("_ontology_to_graph failed, building empty graph: %s", str(exc))
+        enriched_graph = {"nodes": [], "edges": [], "stats": {"class_count": 0, "metric_count": 0, "relation_count": 0}}
+    graph_elapsed = round(time.perf_counter() - apply_start, 3) - apply_elapsed
+
+    latest = _get_latest_ontology_version(db, connection_id)
+    next_version = 1 if not latest else latest.version_number + 1
+
+    user_id = token_payload.get("sub") if token_payload else None
+
+    new_version = OntologyVersionModel(
+        id=uuid4(),
+        datasource_connection_id=connection_id,
+        version_number=next_version,
+        version_label=f"enriched_v{next_version}",
+        status="published",
+        is_base=False,
+        ontology_json=json.dumps(enriched_ontology),
+        ontology_ttl=_ontology_to_ttl(enriched_ontology),
+        graph_json=json.dumps(enriched_graph),
+        created_by=UUID(user_id) if user_id else None,
+    )
+
+    session.answers_json = json.dumps({"chat_history": state.get("chat_history", []), "updates": answers_map})
+    session.status = "completed"
+    session.completed_at = datetime.now(timezone.utc)
+
+    db.add(new_version)
+    db.commit()
+    db.refresh(new_version)
+    total_elapsed = round(time.perf_counter() - submit_start, 3)
+    logger.info(
+        "Ontology apply completed | connection_id=%s | session_id=%s | apply_s=%s | graph_s=%s | total_s=%s | updates_keys=%s",
+        str(connection_id),
+        str(session_id),
+        apply_elapsed,
+        round(max(graph_elapsed, 0.0), 3),
+        total_elapsed,
+        list(answers_map.keys()),
+    )
+
+    return {
+        "ontology_version_id": str(new_version.id),
+        "version_label": new_version.version_label,
+        "status": new_version.status,
+        "is_base": False,
+        "graph": enriched_graph,
+        "ontology": enriched_ontology,
+        "metric_warnings": metric_warnings,
+    }
