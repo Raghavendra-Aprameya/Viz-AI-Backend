@@ -2,16 +2,17 @@
 Embed Service
 
 Handles creation, validation, and revocation of share tokens for
-dashboard embedding. Implements HMAC-SHA256 signing, token persistence,
-and embed data retrieval.
+dashboard embedding. Implements HMAC-SHA256 signing, share-token persistence,
+stateless embed JWT sessions, and embed data retrieval.
 """
 
 import hashlib
 import hmac
 import logging
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import date as _date_type, datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -29,8 +30,33 @@ from app.models.schema_models import (
 )
 from app.services.allowed_domains import get_allowed_domains_list
 from app.services.app_service import normalize_domain
+from app.utils.embed_jwt import (
+    decode_embed_jwt_for_refresh,
+    issue_embed_jwt,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe_value(value: Any) -> Any:
+    """Convert DB-driver values to JSON-serializable primitives."""
+    if value is None:
+        return None
+    if isinstance(value, (datetime, _date_type)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return str(value)
+    return value
+
+
+def _json_safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Sanitize a full row dict for JSON serialization."""
+    return {k: _json_safe_value(v) for k, v in row.items()}
 
 
 def _get_embed_secret() -> str:
@@ -113,6 +139,33 @@ def check_origin(origin: str | None, allowed_domains: list[str]) -> tuple[bool, 
         return True, "allowed"
     
     return False, "rejected"
+
+
+async def refresh_embed_jwt(
+    raw_jwt: str,
+    share_token_id: UUID,
+    db: Session,
+    origin: str | None = None,
+) -> dict:
+    """
+    Refresh embed session: verify current JWT (signature + grace), recheck share
+    token in DB, issue a new 30-minute JWT.
+    """
+    claims = decode_embed_jwt_for_refresh(raw_jwt)
+    if claims.share_token_id != share_token_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "jwt_invalid",
+                "message": "Share token does not match session.",
+            },
+        )
+
+    share = await validate_embed_token(share_token_id, db, origin=origin)
+    logger.info(
+        f"[EMBED] Embed JWT refreshed for share_token {str(share_token_id)[:8]}..."
+    )
+    return issue_embed_jwt(share)
 
 
 async def create_share_token(
@@ -503,24 +556,15 @@ async def validate_embed_token(
     return token
 
 
-async def get_embed_dashboard_data(
-    token: ShareTokenModel,
+async def get_embed_dashboard_data_by_dashboard_id(
+    dashboard_id: UUID,
     db: Session,
 ) -> dict:
-    """
-    Get all dashboard and chart data for rendering in the embed page.
-
-    Args:
-        token: Validated ShareTokenModel
-        db: SQLAlchemy session
-
-    Returns:
-        dict with dashboard title and charts info
-    """
+    """Dashboard metadata for embed (title + charts) by dashboard id."""
     start_time = time.time()
 
     dashboard = db.query(DashboardModel).filter(
-        DashboardModel.id == token.dashboard_id
+        DashboardModel.id == dashboard_id
     ).first()
 
     if not dashboard:
@@ -554,7 +598,7 @@ async def get_embed_dashboard_data(
     duration_ms = int((time.time() - start_time) * 1000)
     logger.info(
         f"[EMBED][STEP 8] Embed HTML rendered for dashboard "
-        f"{str(token.dashboard_id)[:8]}... — {len(charts)} charts — duration: {duration_ms}ms"
+        f"{str(dashboard_id)[:8]}... — {len(charts)} charts — duration: {duration_ms}ms"
     )
 
     return {
@@ -564,29 +608,28 @@ async def get_embed_dashboard_data(
     }
 
 
-async def get_embed_chart_data(
+async def get_embed_dashboard_data(
     token: ShareTokenModel,
+    db: Session,
+) -> dict:
+    """Dashboard metadata using a validated share token."""
+    return await get_embed_dashboard_data_by_dashboard_id(token.dashboard_id, db)
+
+
+async def get_embed_chart_data_by_dashboard(
+    dashboard_id: UUID,
     chart_id: UUID,
     db: Session,
 ) -> dict:
     """
-    Get data for a specific chart in an embedded dashboard.
-    Executes the chart's query against the external database.
-
-    Args:
-        token: Validated ShareTokenModel
-        chart_id: UUID of the chart
-        db: SQLAlchemy session
-
-    Returns:
-        dict with chart data
+    Get chart data for an embedded dashboard using dashboard_id from JWT claims.
+    Verifies chart membership via DashboardChartsModel, then runs the chart query.
     """
     start_time = time.time()
 
-    # Verify this chart belongs to the token's dashboard
     dc = db.query(DashboardChartsModel).filter(
         and_(
-            DashboardChartsModel.dashboard_id == token.dashboard_id,
+            DashboardChartsModel.dashboard_id == dashboard_id,
             DashboardChartsModel.chart_id == chart_id,
         )
     ).first()
@@ -594,7 +637,10 @@ async def get_embed_chart_data(
     if not dc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Chart not found in this dashboard",
+            detail={
+                "error": "chart_not_in_dashboard",
+                "message": "Chart not found in this dashboard",
+            },
         )
 
     chart = db.query(ChartModel).filter(ChartModel.id == chart_id).first()
@@ -635,7 +681,7 @@ async def get_embed_chart_data(
             result = conn.execute(
                 __import__("sqlalchemy").text(chart.query)
             )
-            rows = [dict(row._mapping) for row in result]
+            rows = [_json_safe_row(dict(row._mapping)) for row in result]
 
         duration_ms = int((time.time() - start_time) * 1000)
         logger.info(
@@ -667,3 +713,14 @@ async def get_embed_chart_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch chart data",
         )
+
+
+async def get_embed_chart_data(
+    token: ShareTokenModel,
+    chart_id: UUID,
+    db: Session,
+) -> dict:
+    """Legacy entry point — delegates to dashboard-scoped fetch."""
+    return await get_embed_chart_data_by_dashboard(
+        token.dashboard_id, chart_id, db
+    )
