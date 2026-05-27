@@ -677,7 +677,7 @@ class ShareTokenModel(Base):
         Index("idx_share_tokens_active", "is_active", "expires_at"),
     )
 
-    dashboard = relationship("DashboardModel", backref="share_tokens")
+    dashboard = relationship("DashboardModel", backref="share_tokens", passive_deletes=True)
     creator = relationship("UserModel")
 
 

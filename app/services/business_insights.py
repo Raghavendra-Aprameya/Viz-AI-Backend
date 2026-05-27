@@ -11,6 +11,7 @@ The service leverages LangChain for structured LLM interactions and
 provides comprehensive business intelligence based on actual data.
 """
 
+import asyncio
 import json
 import logging
 from typing import Dict, List, Any
@@ -34,6 +35,26 @@ import os
 logger = logging.getLogger(__name__)
 
 REDIS_TTL_SECONDS = 3600  # 1 hour
+
+# ---------------------------------------------------------------------------
+# Schema trimming – send only what the LLM needs (table + column names +
+# data type).  Dropping nullable, lengths, and other metadata cuts token
+# usage significantly on large schemas.
+# ---------------------------------------------------------------------------
+def _trim_schema(schema_info: Dict[str, Any]) -> Dict[str, Any]:
+    trimmed = []
+    for table in schema_info.get("tables", []):
+        cols = []
+        for col in table.get("columns", []):
+            entry: Dict[str, Any] = {"name": col.get("column_name") or col.get("name", "")}
+            dtype = col.get("data_type") or col.get("type", "")
+            if dtype:
+                entry["type"] = dtype
+            cols.append(entry)
+        trimmed.append({"table_name": table.get("table_name", ""), "columns": cols})
+    return {"tables": trimmed}
+
+
 redis_url = settings.REDIS_URL
 if redis_url:
     redis_client = redis.from_url(redis_url, decode_responses=True)
@@ -344,10 +365,11 @@ async def generate_kpi_queries_with_llm(
             )
         llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.2,
+            temperature=0.1,
+            max_tokens=1500,
             api_key=openai_api_key,
         )
-        
+
         soql_guidelines = """
 Write queries ONLY using SOQL (Salesforce Object Query Language) syntax - NOT SQL.
 CRITICAL SOQL-specific requirements:
@@ -415,14 +437,17 @@ CRITICAL Oracle-specific syntax requirements:
 
         query_type_label = "SOQL query" if db_type == "salesforce" else f"{db_type.upper()} SQL query"
 
+        # Trim schema before injecting into prompt to reduce token usage
+        trimmed_schema = _trim_schema(schema_info)
+
         # Create comprehensive prompt for KPI generation, injecting dialect guidance when needed
         prompt = f"""
-You are a business intelligence expert. Analyze the following database schema and generate 10 important KPI (Key Performance Indicator) {"SOQL" if db_type == "salesforce" else "SQL"} queries that would provide valuable business insights FOR THIS SPECIFIC {"Salesforce org" if db_type == "salesforce" else "database"}.
+You are a business intelligence expert. Analyze the following database schema and generate 7 important KPI (Key Performance Indicator) {"SOQL" if db_type == "salesforce" else "SQL"} queries that would provide valuable business insights FOR THIS SPECIFIC {"Salesforce org" if db_type == "salesforce" else "database"}.
 
 Database Type: {db_type}
 
 Database Schema (USER'S BUSINESS DATA - tables/objects and columns/fields):
-{json.dumps(schema_info, indent=2)}
+{json.dumps(trimmed_schema, indent=2)}
 
 IMPORTANT INSTRUCTIONS:
 - This is a USER'S BUSINESS {"Salesforce org" if db_type == "salesforce" else "DATABASE"}, NOT a VizAI internal database
@@ -456,7 +481,7 @@ Return the response as a JSON array with this exact structure:
 {"CRITICAL FOR SALESFORCE: SOQL does NOT support AS keyword. Use SELECT COUNT(Id) count NOT SELECT COUNT(Id) AS count. Example: SELECT SUM(Amount) total_revenue FROM Opportunity" if db_type == "salesforce" else ""}
 
 CRITICAL REQUIREMENTS:
-- Generate exactly 10 KPIs
+- Generate exactly 7 KPIs
 - Use ONLY tables/objects and columns/fields from the schema provided above
 - Queries must be syntactically correct for {db_type} (use {db_type}-specific syntax){dialect_guidance}
 - For PostgreSQL: Use INTERVAL '30 days', DATE_TRUNC, etc.
@@ -474,11 +499,11 @@ Just the raw JSON array starting with [ and ending with ].
 """
         
         logger.debug("Generating KPI queries with LLM...")
-        response = llm.invoke(prompt)
-        
+        response = await llm.ainvoke(prompt)
+
         # Parse JSON response
         response_text = (response.content or "").strip()
-        
+
         # Remove markdown code blocks if present
         if response_text.startswith("```json"):
             response_text = response_text.split("```json")[1]
@@ -486,11 +511,10 @@ Just the raw JSON array starting with [ and ending with ].
             response_text = response_text.split("```")[1]
         if "```" in response_text:
             response_text = response_text.split("```")[0]
-        
+
         response_text = response_text.strip()
-        
+
         # Try to extract JSON array if there's extra text
-        # Look for the JSON array pattern
         if response_text.startswith("[") and "]" in response_text:
             # Find the closing bracket of the JSON array
             bracket_count = 0
@@ -551,22 +575,16 @@ async def execute_kpi_queries(
             connection_string=decrypted_connection_string,
             db_type=db_connection.db_type
         )
-        logger.info("Executing %d KPI queries (SQL)", len(queries))
-        results = []
+        logger.info("Executing %d KPI queries concurrently (SQL)", len(queries))
 
-        for kpi in queries:
-            # Use a new connection for each query to avoid transaction issues
+        def _run_single_query(kpi: Dict[str, str]) -> Dict[str, Any]:
+            """Execute one KPI query synchronously (called via asyncio.to_thread)."""
             try:
                 with engine.connect() as connection:
                     logger.debug(f"Executing query for KPI: {kpi['kpi_title']}")
-                    
-                    query_result = connection.execute(text(kpi['sql_query']))
-                    
-                    # Convert results to list of dictionaries
+                    query_result = connection.execute(text(kpi["sql_query"]))
                     columns = query_result.keys()
                     rows = [dict(zip(columns, row)) for row in query_result.fetchall()]
-                    
-                    # Convert any non-serializable types
                     serializable_rows = []
                     for row in rows:
                         serializable_row = {}
@@ -578,31 +596,32 @@ async def execute_kpi_queries(
                             else:
                                 serializable_row[key] = str(value)
                         serializable_rows.append(serializable_row)
-                    
-                    results.append({
-                        "kpi_title": kpi['kpi_title'],
-                        "description": kpi['description'],
-                        "query": kpi['sql_query'],
+                    return {
+                        "kpi_title": kpi["kpi_title"],
+                        "description": kpi["description"],
+                        "query": kpi["sql_query"],
                         "success": True,
                         "data": serializable_rows,
-                        "row_count": len(serializable_rows)
-                    })
-                    
+                        "row_count": len(serializable_rows),
+                    }
             except Exception as query_error:
                 logger.error(f"Error executing query for {kpi['kpi_title']}: {str(query_error)}")
-                results.append({
-                    "kpi_title": kpi['kpi_title'],
-                    "description": kpi['description'],
-                    "query": kpi['sql_query'],
+                return {
+                    "kpi_title": kpi["kpi_title"],
+                    "description": kpi["description"],
+                    "query": kpi["sql_query"],
                     "success": False,
                     "error": str(query_error),
                     "data": [],
-                    "row_count": 0
-                })
+                    "row_count": 0,
+                }
 
-        # Engine is managed by external_engine_manager, no dispose() needed
+        # Run all KPI queries in parallel – each gets its own thread+connection
+        results = list(
+            await asyncio.gather(*[asyncio.to_thread(_run_single_query, kpi) for kpi in queries])
+        )
 
-        successful_queries = sum(1 for r in results if r['success'])
+        successful_queries = sum(1 for r in results if r["success"])
         logger.info("Executed %d/%d KPI queries successfully", successful_queries, len(queries))
 
         return results
@@ -645,18 +664,19 @@ async def generate_insights_from_results(
             )
         llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.2,
+            temperature=0.1,
+            max_tokens=2500,
             api_key=openai_api_key,
         )
-        
-        # Prepare query results summary
+
+        # Prepare query results summary – cap each KPI to 3 rows to limit context size
         results_summary = []
         for result in query_results:
-            if result['success']:
+            if result["success"]:
                 results_summary.append({
-                    "kpi": result['kpi_title'],
-                    "description": result['description'],
-                    "data": result['data'][:5]  # Limit to first 5 rows for context
+                    "kpi": result["kpi_title"],
+                    "description": result["description"],
+                    "data": result["data"][:3],
                 })
         
         # Create prompt for insight generation
@@ -672,7 +692,11 @@ Provide a detailed analysis including:
 
 2. **Key Metrics Analysis**: For each major KPI, explain:
    - What the numbers mean
-   - Whether they indicate positive or negative trends
+   - Whether they indicate positive or negative trends (and label it explicitly as `trend`)
+   - Set `trend` strictly as:
+     - `positive` if the metric is improving/increasing/performing better than before
+     - `negative` if the metric is worsening/decreasing/performing worse than before
+     - `neutral` if the trend is unclear or mixed
    - Potential business implications
    - The reasoning behind your interpretation (what data points led to this conclusion)
 
@@ -695,6 +719,7 @@ Return the response as a JSON object with this structure:
       "kpi_name": "string",
       "value_interpretation": "string",
       "business_impact": "string",
+      "trend": "positive|negative|neutral",
       "reasoning": "string (explain what specific data points or patterns led to this interpretation)"
     }}
   ],
@@ -729,7 +754,7 @@ Just the raw JSON object starting with {{ and ending with }}.
 """
         
         logger.debug("Generating business insights with LLM...")
-        response = llm.invoke(prompt)
+        response = await llm.ainvoke(prompt)
         
         # Parse JSON response
         response_text = (response.content or "").strip()

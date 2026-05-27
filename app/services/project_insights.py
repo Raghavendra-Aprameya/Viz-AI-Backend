@@ -5,6 +5,7 @@ This module generates comprehensive business insights across ALL database connec
 within a project, providing a unified strategic view of the entire project's data.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -150,36 +151,30 @@ async def generate_project_insights_service(
         
         logger.info(f"Found {len(db_connections)} database connections")
         
-        # Generate insights for each database
-        all_database_insights = []
-        
-        for db_connection in db_connections:
+        # Analyse all databases concurrently instead of one-by-one
+        async def _analyze_single_database(db_connection) -> Dict[str, Any]:
             try:
                 logger.info(f"Analyzing database: {db_connection.connection_name}")
-                
-                # Load schema
+
                 if not db_connection.db_schema:
                     logger.warning(f"Skipping {db_connection.connection_name} - no schema available")
-                    all_database_insights.append({
+                    return {
                         "database_id": str(db_connection.id),
                         "database_name": db_connection.connection_name,
                         "database_type": db_connection.db_type or "unknown",
                         "status": "skipped",
                         "error": "No schema available",
-                        "insights": None
-                    })
-                    continue
-                
+                        "insights": None,
+                    }
+
                 schema_info = json.loads(db_connection.db_schema)
                 db_type = db_connection.db_type or "postgres"
-                
-                # Generate KPI queries (SQL or SOQL based on db_type)
+
                 kpi_queries = await generate_kpi_queries_with_llm(
                     schema_info=schema_info,
                     db_type=db_type,
                 )
-                
-                # Execute queries: Salesforce uses SOQL; SQL DBs use SQLAlchemy
+
                 if db_type == "salesforce":
                     query_results = await execute_salesforce_kpi_queries(
                         db_connection=db_connection,
@@ -188,35 +183,38 @@ async def generate_project_insights_service(
                 else:
                     query_results = await execute_kpi_queries(
                         db_connection=db_connection,
-                        queries=kpi_queries
+                        queries=kpi_queries,
                     )
-                
-                # Generate insights
+
                 database_insights = await generate_insights_from_results(
                     schema_info=schema_info,
                     query_results=query_results,
                 )
-                
-                all_database_insights.append({
+
+                return {
                     "database_id": str(db_connection.id),
                     "database_name": db_connection.connection_name,
                     "database_type": db_type,
                     "kpis_analyzed": len(kpi_queries),
-                    "successful_queries": sum(1 for r in query_results if r['success']),
+                    "successful_queries": sum(1 for r in query_results if r["success"]),
                     "status": "success",
-                    "insights": database_insights
-                })
-                
+                    "insights": database_insights,
+                }
+
             except Exception as e:
                 logger.error(f"Error analyzing {db_connection.connection_name}: {str(e)}")
-                all_database_insights.append({
+                return {
                     "database_id": str(db_connection.id),
                     "database_name": db_connection.connection_name,
                     "database_type": db_connection.db_type or "unknown",
                     "status": "failed",
                     "error": str(e),
-                    "insights": None
-                })
+                    "insights": None,
+                }
+
+        all_database_insights = list(
+            await asyncio.gather(*[_analyze_single_database(conn) for conn in db_connections])
+        )
         
         # Generate consolidated project-level insights
         consolidated_insights = await generate_consolidated_insights(
@@ -405,7 +403,7 @@ Just the raw JSON object starting with {{ and ending with }}.
 """
         
         logger.info("Generating consolidated project insights...")
-        response = model.generate_content(prompt)
+        response = await asyncio.to_thread(model.generate_content, prompt)
         
         # Parse JSON response
         response_text = response.text.strip()

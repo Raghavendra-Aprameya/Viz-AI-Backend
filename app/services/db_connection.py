@@ -632,7 +632,9 @@ async def create_database_connection(
             username = data.username or data.name or ""
             if not all([username, password, host, db_name]):
                 raise HTTPException(status_code=400, detail="PostgreSQL requires username (or name), password, host, and database name")
-            connection_string = f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
+            schema_name = (getattr(data, "schema_name", None) or "").strip()
+            search_path_suffix = f"?options=-csearch_path%3D{quote_plus(schema_name)}" if schema_name else ""
+            connection_string = f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}{search_path_suffix}"
         elif db_type == "mysql":
             username = data.username or data.name or ""
             if not all([username, password, host, db_name]):

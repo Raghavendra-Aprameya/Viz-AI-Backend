@@ -417,7 +417,6 @@ def execute_external_query(
         connection_string=decrypt_conn_string,
         db_type=db_connection.db_type
     )
-
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
     try:

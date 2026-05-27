@@ -261,55 +261,92 @@ If the user sends only a greeting (hi, hello, thanks) with no business content:
 ══════════════════════════════════════════════════
 METRIC FORMULA — CRITICAL RULE
 ══════════════════════════════════════════════════
-The `formula` field MUST always be a valid SQL expression using real column names.
+The `formula` field MUST always be a valid SQL expression.
 
-✓ CORRECT:  SUM(price_after_discount) / COUNT(DISTINCT customer_id)
-✓ CORRECT:  AVG(payment_value)
-✓ CORRECT:  SUM(order_items.price) / COUNT(DISTINCT orders.order_id)
-✗ WRONG:    Price After Discount / Number of Orders
-✗ WRONG:    total sales / unique customers
+COLUMN FORMAT: ALWAYS use the `use_in_formula` value from schema_columns (table.column).
+  ✓ CORRECT:  SUM(order_header.price_after_discount) / COUNT(DISTINCT order_header.customer_id)
+  ✓ CORRECT:  AVG(order_items.payment_value)
+  ✓ CORRECT:  SUM(order_items.price) / COUNT(DISTINCT orders.order_id)
+  ✗ WRONG:    SUM(price_after_discount)      ← bare column name, not safe in JOINs
+  ✗ WRONG:    COUNT(DISTINCT order_id)       ← ambiguous if order_id exists in multiple tables
+  ✗ WRONG:    Price After Discount / Number of Orders  ← plain English, not SQL
 
-SQL formula guide:
-  "total X"         → SUM(actual_col_name)
-  "average X"       → AVG(actual_col_name) or SUM(x)/COUNT(y)
-  "number of Y"     → COUNT(DISTINCT y_id_column)
-  "per customer"    → divide by COUNT(DISTINCT customer_id_column)
-  "per order"       → divide by COUNT(DISTINCT order_id_column)
+SQL formula guide (always use table.column format):
+  "total X"         → SUM(table.col_name)
+  "average X"       → AVG(table.col_name) or SUM(t.x)/COUNT(t.y)
+  "number of Y"     → COUNT(DISTINCT table.y_id_column)
+  "per customer"    → divide by COUNT(DISTINCT table.customer_id_column)
+  "per order"       → divide by COUNT(DISTINCT table.order_id_column)
 
 ══════════════════════════════════════════════════
-CASES
+CASES — read in order, use the FIRST that matches
 ══════════════════════════════════════════════════
 CASE A — User gives an explicit SQL formula:
-  Preserve verbatim. needs_clarification=false.
+  Example: "Revenue per Order = SUM(price_after_discount) / COUNT(DISTINCT order_id)"
+  Action: Preserve formula verbatim. needs_clarification=false.
 
-CASE B — Natural language + ONE clear column match:
-  Derive SQL formula. needs_clarification=false.
+CASE E — User defines the metric WITH an explicit arithmetic description (HIGHEST PRIORITY
+          after CASE A — check this BEFORE looking at column ambiguity):
+  Pattern: "<Name> is/equals/means <arithmetic expression using business terms>"
+  Examples:
+    "Total Revenue is 3 times the number of orders per year"
+    "Average Order Value is total sales divided by number of orders"
+    "Net Revenue is total sales minus total discounts"
+    "Projected Revenue is current revenue times 1.25"
+    "Conversion Rate is signups divided by total visitors"
+  Rules:
+  - Use the DEFINITION (the part after "is"/"equals"), NOT the metric name, to pick columns.
+  - Map each business term in the definition to real schema columns:
+      "number of orders" / "order count"        → COUNT(DISTINCT <order_id_col>)
+      "total sales" / "total revenue"            → SUM(<revenue_col>)
+      "total discounts" / "discount amount"      → SUM(<discount_col>)
+      "number of customers" / "unique customers" → COUNT(DISTINCT <customer_id_col>)
+  - Arithmetic words: "times"/"multiplied by" → *,  "divided by" → /,
+                      "minus"/"less" → -,  "plus"/"added to" → +
+  - "N times X" → (SQL for X) * N  e.g. "3 times orders" → COUNT(DISTINCT order_id) * 3
+  - CLARIFICATION RULE: still ask a follow-up if a specific TERM in the definition maps
+    to multiple columns. Ask about the TERM from the definition — NOT the metric name.
+    WRONG question: "which column is your Total Revenue?"  ← about the metric name
+    RIGHT question:  "which column represents 'number of orders'?" ← about the definition term
+    Format: "To calculate <MetricName> as <plain description>, which column represents
+             '<ambiguous term>'?
+             1. <Label> (<Table>)
+             2. <Label> (<Table>)
+             Just reply with the number!"
+  - needs_clarification=true when ANY definition term maps to multiple columns.
+  - needs_clarification=false only when EVERY term maps to exactly ONE column.
+  - metrics: one object, status="active" when formula resolved, "pending" while waiting.
+
+CASE B — Natural language metric name with NO formula definition + ONE clear column match:
+  Example: "Average Order Value" (no definition given, schema has one clear order-value col)
+  Action: Derive SQL formula. needs_clarification=false.
   assistant_message: confirm in friendly plain English (no SQL shown).
-  metrics: include one object with name, description, formula (SQL), status=\"active\".
+  metrics: one object, formula (SQL), status="active".
 
-CASE C — Natural language + MULTIPLE plausible columns or tables:
+CASE C — Natural language metric name with NO formula definition + MULTIPLE column candidates:
+  Example: "Total Revenue" (no definition, schema has price_after_discount AND payment_value)
+  IMPORTANT: Only reach CASE C when the user has NOT defined how to calculate the metric.
+             If the user said "X is Y times Z" — that is CASE E, not CASE C.
   needs_clarification=true.
-  metrics: include one object with name, description, formula=\"\", status=\"pending\".
-  assistant_message: list options as numbered list with READABLE LABELS only
-  (price_after_discount → "Price After Discount", order_header → "Order Header").
+  metrics: one object, formula="", status="pending".
+  assistant_message: list ONLY the ambiguous term's options as a numbered list with
+  READABLE LABELS (price_after_discount → "Price After Discount").
   Example:
-    "To calculate Revenue per Customer I found a few options — which one is total sales?
+    "To calculate Total Revenue I found a few options — which one should I use?
      1. Price After Discount (Order Header)
      2. Payment Value (Payments)
     Just reply with the number!"
   NEVER show raw column names to the user.
 
-CASE D — User answers a clarification (e.g. "1", "price after discount", "the second"):
-  Map their answer to the real column from the previous list.
-  Build the SQL formula. needs_clarification=false.
+CASE D — User answers a previous clarification question:
+  Examples: "1",  "the second one",  "price after discount",  "use payment value"
+  Action: Map answer back to the real column. Build the SQL formula. needs_clarification=false.
   assistant_message: friendly confirmation in plain English.
-  metrics: YOU MUST include one object in the metrics array with ALL four fields:
-    - name: EXACTLY the same business metric name from the previous clarification question
-            (e.g. if the question was "To calculate Adjusted Revenue Per Customer I need…",
-             then name = "Adjusted Revenue Per Customer").
-            NEVER use "Metric" as the name. NEVER leave name blank.
-    - description: same short plain-English description as the original pending metric.
-    - formula: the resolved SQL expression using the chosen real column name.
+  metrics: YOU MUST include one object with ALL four fields:
+    - name: EXACTLY the same metric name from the clarification question.
+            NEVER use "Metric". NEVER leave it blank.
+    - description: same plain-English description as the pending metric.
+    - formula: the resolved SQL expression.
     - status: "active"
 
 ══════════════════════════════════════════════════
@@ -350,7 +387,13 @@ def _build_enrichment_schema_columns(
             continue
         raw_cid = str(attr.get("class_id") or attr.get("class") or "unknown")
         table = id_to_table.get(raw_cid, raw_cid)
-        col = {"name": attr.get("name"), "type": attr.get("type", "unknown")}
+        col_name = attr.get("name") or ""
+        col = {
+            "name": col_name,
+            "type": attr.get("type", "unknown"),
+            # Qualified name hint so the LLM always writes table.column in formulas.
+            "use_in_formula": f"{table}.{col_name}" if col_name else "",
+        }
         by_table.setdefault(table, []).append(col)
 
     def _priority(c: dict) -> int:
@@ -556,30 +599,82 @@ def _resolve_customer_candidate_selection(
     return None
 
 
-def _recover_metric_name_from_chat(chat_history: List[Dict[str, str]]) -> Optional[str]:
+def _qualify_formula_columns(
+    formula: str,
+    column_index: Dict[str, List[Tuple[str, str]]],
+) -> str:
     """
-    When the LLM drops the metric name in a CASE-D (clarification-answer) response,
-    try to recover it from the most recent assistant clarification message.
+    Replace bare column references in a SQL formula with table.column qualified names.
 
-    Patterns we look for (generated by _build_customer_clarification_message and the
-    fallback clarification builder):
-      "To calculate <MetricName>, I still need one detail…"
-      "I want to confirm one thing before saving <MetricName>."
+    Only qualifies when a column name maps to EXACTLY ONE table — if the same column
+    name appears in multiple tables the reference is left as-is so the NL2SQL engine
+    can decide, rather than silently picking the wrong table.
+
+    Examples:
+      "COUNT(DISTINCT order_id) * 3"
+        order_id → only in order_header → "COUNT(DISTINCT order_header.order_id) * 3"
+
+      "SUM(price) - SUM(discount)"
+        price    → in order_items AND products → left bare (ambiguous)
+        discount → only in order_items         → "SUM(order_items.discount)"
     """
-    for msg in reversed(chat_history or []):
-        if str((msg or {}).get("role") or "").lower() != "assistant":
+    if not formula or not column_index:
+        return formula
+
+    def _replace(m: re.Match) -> str:
+        ident = m.group(1)
+        if ident.upper() in _SQL_RESERVED_TOKENS:
+            return m.group(0)
+        candidates = column_index.get(ident.lower(), [])
+        if len(candidates) == 1:
+            table, original_col = candidates[0]
+            # Reconstruct with surrounding non-word chars preserved.
+            return m.group(0).replace(ident, f"{table}.{original_col}", 1)
+        return m.group(0)
+
+    # Match bare word-boundary identifiers:
+    #   - NOT already preceded by a dot  (already qualified: tbl.col)
+    #   - NOT followed by an open-paren  (function call: SUM(), COUNT()…)
+    return re.sub(
+        r"(?<![.\w])([A-Za-z_][A-Za-z0-9_]*)(?!\s*\()(?![.\w])",
+        _replace,
+        formula,
+    )
+
+
+def _infer_class_from_formula(
+    formula: str,
+    classes: List[Dict[str, Any]],
+) -> Optional[str]:
+    """
+    Inspect a SQL formula for table.column references and return the class ID of the
+    first table whose name (or table attribute) matches a table found in the formula.
+
+    Returns None when no match can be made so callers can omit based_on_class rather
+    than pointing to a random/wrong class.
+    """
+    if not formula or not classes:
+        return None
+
+    # Build a lookup: lowercase table-name (or class name) → class id.
+    table_to_class: Dict[str, str] = {}
+    for cls in classes:
+        if not isinstance(cls, dict):
             continue
-        content = str((msg or {}).get("content") or "")
-        for pattern in (
-            r"To calculate ([^,\.]+)[,\.]",
-            r"before saving ([^,\.]+)[,\.]",
-        ):
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                name = match.group(1).strip()
-                if name:
-                    return name
-        break  # only inspect the last assistant message
+        cid = str(cls.get("id") or "").strip()
+        if not cid:
+            continue
+        for key in ("table", "name"):
+            val = str(cls.get(key) or "").strip()
+            if val:
+                table_to_class[val.lower()] = cid
+
+    # Find all table.column patterns in the formula.
+    for tbl, _col in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b", formula):
+        cid = table_to_class.get(tbl.lower())
+        if cid:
+            return cid
+
     return None
 
 
@@ -774,10 +869,6 @@ async def _llm_enrichment_chat(
             metrics_dict: Dict[str, Any] = {}
             for m in result.metrics:
                 name = (m.name or "").strip()
-                # Safety net: when the LLM drops the metric name in a CASE-D response
-                # (answering a clarification), recover it from the most recent
-                # assistant clarification message, e.g.
-                # "To calculate <MetricName>, I still need one detail…"
                 if not name or name == "Metric":
                     name = _recover_metric_name_from_chat(chat_history) or name or "Metric"
                 entry: Dict[str, Any] = {}
@@ -785,6 +876,8 @@ async def _llm_enrichment_chat(
                     entry["description"] = m.description
                 formula = (m.formula or "").strip()
                 if formula:
+                    # Qualify bare column names → table.column so formulas are safe in JOINs.
+                    formula = _qualify_formula_columns(formula, column_index)
                     entry["formula"] = formula
                     entry["status"] = "active"
                 else:
@@ -853,23 +946,67 @@ async def _llm_apply_enrichment(
         # Nothing to apply — return the ontology unchanged (fast path).
         return ontology
 
+    # ── Fast-path: skip the LLM call entirely when the only updates are metrics ──
+    # Metrics are already converted to SQL formulas by the chat phase.  The LLM
+    # apply step is only needed to semantically process rules/aliases.  If neither
+    # is present we can inject metrics directly and avoid the 30-90s LLM round-trip.
+    update_keys = {k for k, v in updates.items() if v}
+    metrics_only = update_keys <= {"metrics"}
+    if metrics_only:
+        out = dict(ontology)
+        if isinstance(updates.get("metrics"), dict):
+            ont_classes: List[Dict[str, Any]] = [
+                c for c in (out.get("classes") or []) if isinstance(c, dict)
+            ]
+            existing: List[Dict[str, Any]] = [
+                m for m in (out.get("metrics") or []) if isinstance(m, dict)
+            ]
+            existing_names_lower = {str(m.get("name") or "").lower() for m in existing}
+            for m_name, m_val in updates["metrics"].items():
+                if not isinstance(m_val, dict):
+                    continue
+                formula = str(m_val.get("formula") or "").strip()
+                if not formula:
+                    continue
+                inferred_class = _infer_class_from_formula(formula, ont_classes)
+                new_entry: Dict[str, Any] = {
+                    "id": f"metric:{m_name}",
+                    "name": str(m_name),
+                    "definition": str(m_val.get("description") or ""),
+                    "formula": formula,
+                    **({"based_on_class": inferred_class} if inferred_class else {}),
+                }
+                name_lower = m_name.lower()
+                if name_lower in existing_names_lower:
+                    for i, m in enumerate(existing):
+                        if str(m.get("name") or "").lower() == name_lower:
+                            existing[i] = {**m, **new_entry}
+                            break
+                else:
+                    existing.append(new_entry)
+            out["metrics"] = existing
+        logger.info(
+            "Enrichment apply fast-path (metrics-only, LLM skipped) | metrics_count=%d",
+            len(updates.get("metrics") or {}),
+        )
+        return out
+
     endpoint = os.getenv("ONTOLOGY_ENRICHMENT_APPLY_URL", "http://127.0.0.1:8001/api/ontology/apply-enrichment")
     timeout_seconds = float(os.getenv("ONTOLOGY_ENRICHMENT_APPLY_TIMEOUT", "120"))
 
-    # Build a compact payload: just the semantic parts the LLM needs to enrich.
-    # Class names are provided for context so the LLM can reference them in formulas/aliases.
-    # schema_columns is intentionally excluded here to keep the payload small — the chat
-    # phase (enrichment_chat_message) already resolved natural-language terms to real column
-    # names, so the apply stage only needs to persist the extracted formula verbatim.
+    # Build a compact payload — only what the LLM needs for semantic rules/alias merging.
+    # Existing metrics are intentionally excluded: the chat phase already resolved all
+    # formulas, and the post-LLM guarantee merge (below) injects any that the LLM misses.
+    # class_names is capped to avoid bloating the context window on large schemas.
+    _MAX_CLASS_NAMES = int(os.getenv("ONTOLOGY_APPLY_MAX_CLASS_NAMES", "30"))
     compact_ontology = {
-        "metrics": ontology.get("metrics", []),
         "rules": ontology.get("rules", {}),
         "aliases": ontology.get("aliases", []),
         "class_names": [
             {"id": c.get("id"), "name": c.get("name"), "table": c.get("table")}
             for c in ontology.get("classes", [])
             if isinstance(c, dict)
-        ],
+        ][:_MAX_CLASS_NAMES],
     }
 
     payload = {
@@ -899,6 +1036,38 @@ async def _llm_apply_enrichment(
                 out["rules"] = enriched_compact["rules"]
             if isinstance(enriched_compact.get("aliases"), list):
                 out["aliases"] = enriched_compact["aliases"]
+            # Guarantee: every update metric that has a formula must appear in the
+            # final ontology. The LLM sometimes silently omits new metrics when it
+            # cannot resolve column names (e.g. natural-language formulas with no
+            # schema_columns in the payload). Direct-inject any that are missing.
+            if isinstance(updates.get("metrics"), dict):
+                existing_names_lower = {
+                    str(m.get("name") or "").lower()
+                    for m in (out.get("metrics") or [])
+                    if isinstance(m, dict)
+                }
+                metrics_list = list(out.get("metrics") or [])
+                ont_classes_llm: List[Dict[str, Any]] = [
+                    c for c in (out.get("classes") or []) if isinstance(c, dict)
+                ]
+                for m_name, m_val in updates["metrics"].items():
+                    if not isinstance(m_val, dict):
+                        continue
+                    formula = str(m_val.get("formula") or "").strip()
+                    if not formula or m_name.lower() in existing_names_lower:
+                        continue
+                    logger.info(
+                        "Post-LLM guarantee merge: injecting missing metric '%s' directly.", m_name
+                    )
+                    inferred_class_llm = _infer_class_from_formula(formula, ont_classes_llm)
+                    metrics_list.append({
+                        "id": f"metric:{m_name}",
+                        "name": str(m_name),
+                        "definition": str(m_val.get("description") or ""),
+                        "formula": formula,
+                        **({"based_on_class": inferred_class_llm} if inferred_class_llm else {}),
+                    })
+                out["metrics"] = metrics_list
             return out
     except Exception as exc:
         elapsed = round(time.perf_counter() - start, 3)
@@ -915,26 +1084,41 @@ async def _llm_apply_enrichment(
             meta["llm_enrichment_apply_error_at"] = datetime.now(timezone.utc).isoformat()
             meta["llm_enrichment_apply_error_reason"] = str(exc)[:300]
         # Best-effort semantic merge so user changes are not lost on timeout/failure.
+        # IMPORTANT: append/upsert into the existing metrics list — never replace it
+        # wholesale, or all previously saved metrics would be wiped out.
         if isinstance(updates, dict):
             if isinstance(updates.get("metrics"), dict):
-                metrics_out = []
+                ont_classes_fb: List[Dict[str, Any]] = [
+                    c for c in (out.get("classes") or []) if isinstance(c, dict)
+                ]
+                existing: List[Dict[str, Any]] = [
+                    m for m in (out.get("metrics") or []) if isinstance(m, dict)
+                ]
+                existing_names_lower = {str(m.get("name") or "").lower() for m in existing}
                 for m_name, m_val in updates["metrics"].items():
                     if not isinstance(m_val, dict):
                         continue
                     formula = str(m_val.get("formula") or "").strip()
                     if not formula:
                         continue
-                    metrics_out.append(
-                        {
-                            "id": f"metric:{m_name}",
-                            "name": str(m_name),
-                            "definition": str(m_val.get("description") or ""),
-                            "formula": formula,
-                            "based_on_class": (out.get("classes") or [{}])[0].get("id") if out.get("classes") else None,
-                        }
-                    )
-                if metrics_out:
-                    out["metrics"] = metrics_out
+                    inferred_class_fb = _infer_class_from_formula(formula, ont_classes_fb)
+                    new_entry = {
+                        "id": f"metric:{m_name}",
+                        "name": str(m_name),
+                        "definition": str(m_val.get("description") or ""),
+                        "formula": formula,
+                        **({"based_on_class": inferred_class_fb} if inferred_class_fb else {}),
+                    }
+                    name_lower = m_name.lower()
+                    if name_lower in existing_names_lower:
+                        # Update in-place so the formula is refreshed without duplicating.
+                        for i, m in enumerate(existing):
+                            if str(m.get("name") or "").lower() == name_lower:
+                                existing[i] = {**m, **new_entry}
+                                break
+                    else:
+                        existing.append(new_entry)
+                out["metrics"] = existing
             if isinstance(updates.get("rules"), dict):
                 rules = out.get("rules") if isinstance(out.get("rules"), dict) else {}
                 rules.update(updates["rules"])

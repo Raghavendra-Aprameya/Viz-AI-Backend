@@ -33,7 +33,7 @@ class DBConnectionRequest(BaseModel):
         workspace_url: Databricks workspace URL (for Databricks only)
         http_path: Databricks warehouse/cluster HTTP path (for Databricks only)
         catalog_name: Databricks catalog name (for Databricks only)
-        schema_name: Databricks schema name (for Databricks only)
+        schema_name: PostgreSQL/MySQL schema name (sets search_path); also used for Databricks schema
         access_token: Databricks access token (for Databricks only)
     """
 
@@ -1211,11 +1211,13 @@ class KeyMetricAnalysis(BaseModel):
         kpi_name: Name of the KPI
         value_interpretation: Interpretation of the metric value
         business_impact: Business impact description
+        trend: Explicit trend label for the metric
     """
 
     kpi_name: str
     value_interpretation: str
     business_impact: str
+    trend: Optional[str] = None
     reasoning: Optional[str] = None
 
 
