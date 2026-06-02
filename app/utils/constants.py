@@ -45,6 +45,8 @@ ALLOWED_ORIGINS=[
     "http://localhost:3003",
     "https://aim-ripeness-dealing.ngrok-free.dev",
     "http://192.168.1.62:3000",
+    "https://uat-vizai.webknot-dev.in",
+    "http://172.232.126.82"
 ]
 ALLOWED_CREDENTIALS = True
 ALLOWED_METHODS = ["*"]
