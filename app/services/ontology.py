@@ -279,6 +279,37 @@ SQL formula guide (always use table.column format):
   "per order"       → divide by COUNT(DISTINCT table.order_id_column)
 
 ══════════════════════════════════════════════════
+DIVISION SAFETY — MANDATORY FOR ALL DIALECTS
+══════════════════════════════════════════════════
+Whenever a formula divides by a column or expression that could be zero,
+you MUST use the dialect-safe form. Bare division (col / col) will raise
+a runtime DIVIDE_BY_ZERO error in databases with ANSI mode enabled
+(e.g. Databricks).
+
+- Databricks: ALWAYS use try_divide(numerator, denominator).
+  ✓ CORRECT: try_divide(op.payment_value, op.payment_installments)
+  ✓ CORRECT: AVG(try_divide(op.payment_value, op.payment_installments))
+  ✗ WRONG:   op.payment_value / op.payment_installments
+  ✗ WRONG:   AVG(op.payment_value / op.payment_installments)
+
+- PostgreSQL / MySQL / Oracle: wrap denominator with NULLIF(col, 0).
+  ✓ CORRECT: op.payment_value / NULLIF(op.payment_installments, 0)
+  ✓ CORRECT: AVG(op.payment_value / NULLIF(op.payment_installments, 0))
+
+- Dividing by COUNT(DISTINCT ...) inside a GROUP BY is safe (never zero).
+- Dividing by a numeric literal (e.g. / 100, / 3600.0) is also safe.
+- Any direct column-to-column division MUST use the safe form above.
+
+STRING DATE COLUMNS — MANDATORY FOR DATABRICKS:
+Date/timestamp columns are often stored as STRING and may contain free-text
+garbage values (e.g. ' mas chegou dia 30/01.'). Databricks ANSI mode raises
+CAST_INVALID_INPUT when such values are implicitly cast inside date functions.
+ALWAYS wrap date/timestamp column arguments in try_to_timestamp() for Databricks.
+  ✓ CORRECT: timestampdiff(HOUR, try_to_timestamp(col_a), try_to_timestamp(col_b))
+  ✓ CORRECT: datediff(try_to_timestamp(end_col), try_to_timestamp(start_col))
+  ✗ WRONG:   timestampdiff(HOUR, col_a, col_b)  ← WILL throw CAST_INVALID_INPUT
+
+══════════════════════════════════════════════════
 CASES — read in order, use the FIRST that matches
 ══════════════════════════════════════════════════
 CASE A — User gives an explicit SQL formula:
@@ -428,6 +459,22 @@ DB_TYPE_FORMULA_INSTRUCTIONS: Dict[str, str] = {
         "- Never use PostgreSQL-specific syntax: no ::cast, no ILIKE, no FILTER on aggregates.\n"
         "- String concat: use CONCAT() or || (both are valid in Databricks SQL).\n"
         "- PIVOT / UNPIVOT are supported.\n"
+        "- DIVISION SAFETY (CRITICAL): Databricks ANSI mode is ON by default — plain col / col "
+        "raises DIVIDE_BY_ZERO when the denominator is 0. "
+        "ALWAYS use try_divide(numerator, denominator) for any column-to-column division.\n"
+        "  ✓ try_divide(op.payment_value, op.payment_installments)\n"
+        "  ✓ AVG(try_divide(op.payment_value, op.payment_installments))\n"
+        "  ✗ op.payment_value / op.payment_installments  ← WILL CRASH\n"
+        "  ✗ AVG(op.payment_value / op.payment_installments)  ← WILL CRASH\n"
+        "  Dividing by COUNT(DISTINCT ...) in a GROUP BY is safe; no try_divide needed there.\n"
+        "- STRING DATE SAFETY (CRITICAL): Many columns store dates as STRING. "
+        "Databricks ANSI mode raises CAST_INVALID_INPUT when malformed strings (e.g. free-text, "
+        "'N/A') are implicitly cast to TIMESTAMP inside timestampdiff, datediff, or unix_timestamp. "
+        "ALWAYS wrap date/timestamp column arguments in try_to_timestamp(col) when used in date "
+        "arithmetic. try_to_timestamp() returns NULL for malformed rows — aggregates skip them safely.\n"
+        "  ✓ timestampdiff(HOUR, try_to_timestamp(col_a), try_to_timestamp(col_b))\n"
+        "  ✓ datediff(try_to_timestamp(end_col), try_to_timestamp(start_col))\n"
+        "  ✗ timestampdiff(HOUR, col_a, col_b)  ← WILL throw CAST_INVALID_INPUT on dirty rows\n"
     ),
     "oracledb": (
         "DATABASE DIALECT: Oracle Database\n"
@@ -773,6 +820,69 @@ def _qualify_formula_columns(
     )
 
 
+# ---------------------------------------------------------------------------
+# Division-safety post-processor
+# ---------------------------------------------------------------------------
+# Matches bare column-to-column division: col / col  or  table.col / table.col
+# Intentionally does NOT match aggregate-to-aggregate (SUM(x) / COUNT(y))
+# because:
+#   (a) the denominator patterns start with a function name followed by '(',
+#       which is excluded by the right-boundary negative lookahead, and
+#   (b) COUNT in a GROUP BY result set is guaranteed ≥ 1.
+_UNSAFE_COL_DIV_RE = re.compile(
+    r"(?<![.\w])"                                              # left word boundary
+    r"((?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*)"  # numerator col (bare or table.col)
+    r"(?!\s*\()"                                               # numerator is NOT a function call
+    r"(\s*/\s*)"                                               # division operator
+    r"((?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*)"  # denominator col (bare or table.col)
+    r"(?!\s*[\(.\w])",                                         # denominator is NOT a function or further-qualified
+    re.IGNORECASE,
+)
+
+
+def _make_division_safe(formula: str, db_type: Optional[str]) -> str:
+    """
+    Rewrite bare column-division patterns in a SQL metric formula to be safe
+    against DIVIDE_BY_ZERO errors.
+
+    For Databricks   → replaces `col / col` with `try_divide(col, col)`.
+    For other DBs    → wraps the denominator with `NULLIF(col, 0)`.
+
+    Only plain column references (optionally table-qualified) on both sides of
+    the `/` are transformed.  Aggregate expressions such as `SUM(x) / COUNT(y)`
+    are left untouched because the regex excludes identifiers that are followed
+    by `(`.  Formulas already using `try_divide` or `NULLIF` are idempotent
+    (the regex finds no matching bare `/`).
+
+    Examples (Databricks):
+      "op.payment_value / op.payment_installments"
+        → "try_divide(op.payment_value, op.payment_installments)"
+      "AVG(op.payment_value / op.payment_installments)"
+        → "AVG(try_divide(op.payment_value, op.payment_installments))"
+
+    Examples (PostgreSQL / MySQL / Oracle):
+      "payment_value / payment_installments"
+        → "payment_value / NULLIF(payment_installments, 0)"
+      "AVG(payment_value / payment_installments)"
+        → "AVG(payment_value / NULLIF(payment_installments, 0))"
+    """
+    if not formula:
+        return formula
+
+    db_key = (db_type or "").strip().lower()
+    if db_key == "oracle":
+        db_key = "oracledb"
+
+    if db_key == "databricks":
+        def _to_try_divide(m: re.Match) -> str:
+            return f"try_divide({m.group(1)}, {m.group(3)})"
+        return _UNSAFE_COL_DIV_RE.sub(_to_try_divide, formula)
+    else:
+        def _to_nullif(m: re.Match) -> str:
+            return f"{m.group(1)}{m.group(2)}NULLIF({m.group(3)}, 0)"
+        return _UNSAFE_COL_DIV_RE.sub(_to_nullif, formula)
+
+
 def _infer_class_from_formula(
     formula: str,
     classes: List[Dict[str, Any]],
@@ -1069,6 +1179,8 @@ async def _llm_enrichment_chat(
                 if formula:
                     # Qualify bare column names → table.column so formulas are safe in JOINs.
                     formula = _qualify_formula_columns(formula, column_index)
+                    # Guard against DIVIDE_BY_ZERO: rewrite col/col → try_divide / NULLIF.
+                    formula = _make_division_safe(formula, db_type)
                     entry["formula"] = formula
                     entry["status"] = "active"
                 else:
