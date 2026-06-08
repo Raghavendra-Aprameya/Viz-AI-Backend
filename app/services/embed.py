@@ -616,14 +616,72 @@ async def get_embed_dashboard_data(
     return await get_embed_dashboard_data_by_dashboard_id(token.dashboard_id, db)
 
 
+def _validate_iso_date(value: str, param_name: str) -> str:
+    """
+    Validate and normalise an ISO date string (YYYY-MM-DD).
+    Raises HTTPException 400 if the format is invalid.
+    """
+    from datetime import date as _dt
+    try:
+        parsed = _dt.fromisoformat(value)
+        return parsed.isoformat()  # canonical YYYY-MM-DD
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_date_param",
+                "message": f"'{param_name}' must be a valid ISO date (YYYY-MM-DD).",
+            },
+        )
+
+
+def _build_date_filtered_query(
+    base_query: str,
+    date_column: str,
+    db_type: Optional[str],
+    start_date: str,
+    end_date: str,
+) -> str:
+    """
+    Wrap *base_query* as a subquery and append a dialect-aware
+    date-range WHERE clause using bind parameters (:start_date / :end_date).
+
+    The column is always double-quoted to avoid reserved-word collisions.
+    Bind parameters are used exclusively — never string-formatted dates.
+    """
+    db_type_lower = (db_type or "").lower()
+
+    # Dialect-aware date cast expression
+    if "mysql" in db_type_lower or "mariadb" in db_type_lower:
+        cast_expr = f'DATE(`{date_column}`)'  # MySQL uses backtick quoting
+    elif "mssql" in db_type_lower or "sqlserver" in db_type_lower:
+        cast_expr = f'CAST([{date_column}] AS DATE)'
+    elif "sqlite" in db_type_lower:
+        cast_expr = f'DATE("{date_column}")'
+    else:
+        # PostgreSQL default
+        cast_expr = f'"{date_column}"::date'
+
+    return (
+        f'SELECT * FROM ({base_query}) AS _embed_subq '
+        f'WHERE {cast_expr} BETWEEN :start_date AND :end_date'
+    )
+
+
 async def get_embed_chart_data_by_dashboard(
     dashboard_id: UUID,
     chart_id: UUID,
     db: Session,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> dict:
     """
     Get chart data for an embedded dashboard using dashboard_id from JWT claims.
     Verifies chart membership via DashboardChartsModel, then runs the chart query.
+
+    When *start_date* and *end_date* are provided (ISO YYYY-MM-DD strings) and
+    the chart is time-based, the query is wrapped in a subquery with a
+    parameterised WHERE clause — the stored query is never mutated.
     """
     start_time = time.time()
 
@@ -661,10 +719,20 @@ async def get_embed_chart_data_by_dashboard(
             detail="Database connection not found",
         )
 
+    # Decide which SQL to execute
+    date_col = chart.x_axis
+
+    apply_date_filter_intent = (
+        bool(start_date)
+        and bool(end_date)
+        and chart.is_time_based
+    )
+
     # Execute the query via the external engine manager
     try:
         from app.core.db import external_engine_manager
         from cryptography.fernet import Fernet
+        import sqlalchemy
 
         # Decrypt connection string
         fernet = Fernet(settings.ENCRYPTION_KEY.encode())
@@ -677,16 +745,51 @@ async def get_embed_chart_data_by_dashboard(
             connection_string=decrypted_conn_str,
             db_type=connection.db_type,
         )
+
+        # Infer date column if intent is to filter but x_axis is missing
+        if apply_date_filter_intent and not date_col:
+            db_type_lower = (connection.db_type or "").lower()
+            infer_sql = f"SELECT * FROM ({chart.query}) AS _embed_infer_subq LIMIT 1"
+            if "mssql" in db_type_lower or "sqlserver" in db_type_lower:
+                infer_sql = f"SELECT TOP 1 * FROM ({chart.query}) AS _embed_infer_subq"
+            with ext_engine.connect() as conn:
+                result = conn.execute(sqlalchemy.text(infer_sql))
+                keys = list(result.keys())
+                if keys:
+                    date_col = keys[0]
+
+        apply_date_filter = apply_date_filter_intent and bool(date_col)
+
+        if apply_date_filter:
+            # Validate dates before they reach the DB driver
+            start_date_val = _validate_iso_date(start_date, "start_date")
+            end_date_val   = _validate_iso_date(end_date,   "end_date")
+            sql_to_run = _build_date_filtered_query(
+                base_query=chart.query,
+                date_column=date_col,
+                db_type=connection.db_type,
+                start_date=start_date_val,
+                end_date=end_date_val,
+            )
+            bind_params = {"start_date": start_date_val, "end_date": end_date_val}
+            logger.info(
+                f"[EMBED] Date filter applied — chart {str(chart_id)[:8]}... "
+                f"range: {start_date_val} → {end_date_val}"
+            )
+        else:
+            sql_to_run  = chart.query
+            bind_params = {}
         with ext_engine.connect() as conn:
             result = conn.execute(
-                __import__("sqlalchemy").text(chart.query)
+                sqlalchemy.text(sql_to_run),
+                bind_params,
             )
             rows = [_json_safe_row(dict(row._mapping)) for row in result]
 
         duration_ms = int((time.time() - start_time) * 1000)
         logger.info(
             f"[EMBED][STEP 10] Chart data fetched — chart {str(chart_id)[:8]}... "
-            f"— {len(rows)} rows — duration: {duration_ms}ms"
+            f"— {len(rows)} rows — date_filter: {apply_date_filter} — duration: {duration_ms}ms"
         )
 
         return {
@@ -724,3 +827,166 @@ async def get_embed_chart_data(
     return await get_embed_chart_data_by_dashboard(
         token.dashboard_id, chart_id, db
     )
+
+
+async def get_embed_chart_date_range(
+    dashboard_id: UUID,
+    chart_id: UUID,
+    db: Session,
+) -> dict:
+    """
+    Discover the min and max date values for a time-based chart.
+
+    Wraps the chart's stored query as a subquery and runs
+    ``SELECT MIN(date_col), MAX(date_col)`` against the real data source.
+    Returns ISO-formatted date strings so the frontend can populate picker bounds.
+
+    If the chart is not time-based, or the date column is unknown,
+    both ``min_date`` and ``max_date`` will be ``None``.
+    """
+    start_time = time.time()
+
+    # Verify chart membership
+    dc = db.query(DashboardChartsModel).filter(
+        and_(
+            DashboardChartsModel.dashboard_id == dashboard_id,
+            DashboardChartsModel.chart_id == chart_id,
+        )
+    ).first()
+
+    if not dc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "chart_not_in_dashboard",
+                "message": "Chart not found in this dashboard",
+            },
+        )
+
+    chart = db.query(ChartModel).filter(ChartModel.id == chart_id).first()
+    if not chart:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chart not found",
+        )
+
+    connection = db.query(DatabaseConnectionModel).filter(
+        DatabaseConnectionModel.id == dc.database_connection_id
+    ).first()
+
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Database connection not found",
+        )
+
+    date_col = chart.x_axis
+    db_type   = (connection.db_type or "").lower()
+
+    try:
+        from app.core.db import external_engine_manager
+        from cryptography.fernet import Fernet
+        import sqlalchemy
+
+        fernet = Fernet(settings.ENCRYPTION_KEY.encode())
+        decrypted_conn_str = fernet.decrypt(
+            connection.db_connection_string.encode()
+        ).decode()
+
+        ext_engine = external_engine_manager.get_engine(
+            connection_id=dc.database_connection_id,
+            connection_string=decrypted_conn_str,
+            db_type=connection.db_type,
+        )
+
+        # Infer date column if x_axis is missing
+        if not date_col:
+            infer_sql = f"SELECT * FROM ({chart.query}) AS _embed_infer_subq LIMIT 1"
+            if "mssql" in db_type or "sqlserver" in db_type:
+                infer_sql = f"SELECT TOP 1 * FROM ({chart.query}) AS _embed_infer_subq"
+            with ext_engine.connect() as conn:
+                result = conn.execute(sqlalchemy.text(infer_sql))
+                keys = list(result.keys())
+                if keys:
+                    date_col = keys[0]
+
+        # Early exit only when there is still no date column to query on
+        if not date_col:
+            return {
+                "min_date": None,
+                "max_date": None,
+                "date_column": None,
+                "is_time_based": bool(chart.is_time_based),
+            }
+
+        # Dialect-aware MIN/MAX expression
+        if "mysql" in db_type or "mariadb" in db_type:
+            min_expr = f'MIN(DATE(`{date_col}`))'  
+            max_expr = f'MAX(DATE(`{date_col}`))'  
+        elif "mssql" in db_type or "sqlserver" in db_type:
+            min_expr = f'MIN(CAST([{date_col}] AS DATE))'
+            max_expr = f'MAX(CAST([{date_col}] AS DATE))'
+        elif "sqlite" in db_type:
+            min_expr = f'MIN(DATE("{date_col}"))'
+            max_expr = f'MAX(DATE("{date_col}"))'
+        else:
+            # PostgreSQL
+            min_expr = f'MIN("{date_col}"::date)'
+            max_expr = f'MAX("{date_col}"::date)'
+
+        range_sql = (
+            f'SELECT {min_expr} AS min_date, {max_expr} AS max_date '
+            f'FROM ({chart.query}) AS _embed_range_subq'
+        )
+
+        ext_engine = external_engine_manager.get_engine(
+            connection_id=dc.database_connection_id,
+            connection_string=decrypted_conn_str,
+            db_type=connection.db_type,
+        )
+        with ext_engine.connect() as conn:
+            row = conn.execute(sqlalchemy.text(range_sql)).fetchone()
+
+        min_date = None
+        max_date = None
+        if row:
+            raw_min, raw_max = row[0], row[1]
+            if raw_min is not None:
+                min_date = _json_safe_value(raw_min)
+                # Truncate to date portion if datetime was returned
+                if isinstance(min_date, str) and "T" in min_date:
+                    min_date = min_date[:10]
+            if raw_max is not None:
+                max_date = _json_safe_value(raw_max)
+                if isinstance(max_date, str) and "T" in max_date:
+                    max_date = max_date[:10]
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            f"[EMBED] Date range discovered — chart {str(chart_id)[:8]}... "
+            f"min={min_date} max={max_date} — duration: {duration_ms}ms"
+        )
+
+        return {
+            "min_date": min_date,
+            "max_date": max_date,
+            "date_column": date_col,
+            "is_time_based": True,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.error(
+            f"[EMBED] Date range discovery FAILED for chart {str(chart_id)[:8]}... "
+            f"— duration: {duration_ms}ms — error: {str(e)}",
+            exc_info=True,
+        )
+        # Non-fatal: return nulls so the frontend falls back gracefully
+        return {
+            "min_date": None,
+            "max_date": None,
+            "date_column": date_col,
+            "is_time_based": True,
+        }
