@@ -658,6 +658,8 @@ def _build_date_filtered_query(
         cast_expr = f'CAST([{date_column}] AS DATE)'
     elif "sqlite" in db_type_lower:
         cast_expr = f'DATE("{date_column}")'
+    elif "databricks" in db_type_lower:
+        cast_expr = f'CAST(`{date_column}` AS DATE)'
     else:
         # PostgreSQL default
         cast_expr = f'"{date_column}"::date'
@@ -931,6 +933,9 @@ async def get_embed_chart_date_range(
         elif "sqlite" in db_type:
             min_expr = f'MIN(DATE("{date_col}"))'
             max_expr = f'MAX(DATE("{date_col}"))'
+        elif "databricks" in db_type:
+            min_expr = f'MIN(CAST(`{date_col}` AS DATE))'
+            max_expr = f'MAX(CAST(`{date_col}` AS DATE))'
         else:
             # PostgreSQL
             min_expr = f'MIN("{date_col}"::date)'
