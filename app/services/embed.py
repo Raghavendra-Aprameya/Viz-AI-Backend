@@ -663,7 +663,7 @@ def _build_date_filtered_query(
         cast_expr = f'"{date_column}"::date'
 
     return (
-        f'SELECT * FROM ({base_query}) AS _embed_subq '
+        f'SELECT * FROM ({base_query.strip().rstrip(";")}) AS _embed_subq '
         f'WHERE {cast_expr} BETWEEN :start_date AND :end_date'
     )
 
@@ -748,10 +748,11 @@ async def get_embed_chart_data_by_dashboard(
 
         # Infer date column if intent is to filter but x_axis is missing
         if apply_date_filter_intent and not date_col:
+            clean_query = chart.query.strip().rstrip(";")
             db_type_lower = (connection.db_type or "").lower()
-            infer_sql = f"SELECT * FROM ({chart.query}) AS _embed_infer_subq LIMIT 1"
+            infer_sql = f"SELECT * FROM ({clean_query}) AS _embed_infer_subq LIMIT 1"
             if "mssql" in db_type_lower or "sqlserver" in db_type_lower:
-                infer_sql = f"SELECT TOP 1 * FROM ({chart.query}) AS _embed_infer_subq"
+                infer_sql = f"SELECT TOP 1 * FROM ({clean_query}) AS _embed_infer_subq"
             with ext_engine.connect() as conn:
                 result = conn.execute(sqlalchemy.text(infer_sql))
                 keys = list(result.keys())
@@ -900,10 +901,11 @@ async def get_embed_chart_date_range(
         )
 
         # Infer date column if x_axis is missing
+        clean_query = chart.query.strip().rstrip(";")
         if not date_col:
-            infer_sql = f"SELECT * FROM ({chart.query}) AS _embed_infer_subq LIMIT 1"
+            infer_sql = f"SELECT * FROM ({clean_query}) AS _embed_infer_subq LIMIT 1"
             if "mssql" in db_type or "sqlserver" in db_type:
-                infer_sql = f"SELECT TOP 1 * FROM ({chart.query}) AS _embed_infer_subq"
+                infer_sql = f"SELECT TOP 1 * FROM ({clean_query}) AS _embed_infer_subq"
             with ext_engine.connect() as conn:
                 result = conn.execute(sqlalchemy.text(infer_sql))
                 keys = list(result.keys())
@@ -936,7 +938,7 @@ async def get_embed_chart_date_range(
 
         range_sql = (
             f'SELECT {min_expr} AS min_date, {max_expr} AS max_date '
-            f'FROM ({chart.query}) AS _embed_range_subq'
+            f'FROM ({clean_query}) AS _embed_range_subq'
         )
 
         ext_engine = external_engine_manager.get_engine(
