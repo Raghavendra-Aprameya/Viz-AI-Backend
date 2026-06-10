@@ -30,10 +30,10 @@ Classes:
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Double, Index, Integer, Integer
+from sqlalchemy import Boolean, Column, DateTime, Double, Index, Integer, Integer, Numeric, Date, BigInteger
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.base import Base
@@ -790,3 +790,102 @@ class OntologyEnrichmentSessionModel(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ─── Observability Models ────────────────────────────────────────────────────
+
+LLMTraceStatusEnum = SqlEnum("success", "error", "timeout", "cancelled", name="llm_trace_status")
+AIServiceEnum = SqlEnum(
+    "probe_mode", "ai_assistant", "text_enhancement", "ontology_refinement",
+    "insights_generation", "query_generation", "chart_creation", "other",
+    name="ai_service_type",
+)
+
+
+class LLMPricingModel(Base):
+    """Provider pricing table — used to compute estimated cost per trace."""
+
+    __tablename__ = "llm_pricing"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    provider = Column(String(50), nullable=False)
+    model_name = Column(String(100), nullable=False)
+    prompt_cost_per_1k = Column(Numeric(12, 8), nullable=False, default=0)
+    completion_cost_per_1k = Column(Numeric(12, 8), nullable=False, default=0)
+    effective_from = Column(Date, nullable=False)
+    effective_to = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class LLMTraceModel(Base):
+    """One record per LLM call. Central trace table for AI observability."""
+
+    __tablename__ = "llm_trace"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    session_id = Column(String(256), nullable=True, index=True)
+    chart_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    ai_service = Column(AIServiceEnum, nullable=False, default="probe_mode")
+    llm_provider = Column(String(50), nullable=True)
+    model_name = Column(String(100), nullable=True)
+    prompt_tokens = Column(Integer, nullable=True, default=0)
+    completion_tokens = Column(Integer, nullable=True, default=0)
+    total_tokens = Column(Integer, nullable=True, default=0)
+    estimated_cost_usd = Column(Numeric(12, 8), nullable=True, default=0)
+    latency_ms = Column(Integer, nullable=True)
+    prompt_text = Column(Text, nullable=True)
+    completion_text = Column(Text, nullable=True)
+    sql_generated = Column(Text, nullable=True)
+    sql_retries = Column(Integer, nullable=True, default=0)
+    schema_tables_used = Column(JSONB, nullable=True)
+    agent_steps = Column(JSONB, nullable=True)
+    status = Column(LLMTraceStatusEnum, nullable=False, default="success")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    project = relationship("ProjectModel", foreign_keys=[project_id])
+    user = relationship("UserModel", foreign_keys=[user_id])
+
+
+class DailyUsageRollupModel(Base):
+    """Hourly-aggregated token and cost roll-up per project / user / service."""
+
+    __tablename__ = "daily_usage_rollup"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    rollup_date = Column(Date, nullable=False, index=True)
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("project.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ai_service = Column(AIServiceEnum, nullable=False)
+    model_name = Column(String(100), nullable=True)
+    total_calls = Column(Integer, nullable=False, default=0)
+    total_prompt_tokens = Column(BigInteger, nullable=False, default=0)
+    total_completion_tokens = Column(BigInteger, nullable=False, default=0)
+    total_cost_usd = Column(Numeric(14, 8), nullable=False, default=0)
+    error_count = Column(Integer, nullable=False, default=0)
+    avg_latency_ms = Column(Integer, nullable=True)
+    computed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    project = relationship("ProjectModel", foreign_keys=[project_id])
+    user = relationship("UserModel", foreign_keys=[user_id])

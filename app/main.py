@@ -17,6 +17,7 @@ from app.routes.llm import llm_router
 from app.routes.embed import share_token_router, embed_router
 from app.routes.apps import apps_router
 from app.routes.allowed_domains import allowed_domains_router
+from app.routes.observability import observability_router
 from app.utils.constants import (
     ALLOWED_ORIGINS,
     ALLOWED_CREDENTIALS,
@@ -86,6 +87,7 @@ app.include_router(share_token_router)  # Include share token management endpoin
 app.include_router(embed_router)  # Include public embed endpoints
 app.include_router(apps_router)  # Include app registration endpoints
 app.include_router(allowed_domains_router)  # Include allowed domains endpoints
+app.include_router(observability_router)    # Include observability endpoints
 
 # Embedded dashboard ECharts bundle (built via VIZ-AI-FRONTEND `npm run build:embed`)
 _embed_static_dir = os.path.join(os.path.dirname(__file__), "static", "embed")
