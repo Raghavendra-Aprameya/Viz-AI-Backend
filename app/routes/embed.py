@@ -37,6 +37,7 @@ from app.services.embed import (
     get_embed_dashboard_data,
     get_embed_dashboard_data_by_dashboard_id,
     get_embed_chart_data_by_dashboard,
+    get_embed_chart_date_range,
     refresh_embed_jwt,
 )
 from app.utils.embed_jwt import issue_embed_jwt, verify_embed_jwt
@@ -197,6 +198,8 @@ async def get_embed_chart_data_route(
     request: Request,
     token_id: UUID = Path(..., description="Share token ID"),
     chart_id: UUID = Path(..., description="Chart ID"),
+    start_date: str | None = None,
+    end_date: str | None = None,
     db: Session = Depends(get_db),
 ):
     origin = request.headers.get("origin") or request.headers.get("Origin")
@@ -221,6 +224,56 @@ async def get_embed_chart_data_route(
         )
 
     data = await get_embed_chart_data_by_dashboard(
+        claims.dashboard_id, chart_id, db,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    response = JSONResponse(content=data)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@embed_router.get("/{token_id}/data/{chart_id}/date-range")
+async def get_embed_chart_date_range_route(
+    request: Request,
+    token_id: UUID = Path(..., description="Share token ID"),
+    chart_id: UUID = Path(..., description="Chart ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the min and max date values for a time-based chart's stored query.
+
+    The frontend uses these bounds to initialise the DateRangePicker and
+    constrain the calendar to dates that actually exist in the data.
+
+    Response:
+        200 { "min_date": "YYYY-MM-DD", "max_date": "YYYY-MM-DD",
+               "date_column": str, "is_time_based": bool }
+    """
+    origin = request.headers.get("origin") or request.headers.get("Origin")
+    bearer = _extract_bearer(request)
+    if not bearer:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "jwt_invalid",
+                "message": "Authorization Bearer token required.",
+            },
+        )
+
+    claims = verify_embed_jwt(bearer, origin=origin)
+    if claims.share_token_id != token_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "jwt_invalid",
+                "message": "Token does not match embed session.",
+            },
+        )
+
+    data = await get_embed_chart_date_range(
         claims.dashboard_id, chart_id, db
     )
 
@@ -228,6 +281,7 @@ async def get_embed_chart_data_route(
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Cache-Control"] = "no-store"
     return response
+
 
 
 @embed_router.get("/{token_id}/dashboard")

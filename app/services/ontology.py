@@ -279,11 +279,46 @@ SQL formula guide (always use table.column format):
   "per order"       → divide by COUNT(DISTINCT table.order_id_column)
 
 ══════════════════════════════════════════════════
+DIVISION SAFETY — MANDATORY FOR ALL DIALECTS
+══════════════════════════════════════════════════
+Whenever a formula divides by a column or expression that could be zero,
+you MUST protect the denominator using ANSI-standard NULLIF:
+
+  numerator / NULLIF(denominator, 0)
+  AVG(numerator / NULLIF(denominator, 0))
+
+This applies to PostgreSQL, MySQL, SQL Server, Oracle, and all dialects
+UNLESS the SQL DIALECT section below explicitly says otherwise.
+
+IMPORTANT — FORBIDDEN FUNCTIONS (unless the dialect section says to use them):
+  ✗ NEVER use try_divide()  — this is Databricks-only and will ERROR on PostgreSQL/MySQL/Oracle
+  ✗ NEVER use SAFE_DIVIDE() — this is BigQuery-only
+  ✗ NEVER use IFF()         — use CASE WHEN ... THEN ... ELSE ... END instead
+  ✗ NEVER use NVL()         — use COALESCE() instead (unless Oracle dialect is specified)
+
+  ✓ STANDARD (works everywhere): numerator / NULLIF(denominator, 0)
+  ✓ STANDARD: AVG(col_a / NULLIF(col_b, 0))
+  ✗ WRONG (Databricks-only): try_divide(col_a, col_b)
+
+- Dividing by COUNT(DISTINCT ...) inside a GROUP BY is safe (never zero).
+- Dividing by a numeric literal (e.g. / 100, / 3600.0) is also safe.
+- Any direct column-to-column division MUST use the safe NULLIF form above.
+
+NOTE: Databricks-specific functions (try_divide, try_to_timestamp, etc.) are
+described ONLY in the Databricks dialect section below. Do NOT use them for
+any other database type.
+
+══════════════════════════════════════════════════
 CASES — read in order, use the FIRST that matches
 ══════════════════════════════════════════════════
 CASE A — User gives an explicit SQL formula:
   Example: "Revenue per Order = SUM(price_after_discount) / COUNT(DISTINCT order_id)"
   Action: Preserve formula verbatim. needs_clarification=false.
+  assistant_message: one sentence confirming what was saved, in plain English.
+  Good examples:
+    "Got it! I've saved Revenue per Order as the total revenue divided by the number of orders."
+    "Saved! Approval Lead Time Hours has been captured as the time between order approval and purchase."
+  NEVER say "Just a moment!", "I'll use...", "One second!", or any future/mid-process phrase.
 
 CASE E — User defines the metric WITH an explicit arithmetic description (HIGHEST PRIORITY
           after CASE A — check this BEFORE looking at column ambiguity):
@@ -315,12 +350,16 @@ CASE E — User defines the metric WITH an explicit arithmetic description (HIGH
              Just reply with the number!"
   - needs_clarification=true when ANY definition term maps to multiple columns.
   - needs_clarification=false only when EVERY term maps to exactly ONE column.
+  - When resolved (needs_clarification=false): assistant_message confirms in plain English.
+    Good example: "Saved! I've captured Average Order Value as total sales divided by the
+    number of orders."
   - metrics: one object, status="active" when formula resolved, "pending" while waiting.
 
 CASE B — Natural language metric name with NO formula definition + ONE clear column match:
   Example: "Average Order Value" (no definition given, schema has one clear order-value col)
   Action: Derive SQL formula. needs_clarification=false.
-  assistant_message: confirm in friendly plain English (no SQL shown).
+  assistant_message: confirm what was saved in friendly plain English (no SQL shown).
+  Good example: "Saved! I've captured Average Revenue using the Price After Discount field."
   metrics: one object, formula (SQL), status="active".
 
 CASE C — Natural language metric name with NO formula definition + MULTIPLE column candidates:
@@ -341,7 +380,8 @@ CASE C — Natural language metric name with NO formula definition + MULTIPLE co
 CASE D — User answers a previous clarification question:
   Examples: "1",  "the second one",  "price after discount",  "use payment value"
   Action: Map answer back to the real column. Build the SQL formula. needs_clarification=false.
-  assistant_message: friendly confirmation in plain English.
+  assistant_message: past-tense confirmation in friendly plain English. No SQL, no column names.
+  Good example: "Got it! I've saved Revenue per Order using the Price After Discount field."
   metrics: YOU MUST include one object with ALL four fields:
     - name: EXACTLY the same metric name from the clarification question.
             NEVER use "Metric". NEVER leave it blank.
@@ -362,8 +402,145 @@ HARD CONSTRAINTS
 ══════════════════════════════════════════════════
 - formula must be SQL — never plain English labels.
 - Never invent column names not in schema_columns.
-- assistant_message is always plain English — never expose SQL or column names.
+- assistant_message is always plain English — never expose SQL, column names, or table names.
+- assistant_message must ALWAYS be a complete, past-tense confirmation OR a specific question.
+  FORBIDDEN phrases: "Just a moment!", "One second!", "I'll use...", "Let me...",
+  "Please hold", "I'm calculating...", "Give me a moment", "I'll figure out...",
+  "I'll apply...", "Working on it", or any future/present-progressive phrasing.
+  When a metric is saved: use past tense — "I've saved", "I've captured", "Got it! Saved."
+  When asking a question: end with "?" and give numbered options if applicable.
 """
+
+
+# ---------------------------------------------------------------------------
+# Per-database-type SQL dialect instructions injected into the formula prompt.
+# Supported db_type values passed from the frontend:
+#   postgres | mysql | databricks | oracledb | salesforce
+# Update the entries here to adjust dialect guidance without touching the
+# rest of the enrichment pipeline.
+# ---------------------------------------------------------------------------
+DB_TYPE_FORMULA_INSTRUCTIONS: Dict[str, str] = {
+    "postgres": (
+        "DATABASE DIALECT: PostgreSQL\n"
+        "- Use DATE_TRUNC('month', col) / DATE_TRUNC('week', col) for time bucketing.\n"
+        "- Use EXTRACT(EPOCH FROM col) for numeric timestamp arithmetic.\n"
+        "- Prefer ::DATE / ::TIMESTAMP casts (e.g. col::DATE) over CAST(col AS DATE).\n"
+        "- ILIKE is available for case-insensitive pattern matching.\n"
+        "- Window functions (ROW_NUMBER() OVER (...)) are fully supported.\n"
+        "- Use FILTER (WHERE ...) on aggregates when filtering within an aggregate is needed.\n"
+        "- CURRENT_DATE and NOW() are valid date/time literals.\n"
+        "- String concat: use || operator or CONCAT().\n"
+        "- COALESCE, NULLIF, GREATEST, LEAST are all available.\n"
+    ),
+    "mysql": (
+        "DATABASE DIALECT: MySQL\n"
+        "- Use DATE_FORMAT(col, '%Y-%m') for month bucketing; YEARWEEK(col) for ISO weeks.\n"
+        "- Use UNIX_TIMESTAMP(col) for numeric timestamp arithmetic.\n"
+        "- Use CAST(col AS DATE) / CAST(col AS DATETIME) for type casts; :: is NOT supported.\n"
+        "- Use IFNULL(col, default) instead of COALESCE where only two args are needed.\n"
+        "- Window functions require MySQL 8.0+; prefer simple GROUP BY aggregates if version is uncertain.\n"
+        "- ILIKE is NOT supported; use LIKE with LOWER(col) for case-insensitive matching.\n"
+        "- String concat: use CONCAT() function — do NOT use the || operator.\n"
+        "- CURDATE() is the equivalent of CURRENT_DATE.\n"
+        "- GROUP_CONCAT is available for aggregating strings.\n"
+        "- Backtick-quote reserved words in identifiers: `order`, `date`, `key`, etc.\n"
+    ),
+    "databricks": (
+        "DATABASE DIALECT: Databricks SQL (Apache Spark SQL)\n"
+        "- Use DATE_TRUNC('month', col) or TRUNC(col, 'MM') for time bucketing.\n"
+        "- DATEDIFF(end_date, start_date) — argument order is end THEN start (opposite of MySQL).\n"
+        "- Use TO_DATE(col) / TO_TIMESTAMP(col) for casting; :: syntax is NOT supported.\n"
+        "- Backtick-quote column names that contain spaces or match reserved words: `my column`.\n"
+        "- ILIKE is NOT supported; use LOWER(col) LIKE LOWER(pattern) for case-insensitive matching.\n"
+        "- QUALIFY clause is supported for post-window-function filtering.\n"
+        "- Use date_add(col, n) or DATEADD(unit, n, col) for date arithmetic.\n"
+        "- CURRENT_DATE() and CURRENT_TIMESTAMP() require parentheses in Databricks SQL.\n"
+        "- Never use PostgreSQL-specific syntax: no ::cast, no ILIKE, no FILTER on aggregates.\n"
+        "- String concat: use CONCAT() or || (both are valid in Databricks SQL).\n"
+        "- PIVOT / UNPIVOT are supported.\n"
+        "- DIVISION SAFETY (CRITICAL): Databricks ANSI mode is ON by default — plain col / col "
+        "raises DIVIDE_BY_ZERO when the denominator is 0. "
+        "ALWAYS use try_divide(numerator, denominator) for any column-to-column division.\n"
+        "  ✓ try_divide(op.payment_value, op.payment_installments)\n"
+        "  ✓ AVG(try_divide(op.payment_value, op.payment_installments))\n"
+        "  ✗ op.payment_value / op.payment_installments  ← WILL CRASH\n"
+        "  ✗ AVG(op.payment_value / op.payment_installments)  ← WILL CRASH\n"
+        "  Dividing by COUNT(DISTINCT ...) in a GROUP BY is safe; no try_divide needed there.\n"
+        "- STRING DATE SAFETY (CRITICAL): Many columns store dates as STRING. "
+        "Databricks ANSI mode raises CAST_INVALID_INPUT when malformed strings (e.g. free-text, "
+        "'N/A') are implicitly cast to TIMESTAMP inside timestampdiff, datediff, or unix_timestamp. "
+        "ALWAYS wrap date/timestamp column arguments in try_to_timestamp(col) when used in date "
+        "arithmetic. try_to_timestamp() returns NULL for malformed rows — aggregates skip them safely.\n"
+        "  ✓ timestampdiff(HOUR, try_to_timestamp(col_a), try_to_timestamp(col_b))\n"
+        "  ✓ datediff(try_to_timestamp(end_col), try_to_timestamp(start_col))\n"
+        "  ✗ timestampdiff(HOUR, col_a, col_b)  ← WILL throw CAST_INVALID_INPUT on dirty rows\n"
+    ),
+    "oracledb": (
+        "DATABASE DIALECT: Oracle Database\n"
+        "- Use TRUNC(col, 'MM') for month bucketing; TRUNC(col, 'IW') for ISO week.\n"
+        "- Use TO_DATE(col, 'YYYY-MM-DD') / TO_TIMESTAMP for explicit type casts.\n"
+        "- :: cast syntax is NOT supported; use CAST(col AS type) or TO_* conversion functions.\n"
+        "- Use ROWNUM or ROW_NUMBER() OVER (...) for row limiting — LIMIT is NOT supported.\n"
+        "- Use NVL(col, default) or COALESCE for null handling.\n"
+        "- String concat: use || operator; CONCAT() only accepts exactly two arguments.\n"
+        "- SYSDATE is Oracle's equivalent of CURRENT_DATE; SYSTIMESTAMP for full timestamps.\n"
+        "- FROM DUAL is required for expressions with no real table (e.g. SELECT 1 FROM DUAL).\n"
+        "- ILIKE is NOT supported; use UPPER(col) LIKE UPPER(pattern) for case-insensitive matching.\n"
+        "- Use REGEXP_LIKE(col, pattern) for regular-expression matching.\n"
+        "- Window functions are fully supported (Oracle 11g+).\n"
+    ),
+    "salesforce": (
+        "DATABASE DIALECT: Salesforce SOQL (NOT standard SQL)\n"
+        "- This is SOQL (Salesforce Object Query Language) — many standard SQL features do NOT apply.\n"
+        "- Query structure: SELECT field1, field2 FROM SalesforceObject WHERE ... ORDER BY ... LIMIT n\n"
+        "- Only one top-level object per query; cross-object data uses relationship traversal dot notation:\n"
+        "  e.g. Account.Name referenced from an Opportunity query (parent) or\n"
+        "       (SELECT Id FROM Contacts) as a sub-select (child relationship).\n"
+        "- Aggregate functions available: COUNT(), COUNT(field), SUM(), AVG(), MIN(), MAX().\n"
+        "  Aggregates require GROUP BY or must be the only SELECT expression.\n"
+        "- Date/time: use SOQL date literals — TODAY, YESTERDAY, THIS_MONTH, LAST_N_DAYS:n,\n"
+        "  THIS_YEAR, LAST_YEAR, THIS_QUARTER, LAST_QUARTER, etc. Do NOT use DATE_TRUNC.\n"
+        "- Group by time period: use CALENDAR_MONTH(dateField), CALENDAR_YEAR(dateField),\n"
+        "  CALENDAR_QUARTER(dateField), DAY_ONLY(dateField), HOUR_IN_DAY(dateField).\n"
+        "- LIKE operator is case-insensitive by default in SOQL; ILIKE does NOT exist.\n"
+        "- Always add WHERE IsDeleted = false unless explicitly including deleted records.\n"
+        "- UNION, INTERSECT, and EXCEPT are NOT supported.\n"
+        "- Sub-queries are supported only for semi-join/anti-join: WHERE Id IN (SELECT Id FROM ...).\n"
+        "- Never use PostgreSQL, MySQL, or Databricks-specific functions (DATE_TRUNC, ILIKE, etc.).\n"
+    ),
+}
+
+# Fallback instruction when db_type is unrecognised or not provided.
+_DEFAULT_DB_TYPE_INSTRUCTION = (
+    "DATABASE DIALECT: Generic SQL (db_type not specified)\n"
+    "- Prefer ANSI SQL-92 standard syntax for maximum compatibility.\n"
+    "- Avoid vendor-specific functions (e.g. DATE_TRUNC, ILIKE, ::cast).\n"
+    "- Use CAST(col AS type) for all type conversions.\n"
+    "- Use COALESCE for null handling.\n"
+    "- Use standard aggregate functions: SUM, COUNT, AVG, MIN, MAX.\n"
+    "- Use CURRENT_DATE / CURRENT_TIMESTAMP as date/time literals.\n"
+)
+
+
+def _get_db_type_sql_instructions(db_type: Optional[str]) -> str:
+    """
+    Return the SQL dialect instruction block to inject into the enrichment chat
+    system prompt for the given db_type string.
+
+    Supported values (as sent by the frontend):
+        postgres | mysql | databricks | oracledb | salesforce
+    """
+    key = (db_type or "").strip().lower()
+    # Normalise the one common alias used in the codebase.
+    if key == "oracle":
+        key = "oracledb"
+    instructions = DB_TYPE_FORMULA_INSTRUCTIONS.get(key, _DEFAULT_DB_TYPE_INSTRUCTION)
+    return (
+        "══════════════════════════════════════════════════\n"
+        "SQL DIALECT — CRITICAL: always follow these rules when writing metric formulas\n"
+        "══════════════════════════════════════════════════\n"
+        + instructions
+    )
 
 
 def _build_enrichment_schema_columns(
@@ -642,6 +819,159 @@ def _qualify_formula_columns(
     )
 
 
+# ---------------------------------------------------------------------------
+# Division-safety post-processor
+# ---------------------------------------------------------------------------
+# Matches bare column-to-column division: col / col  or  table.col / table.col
+# Intentionally does NOT match aggregate-to-aggregate (SUM(x) / COUNT(y))
+# because:
+#   (a) the denominator patterns start with a function name followed by '(',
+#       which is excluded by the right-boundary negative lookahead, and
+#   (b) COUNT in a GROUP BY result set is guaranteed ≥ 1.
+_UNSAFE_COL_DIV_RE = re.compile(
+    r"(?<![.\w])"                                              # left word boundary
+    r"((?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*)"  # numerator col (bare or table.col)
+    r"(?!\s*\()"                                               # numerator is NOT a function call
+    r"(\s*/\s*)"                                               # division operator
+    r"((?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*)"  # denominator col (bare or table.col)
+    r"(?!\s*[\(.\w])",                                         # denominator is NOT a function or further-qualified
+    re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
+# Per-dialect unsupported-function blocklists.
+# Used by _validate_dialect_functions() and _rewrite_dialect_functions().
+# Keys must match the normalised db_key values used throughout the pipeline.
+# ---------------------------------------------------------------------------
+_DIALECT_FORBIDDEN_FUNCTIONS: Dict[str, List[str]] = {
+    # Functions that are Databricks-only and MUST NOT appear in other dialects.
+    "postgres":  ["try_divide", "try_to_timestamp", "try_to_date", "safe_divide", "iff"],
+    "mysql":     ["try_divide", "try_to_timestamp", "try_to_date", "safe_divide"],
+    "oracledb":  ["try_divide", "try_to_timestamp", "try_to_date", "safe_divide", "isnull", "ifnull"],
+    "mssql":     ["try_divide", "try_to_timestamp", "safe_divide", "nvl"],
+    "salesforce": ["try_divide", "try_to_timestamp", "safe_divide", "nullif", "date_trunc", "ilike"],
+    # databricks: no blocklist — all Spark-SQL functions are valid there.
+}
+
+# Rewrites: for non-Databricks dialects, replace known Databricks-only function
+# calls with the ANSI-standard equivalent before the formula is persisted.
+# Pattern: try_divide(numerator, denominator) → numerator / NULLIF(denominator, 0)
+_TRY_DIVIDE_RE = re.compile(
+    r"try_divide\s*\(\s*(.*?)\s*,\s*(.*?)\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_SAFE_DIVIDE_RE = re.compile(
+    r"safe_divide\s*\(\s*(.*?)\s*,\s*(.*?)\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _rewrite_dialect_functions(formula: str, db_type: Optional[str]) -> Tuple[str, bool]:
+    """
+    Rewrite dialect-incompatible function calls in a formula to their ANSI equivalents.
+
+    For non-Databricks dialects:
+      try_divide(x, y)  → x / NULLIF(y, 0)
+      SAFE_DIVIDE(x, y) → x / NULLIF(y, 0)
+
+    Returns (rewritten_formula, was_rewritten).
+    """
+    if not formula:
+        return formula, False
+
+    db_key = (db_type or "").strip().lower()
+    if db_key == "oracle":
+        db_key = "oracledb"
+
+    # Databricks formulas are already correct — no rewrite needed.
+    if db_key == "databricks":
+        return formula, False
+
+    original = formula
+    # Replace try_divide(numerator, denominator) → numerator / NULLIF(denominator, 0)
+    formula = _TRY_DIVIDE_RE.sub(lambda m: f"{m.group(1)} / NULLIF({m.group(2)}, 0)", formula)
+    # Replace SAFE_DIVIDE(numerator, denominator) → numerator / NULLIF(denominator, 0)
+    formula = _SAFE_DIVIDE_RE.sub(lambda m: f"{m.group(1)} / NULLIF({m.group(2)}, 0)", formula)
+
+    was_rewritten = formula != original
+    return formula, was_rewritten
+
+
+def _validate_dialect_functions(
+    formula: str,
+    db_type: Optional[str],
+    metric_name: str = "",
+) -> List[str]:
+    """
+    Return a list of function names in *formula* that are forbidden for *db_type*.
+    An empty list means the formula is dialect-compatible.
+    """
+    if not formula:
+        return []
+    db_key = (db_type or "").strip().lower()
+    if db_key == "oracle":
+        db_key = "oracledb"
+    blocked = _DIALECT_FORBIDDEN_FUNCTIONS.get(db_key, [])
+    found: List[str] = []
+    for fn in blocked:
+        # Match the function name followed by '(' with optional whitespace.
+        if re.search(rf"\b{re.escape(fn)}\s*\(", formula, re.IGNORECASE):
+            found.append(fn)
+    if found:
+        logger.warning(
+            "[ONTOLOGY][DIALECT] Forbidden functions in metric '%s' for db_type='%s': %s | formula: %s",
+            metric_name,
+            db_type or "unknown",
+            found,
+            formula,
+        )
+    return found
+
+
+def _make_division_safe(formula: str, db_type: Optional[str]) -> str:
+    """
+    Rewrite bare column-division patterns in a SQL metric formula to be safe
+    against DIVIDE_BY_ZERO errors.
+
+    For Databricks   → replaces `col / col` with `try_divide(col, col)`.
+    For other DBs    → wraps the denominator with `NULLIF(col, 0)`.
+
+    Only plain column references (optionally table-qualified) on both sides of
+    the `/` are transformed.  Aggregate expressions such as `SUM(x) / COUNT(y)`
+    are left untouched because the regex excludes identifiers that are followed
+    by `(`.  Formulas already using `try_divide` or `NULLIF` are idempotent
+    (the regex finds no matching bare `/`).
+
+    Examples (Databricks):
+      "op.payment_value / op.payment_installments"
+        → "try_divide(op.payment_value, op.payment_installments)"
+      "AVG(op.payment_value / op.payment_installments)"
+        → "AVG(try_divide(op.payment_value, op.payment_installments))"
+
+    Examples (PostgreSQL / MySQL / Oracle):
+      "payment_value / payment_installments"
+        → "payment_value / NULLIF(payment_installments, 0)"
+      "AVG(payment_value / payment_installments)"
+        → "AVG(payment_value / NULLIF(payment_installments, 0))"
+    """
+    if not formula:
+        return formula
+
+    db_key = (db_type or "").strip().lower()
+    if db_key == "oracle":
+        db_key = "oracledb"
+
+    if db_key == "databricks":
+        def _to_try_divide(m: re.Match) -> str:
+            return f"try_divide({m.group(1)}, {m.group(3)})"
+        return _UNSAFE_COL_DIV_RE.sub(_to_try_divide, formula)
+    else:
+        def _to_nullif(m: re.Match) -> str:
+            return f"{m.group(1)}{m.group(2)}NULLIF({m.group(3)}, 0)"
+        return _UNSAFE_COL_DIV_RE.sub(_to_nullif, formula)
+
+
 def _infer_class_from_formula(
     formula: str,
     classes: List[Dict[str, Any]],
@@ -726,17 +1056,28 @@ async def _llm_enrichment_chat(
     chat_history: List[Dict[str, str]],
     user_message: str,
     thread_id: Optional[str] = None,
+    db_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Call OpenAI directly via LangChain with fully-typed structured output.
     Bypasses the LLM microservice httpx hop entirely — no intermediate timeout.
     Uses a typed Pydantic model (not Dict[str,Any]) so the LLM reliably fills every field.
+
+    The system prompt is augmented with database-dialect–specific SQL instructions so
+    the LLM generates formulas that are valid for the connected database type (e.g.
+    Databricks vs PostgreSQL vs MySQL).
     """
     schema_columns = _build_enrichment_schema_columns(ontology)
     column_index = _schema_column_index(schema_columns)
     schema_column_names = set(column_index.keys())
+
+    # Compose the system prompt: base instructions + dialect-specific SQL rules.
+    dialect_instructions = _get_db_type_sql_instructions(db_type)
+    system_prompt = _ENRICHMENT_SYSTEM_PROMPT + "\n" + dialect_instructions
+
     user_payload = json.dumps(
         {
+            "db_type": db_type or "unknown",
             "schema_columns": schema_columns,
             "recent_chat_history": chat_history[-10:],
             "latest_user_message": user_message,
@@ -751,7 +1092,7 @@ async def _llm_enrichment_chat(
         )
         result: _EnrichmentChatOutput = await structured_llm.ainvoke(
             [
-                SystemMessage(content=_ENRICHMENT_SYSTEM_PROMPT),
+                SystemMessage(content=system_prompt),
                 HumanMessage(content=user_payload),
             ]
         )
@@ -780,25 +1121,74 @@ async def _llm_enrichment_chat(
                 break
             lines = [
                 f"I want to confirm one thing before saving {_friendly_label(metric.name)}.",
-                "I could not map all formula fields to your schema yet.",
+                "I could not find all the columns needed for this metric in the schema.",
             ]
-            # Show top field candidates to keep the follow-up actionable.
+            # Build a semantically-relevant candidate list instead of showing the
+            # first N columns in iteration order (which is usually wrong).
+            #
+            # Priority 1: columns whose name shares word-tokens with any missing identifier
+            #             (e.g. missing "order_approved" → match "order_approved_at").
+            # Priority 2: date/timestamp columns — most unresolved formulas involve time arithmetic.
+            # Priority 3: first available columns as a last-resort fallback.
+            seen_pairs: Set[Tuple[str, str]] = set()
             candidates: List[Tuple[str, str]] = []
+
+            def _add_candidate(tbl: str, col_name: str) -> None:
+                pair = (tbl, col_name)
+                if pair not in seen_pairs and len(candidates) < 6:
+                    seen_pairs.add(pair)
+                    candidates.append(pair)
+
+            # --- Priority 1: name-token similarity to missing identifiers ---
+            missing_tokens: Set[str] = set()
+            for m_ident in missing:
+                missing_tokens.update(re.split(r"[^a-z0-9]+", m_ident.lower()))
+            missing_tokens.discard("")
+
             for table, cols in schema_columns.items():
                 if not isinstance(cols, list):
                     continue
                 for col in cols:
-                    if isinstance(col, dict) and str(col.get("name") or "").strip():
-                        candidates.append((str(table), str(col.get("name"))))
-                if len(candidates) >= 6:
-                    break
+                    if not isinstance(col, dict):
+                        continue
+                    col_name = str(col.get("name") or "").strip()
+                    if not col_name:
+                        continue
+                    col_tokens = set(re.split(r"[^a-z0-9]+", col_name.lower()))
+                    if col_tokens & missing_tokens:
+                        _add_candidate(str(table), col_name)
+
+            # --- Priority 2: date/timestamp-type columns ---
+            if len(candidates) < 3:
+                for table, cols in schema_columns.items():
+                    if not isinstance(cols, list):
+                        continue
+                    for col in cols:
+                        if not isinstance(col, dict):
+                            continue
+                        col_name = str(col.get("name") or "").strip()
+                        col_type = str(col.get("type") or "").upper()
+                        if col_name and any(
+                            k in col_type for k in ("DATE", "TIME", "TIMESTAMP")
+                        ):
+                            _add_candidate(str(table), col_name)
+
+            # --- Priority 3: fill remaining slots from whatever columns exist ---
+            if len(candidates) < 3:
+                for table, cols in schema_columns.items():
+                    if not isinstance(cols, list):
+                        continue
+                    for col in cols:
+                        if isinstance(col, dict) and str(col.get("name") or "").strip():
+                            _add_candidate(str(table), str(col.get("name")))
+
             if candidates:
-                lines.append("Please pick the right field:")
-                for idx, (table, col) in enumerate(candidates[:6], start=1):
+                lines.append("Which column(s) did you mean? Please pick:")
+                for idx, (table, col) in enumerate(candidates, start=1):
                     lines.append(f"{idx}. {_friendly_label(col)} ({_friendly_label(table)})")
-                lines.append("Reply with the number.")
+                lines.append("Reply with the number, or type the column name directly.")
             else:
-                lines.append("Please share the exact table and column to use.")
+                lines.append("Please share the exact table and column name to use.")
             forced_clarification_message = "\n".join(lines)
             break
 
@@ -876,10 +1266,51 @@ async def _llm_enrichment_chat(
                     entry["description"] = m.description
                 formula = (m.formula or "").strip()
                 if formula:
-                    # Qualify bare column names → table.column so formulas are safe in JOINs.
+                    raw_llm_formula = formula
+                    # Step 1: Qualify bare column names → table.column so formulas are safe in JOINs.
                     formula = _qualify_formula_columns(formula, column_index)
-                    entry["formula"] = formula
-                    entry["status"] = "active"
+                    # Step 2: Rewrite any Databricks-only function calls (e.g. try_divide) that
+                    # the LLM incorrectly emitted for a non-Databricks dialect. This is the
+                    # primary defence against the system-prompt bias described in the root-cause
+                    # analysis: the global prompt's division-safety section used to show
+                    # try_divide() examples, causing the LLM to use them for PostgreSQL too.
+                    formula, was_rewritten = _rewrite_dialect_functions(formula, db_type)
+                    if was_rewritten:
+                        logger.warning(
+                            "[ONTOLOGY][DIALECT] Rewrote dialect-incompatible functions in metric '%s' "
+                            "(db_type=%r) | before=%r | after=%r",
+                            name,
+                            db_type or "unknown",
+                            raw_llm_formula,
+                            formula,
+                        )
+                    # Step 3: Guard against DIVIDE_BY_ZERO: rewrite bare col/col → NULLIF / try_divide.
+                    formula = _make_division_safe(formula, db_type)
+                    # Step 4: Validate that no forbidden dialect-specific functions remain.
+                    forbidden = _validate_dialect_functions(formula, db_type, metric_name=name)
+                    if forbidden:
+                        logger.warning(
+                            "[ONTOLOGY][DIALECT] Metric '%s' still contains forbidden functions %s "
+                            "after all rewrites — formula will be cleared (db_type=%r).",
+                            name,
+                            forbidden,
+                            db_type or "unknown",
+                        )
+                        formula = ""  # Clear invalid formula rather than persist garbage.
+                    logger.info(
+                        "[ONTOLOGY][DIALECT] Formula pipeline complete — metric='%s' db_type=%r "
+                        "rewritten=%s forbidden=%s formula=%r",
+                        name,
+                        db_type or "unknown",
+                        was_rewritten,
+                        forbidden,
+                        formula,
+                    )
+                    if formula:
+                        entry["formula"] = formula
+                        entry["status"] = "active"
+                    else:
+                        entry["status"] = "pending"
                 else:
                     entry["status"] = "pending"
                 metrics_dict[name] = entry
@@ -904,9 +1335,39 @@ async def _llm_enrichment_chat(
                 else "Got it! Feel free to share more metrics, rules, or date preferences."
             )
 
+        # Post-LLM guardrail: replace incomplete/mid-process assistant messages.
+        # The LLM occasionally generates future-tense or placeholder phrases
+        # (e.g. "Just a moment!", "I'll use the appropriate expression...") when
+        # CASE A / CASE E resolves without clarification.  Detect and replace them
+        # so the user always sees a clear, past-tense confirmation.
+        _INCOMPLETE_PHRASES = (
+            "just a moment", "one second", "give me a moment", "hold on",
+            "i'll use", "i'll apply", "i'll calculate", "i'll figure",
+            "let me ", "working on it", "i'm calculating", "please hold",
+            "i'll work", "i'll now", "i will use", "i will apply",
+        )
+        if not needs_clarification and any(
+            p in assistant_message.lower() for p in _INCOMPLETE_PHRASES
+        ):
+            saved_metrics = [
+                name
+                for name, val in (extracted_updates.get("metrics") or {}).items()
+                if isinstance(val, dict) and val.get("formula")
+            ]
+            if saved_metrics:
+                label = _friendly_label(saved_metrics[0])
+                assistant_message = (
+                    f"Saved! I've captured **{label}** with the appropriate formula "
+                    f"for your database. Feel free to add more metrics or rules!"
+                )
+            else:
+                assistant_message = (
+                    "Got it! Feel free to share more metrics, rules, or date preferences."
+                )
+
         logger.info(
-            "Enrichment chat | thread_id=%s | needs_clarification=%s | updates_keys=%s",
-            thread_id, needs_clarification, list(extracted_updates.keys()),
+            "Enrichment chat | thread_id=%s | db_type=%s | needs_clarification=%s | updates_keys=%s",
+            thread_id, db_type or "unknown", needs_clarification, list(extracted_updates.keys()),
         )
         return {
             "assistant_message": assistant_message,
@@ -1723,27 +2184,66 @@ _SQL_RESERVED_TOKENS: Set[str] = {
     # aggregates / window
     "SUM", "COUNT", "AVG", "MAX", "MIN", "DISTINCT",
     "ROW_NUMBER", "RANK", "DENSE_RANK", "OVER", "PARTITION",
+    "FIRST_VALUE", "LAST_VALUE", "LAG", "LEAD", "NTILE",
+    "CUME_DIST", "PERCENT_RANK", "PERCENTILE_CONT", "PERCENTILE_DISC",
+    "STDDEV", "STDDEV_POP", "STDDEV_SAMP", "VARIANCE", "VAR_POP", "VAR_SAMP",
+    "MEDIAN", "ANY_VALUE", "BOOL_AND", "BOOL_OR",
     # control flow
-    "CASE", "WHEN", "THEN", "ELSE", "END",
-    "AND", "OR", "NOT", "NULL", "IS", "IN", "BETWEEN", "LIKE", "EXISTS",
-    # clause/structural
-    "SELECT", "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "ON",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "IIF",
+    "AND", "OR", "NOT", "NULL", "IS", "IN", "BETWEEN", "LIKE", "ILIKE", "EXISTS",
+    # clause/structural keywords
+    "SELECT", "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "ON",
     "WHERE", "GROUP", "BY", "HAVING", "ORDER", "DESC", "ASC", "LIMIT", "OFFSET",
-    "AS", "UNION", "ALL", "INTERSECT", "EXCEPT", "WITH",
-    # functions commonly used in formulas
-    "DATE_TRUNC", "EXTRACT", "TO_CHAR", "TO_DATE", "CAST", "CONVERT",
-    "COALESCE", "NULLIF", "GREATEST", "LEAST",
-    "ROUND", "FLOOR", "CEIL", "CEILING", "ABS", "POWER", "SQRT",
-    "LENGTH", "LOWER", "UPPER", "TRIM", "CONCAT", "SUBSTRING",
-    "CURRENT_DATE", "CURRENT_TIMESTAMP", "NOW",
+    "AS", "UNION", "ALL", "INTERSECT", "EXCEPT", "WITH", "RECURSIVE",
+    "LATERAL", "QUALIFY", "PIVOT", "UNPIVOT", "WITHIN",
+    "ROLLUP", "CUBE", "GROUPING", "SETS", "TIES",
+    # window frame keywords
+    "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT",
+    # standard SQL functions used in formulas
+    "DATE_TRUNC", "EXTRACT", "TO_CHAR", "TO_DATE", "TO_TIMESTAMP",
+    "CAST", "CONVERT", "SAFE_CAST", "TRY_CAST",
+    "COALESCE", "NULLIF", "GREATEST", "LEAST", "NVL", "IFNULL", "ISNULL", "NVL2",
+    "ROUND", "FLOOR", "CEIL", "CEILING", "ABS", "POWER", "SQRT", "SIGN",
+    "MOD", "TRUNC", "EXP", "LN", "LOG",
+    "LENGTH", "LEN", "LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM",
+    "CONCAT", "SUBSTRING", "SUBSTR", "LEFT", "RIGHT", "REPLACE", "SPLIT_PART",
+    "CURRENT_DATE", "CURRENT_TIMESTAMP", "NOW", "SYSDATE", "GETDATE", "CURDATE",
+    "REGEXP_LIKE", "REGEXP_REPLACE", "REGEXP_SUBSTR",
+    "ARRAY_AGG", "STRING_AGG", "GROUP_CONCAT", "LISTAGG",
+    "APPROX_COUNT_DISTINCT",
+    # date/time arithmetic functions (cross-dialect) — the primary cause of false
+    # "missing column" triggers when the LLM generates time-delta formulas.
+    "DATEDIFF", "DATEADD", "DATE_ADD", "DATE_SUB", "DATE_DIFF",
+    "TIMESTAMPDIFF", "TIMEDIFF", "TIMEDELTA",
+    "DATEPART", "DATENAME", "DATETRUNC",
+    "UNIX_TIMESTAMP", "FROM_UNIXTIME",
+    "DATE_FORMAT", "STR_TO_DATE",
+    "AGE", "JULIANDAY", "STRFTIME",
+    "CALENDAR_MONTH", "CALENDAR_YEAR", "CALENDAR_QUARTER",
+    "DAY_ONLY", "HOUR_IN_DAY",
+    "INTERVAL",
     # type names (in CAST expressions)
-    "INT", "INTEGER", "BIGINT", "SMALLINT", "TEXT", "VARCHAR", "CHAR",
-    "DATE", "TIMESTAMP", "TIMESTAMPTZ", "NUMERIC", "DECIMAL", "FLOAT",
-    "DOUBLE", "REAL", "BOOLEAN", "BOOL",
-    # common time grain keywords used inside DATE_TRUNC/EXTRACT
+    "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "TEXT", "VARCHAR", "CHAR",
+    "DATE", "TIMESTAMP", "TIMESTAMPTZ", "DATETIME", "NUMERIC", "DECIMAL", "FLOAT",
+    "DOUBLE", "REAL", "BOOLEAN", "BOOL", "NUMBER", "BINARY_FLOAT", "BINARY_DOUBLE",
+    # time grain / unit keywords used inside DATE_TRUNC / EXTRACT / DATEDIFF
     "YEAR", "QUARTER", "MONTH", "WEEK", "DAY", "HOUR", "MINUTE", "SECOND",
-    "EPOCH",
+    "EPOCH", "DOW", "DOY", "ISOYEAR", "ISOWEEK",
+    # Databricks / Spark SQL dialect-specific functions.
+    # Must be in this set so _extract_identifiers_from_formula treats them as
+    # function calls (not column references) and never flags them as missing columns.
+    "TRY_DIVIDE", "TRY_TO_TIMESTAMP", "TRY_TO_DATE", "TRY_TO_NUMBER",
+    "SAFE_DIVIDE",  # BigQuery safe-division — not valid on other dialects
+    "IFF",          # Snowflake / Databricks shorthand for CASE WHEN
+    "DECODE",       # Oracle legacy conditional
+    "LPAD", "RPAD", "INITCAP", "INSTR",
+    "ARRAY_CONTAINS", "ARRAY_SIZE",
+    "COLLECT_LIST", "COLLECT_SET",
+    "PERCENTILE_APPROX",
+    "TO_JSON", "FROM_JSON", "PARSE_JSON", "GET_JSON_OBJECT",
+    "EXPLODE", "POSEXPLODE",
 }
+
 
 
 def _collect_schema_columns(db_connection: DatabaseConnectionModel) -> Set[str]:
@@ -1774,6 +2274,12 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     Pull out plausible column-name references from a metric formula string.
     Handles both `alias.column` (returns "column") and bare `column` tokens,
     while filtering out SQL keywords, function names, and type names.
+
+    Key filter: identifiers immediately followed by '(' are SQL function calls
+    (e.g. TIMESTAMPDIFF, DATEDIFF, AGE, DATE_FORMAT) and are always skipped,
+    even if their name does not appear in _SQL_RESERVED_TOKENS. This prevents
+    dialect-specific function names from being incorrectly flagged as missing
+    schema columns, which was causing infinite clarification loops.
     """
     if not isinstance(formula, str) or not formula.strip():
         return set()
@@ -1787,14 +2293,21 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     for match in pattern.finditer(formula):
         _alias, qualified_col, bare = match.group(1), match.group(2), match.group(3)
         if qualified_col:
-            # Take the column part only; the alias is a SQL-local symbol, not a real column.
+            # Take the column part only; the alias is a SQL-local alias, not a real column.
             identifiers.add(qualified_col.lower())
             continue
         if bare:
             if bare.upper() in _SQL_RESERVED_TOKENS:
                 continue
-            # Skip pure numeric-looking tokens (regex already excludes leading digits, but be safe)
+            # Skip pure numeric tokens (regex excludes leading digits, but be safe).
             if bare.isdigit():
+                continue
+            # Skip SQL function calls: any identifier followed by optional whitespace
+            # then '(' is a function name, not a column reference.  This handles
+            # dialect-specific functions like TIMESTAMPDIFF, DATEDIFF, AGE, DATE_FORMAT,
+            # NVL, TRUNC, CALENDAR_MONTH, etc. that are not in _SQL_RESERVED_TOKENS.
+            rest = formula[match.end():]
+            if rest.lstrip().startswith("("):
                 continue
             identifiers.add(bare.lower())
     return identifiers
@@ -2070,7 +2583,7 @@ async def enrichment_chat_message(
     db: Session = Depends(get_db),
     token_payload: dict = None,
 ):
-    _get_connection_or_404(db, connection_id)
+    db_connection = _get_connection_or_404(db, connection_id)
     session = (
         db.query(OntologyEnrichmentSessionModel)
         .filter(
@@ -2094,7 +2607,9 @@ async def enrichment_chat_message(
 
     chat_history.append({"role": "user", "content": message})
     ontology = _safe_json_loads(base_version.ontology_json, {})
-    llm_resp = await _llm_enrichment_chat(ontology, chat_history, message, str(session_id))
+    llm_resp = await _llm_enrichment_chat(
+        ontology, chat_history, message, str(session_id), db_type=db_connection.db_type
+    )
     assistant_message = llm_resp.get("assistant_message") or "I'm here to help! Feel free to share your business metrics, reporting rules, or any date preferences you'd like to set up."
     extracted_updates = llm_resp.get("extracted_updates") or {}
     needs_clarification = bool(llm_resp.get("needs_clarification"))
