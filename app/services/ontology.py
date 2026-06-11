@@ -282,32 +282,31 @@ SQL formula guide (always use table.column format):
 DIVISION SAFETY — MANDATORY FOR ALL DIALECTS
 ══════════════════════════════════════════════════
 Whenever a formula divides by a column or expression that could be zero,
-you MUST use the dialect-safe form. Bare division (col / col) will raise
-a runtime DIVIDE_BY_ZERO error in databases with ANSI mode enabled
-(e.g. Databricks).
+you MUST protect the denominator using ANSI-standard NULLIF:
 
-- Databricks: ALWAYS use try_divide(numerator, denominator).
-  ✓ CORRECT: try_divide(op.payment_value, op.payment_installments)
-  ✓ CORRECT: AVG(try_divide(op.payment_value, op.payment_installments))
-  ✗ WRONG:   op.payment_value / op.payment_installments
-  ✗ WRONG:   AVG(op.payment_value / op.payment_installments)
+  numerator / NULLIF(denominator, 0)
+  AVG(numerator / NULLIF(denominator, 0))
 
-- PostgreSQL / MySQL / Oracle: wrap denominator with NULLIF(col, 0).
-  ✓ CORRECT: op.payment_value / NULLIF(op.payment_installments, 0)
-  ✓ CORRECT: AVG(op.payment_value / NULLIF(op.payment_installments, 0))
+This applies to PostgreSQL, MySQL, SQL Server, Oracle, and all dialects
+UNLESS the SQL DIALECT section below explicitly says otherwise.
+
+IMPORTANT — FORBIDDEN FUNCTIONS (unless the dialect section says to use them):
+  ✗ NEVER use try_divide()  — this is Databricks-only and will ERROR on PostgreSQL/MySQL/Oracle
+  ✗ NEVER use SAFE_DIVIDE() — this is BigQuery-only
+  ✗ NEVER use IFF()         — use CASE WHEN ... THEN ... ELSE ... END instead
+  ✗ NEVER use NVL()         — use COALESCE() instead (unless Oracle dialect is specified)
+
+  ✓ STANDARD (works everywhere): numerator / NULLIF(denominator, 0)
+  ✓ STANDARD: AVG(col_a / NULLIF(col_b, 0))
+  ✗ WRONG (Databricks-only): try_divide(col_a, col_b)
 
 - Dividing by COUNT(DISTINCT ...) inside a GROUP BY is safe (never zero).
 - Dividing by a numeric literal (e.g. / 100, / 3600.0) is also safe.
-- Any direct column-to-column division MUST use the safe form above.
+- Any direct column-to-column division MUST use the safe NULLIF form above.
 
-STRING DATE COLUMNS — MANDATORY FOR DATABRICKS:
-Date/timestamp columns are often stored as STRING and may contain free-text
-garbage values (e.g. ' mas chegou dia 30/01.'). Databricks ANSI mode raises
-CAST_INVALID_INPUT when such values are implicitly cast inside date functions.
-ALWAYS wrap date/timestamp column arguments in try_to_timestamp() for Databricks.
-  ✓ CORRECT: timestampdiff(HOUR, try_to_timestamp(col_a), try_to_timestamp(col_b))
-  ✓ CORRECT: datediff(try_to_timestamp(end_col), try_to_timestamp(start_col))
-  ✗ WRONG:   timestampdiff(HOUR, col_a, col_b)  ← WILL throw CAST_INVALID_INPUT
+NOTE: Databricks-specific functions (try_divide, try_to_timestamp, etc.) are
+described ONLY in the Databricks dialect section below. Do NOT use them for
+any other database type.
 
 ══════════════════════════════════════════════════
 CASES — read in order, use the FIRST that matches
@@ -840,6 +839,96 @@ _UNSAFE_COL_DIV_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Per-dialect unsupported-function blocklists.
+# Used by _validate_dialect_functions() and _rewrite_dialect_functions().
+# Keys must match the normalised db_key values used throughout the pipeline.
+# ---------------------------------------------------------------------------
+_DIALECT_FORBIDDEN_FUNCTIONS: Dict[str, List[str]] = {
+    # Functions that are Databricks-only and MUST NOT appear in other dialects.
+    "postgres":  ["try_divide", "try_to_timestamp", "try_to_date", "safe_divide", "iff"],
+    "mysql":     ["try_divide", "try_to_timestamp", "try_to_date", "safe_divide"],
+    "oracledb":  ["try_divide", "try_to_timestamp", "try_to_date", "safe_divide", "isnull", "ifnull"],
+    "mssql":     ["try_divide", "try_to_timestamp", "safe_divide", "nvl"],
+    "salesforce": ["try_divide", "try_to_timestamp", "safe_divide", "nullif", "date_trunc", "ilike"],
+    # databricks: no blocklist — all Spark-SQL functions are valid there.
+}
+
+# Rewrites: for non-Databricks dialects, replace known Databricks-only function
+# calls with the ANSI-standard equivalent before the formula is persisted.
+# Pattern: try_divide(numerator, denominator) → numerator / NULLIF(denominator, 0)
+_TRY_DIVIDE_RE = re.compile(
+    r"try_divide\s*\(\s*(.*?)\s*,\s*(.*?)\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_SAFE_DIVIDE_RE = re.compile(
+    r"safe_divide\s*\(\s*(.*?)\s*,\s*(.*?)\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _rewrite_dialect_functions(formula: str, db_type: Optional[str]) -> Tuple[str, bool]:
+    """
+    Rewrite dialect-incompatible function calls in a formula to their ANSI equivalents.
+
+    For non-Databricks dialects:
+      try_divide(x, y)  → x / NULLIF(y, 0)
+      SAFE_DIVIDE(x, y) → x / NULLIF(y, 0)
+
+    Returns (rewritten_formula, was_rewritten).
+    """
+    if not formula:
+        return formula, False
+
+    db_key = (db_type or "").strip().lower()
+    if db_key == "oracle":
+        db_key = "oracledb"
+
+    # Databricks formulas are already correct — no rewrite needed.
+    if db_key == "databricks":
+        return formula, False
+
+    original = formula
+    # Replace try_divide(numerator, denominator) → numerator / NULLIF(denominator, 0)
+    formula = _TRY_DIVIDE_RE.sub(lambda m: f"{m.group(1)} / NULLIF({m.group(2)}, 0)", formula)
+    # Replace SAFE_DIVIDE(numerator, denominator) → numerator / NULLIF(denominator, 0)
+    formula = _SAFE_DIVIDE_RE.sub(lambda m: f"{m.group(1)} / NULLIF({m.group(2)}, 0)", formula)
+
+    was_rewritten = formula != original
+    return formula, was_rewritten
+
+
+def _validate_dialect_functions(
+    formula: str,
+    db_type: Optional[str],
+    metric_name: str = "",
+) -> List[str]:
+    """
+    Return a list of function names in *formula* that are forbidden for *db_type*.
+    An empty list means the formula is dialect-compatible.
+    """
+    if not formula:
+        return []
+    db_key = (db_type or "").strip().lower()
+    if db_key == "oracle":
+        db_key = "oracledb"
+    blocked = _DIALECT_FORBIDDEN_FUNCTIONS.get(db_key, [])
+    found: List[str] = []
+    for fn in blocked:
+        # Match the function name followed by '(' with optional whitespace.
+        if re.search(rf"\b{re.escape(fn)}\s*\(", formula, re.IGNORECASE):
+            found.append(fn)
+    if found:
+        logger.warning(
+            "[ONTOLOGY][DIALECT] Forbidden functions in metric '%s' for db_type='%s': %s | formula: %s",
+            metric_name,
+            db_type or "unknown",
+            found,
+            formula,
+        )
+    return found
+
+
 def _make_division_safe(formula: str, db_type: Optional[str]) -> str:
     """
     Rewrite bare column-division patterns in a SQL metric formula to be safe
@@ -1177,12 +1266,51 @@ async def _llm_enrichment_chat(
                     entry["description"] = m.description
                 formula = (m.formula or "").strip()
                 if formula:
-                    # Qualify bare column names → table.column so formulas are safe in JOINs.
+                    raw_llm_formula = formula
+                    # Step 1: Qualify bare column names → table.column so formulas are safe in JOINs.
                     formula = _qualify_formula_columns(formula, column_index)
-                    # Guard against DIVIDE_BY_ZERO: rewrite col/col → try_divide / NULLIF.
+                    # Step 2: Rewrite any Databricks-only function calls (e.g. try_divide) that
+                    # the LLM incorrectly emitted for a non-Databricks dialect. This is the
+                    # primary defence against the system-prompt bias described in the root-cause
+                    # analysis: the global prompt's division-safety section used to show
+                    # try_divide() examples, causing the LLM to use them for PostgreSQL too.
+                    formula, was_rewritten = _rewrite_dialect_functions(formula, db_type)
+                    if was_rewritten:
+                        logger.warning(
+                            "[ONTOLOGY][DIALECT] Rewrote dialect-incompatible functions in metric '%s' "
+                            "(db_type=%r) | before=%r | after=%r",
+                            name,
+                            db_type or "unknown",
+                            raw_llm_formula,
+                            formula,
+                        )
+                    # Step 3: Guard against DIVIDE_BY_ZERO: rewrite bare col/col → NULLIF / try_divide.
                     formula = _make_division_safe(formula, db_type)
-                    entry["formula"] = formula
-                    entry["status"] = "active"
+                    # Step 4: Validate that no forbidden dialect-specific functions remain.
+                    forbidden = _validate_dialect_functions(formula, db_type, metric_name=name)
+                    if forbidden:
+                        logger.warning(
+                            "[ONTOLOGY][DIALECT] Metric '%s' still contains forbidden functions %s "
+                            "after all rewrites — formula will be cleared (db_type=%r).",
+                            name,
+                            forbidden,
+                            db_type or "unknown",
+                        )
+                        formula = ""  # Clear invalid formula rather than persist garbage.
+                    logger.info(
+                        "[ONTOLOGY][DIALECT] Formula pipeline complete — metric='%s' db_type=%r "
+                        "rewritten=%s forbidden=%s formula=%r",
+                        name,
+                        db_type or "unknown",
+                        was_rewritten,
+                        forbidden,
+                        formula,
+                    )
+                    if formula:
+                        entry["formula"] = formula
+                        entry["status"] = "active"
+                    else:
+                        entry["status"] = "pending"
                 else:
                     entry["status"] = "pending"
                 metrics_dict[name] = entry
@@ -2101,7 +2229,21 @@ _SQL_RESERVED_TOKENS: Set[str] = {
     # time grain / unit keywords used inside DATE_TRUNC / EXTRACT / DATEDIFF
     "YEAR", "QUARTER", "MONTH", "WEEK", "DAY", "HOUR", "MINUTE", "SECOND",
     "EPOCH", "DOW", "DOY", "ISOYEAR", "ISOWEEK",
+    # Databricks / Spark SQL dialect-specific functions.
+    # Must be in this set so _extract_identifiers_from_formula treats them as
+    # function calls (not column references) and never flags them as missing columns.
+    "TRY_DIVIDE", "TRY_TO_TIMESTAMP", "TRY_TO_DATE", "TRY_TO_NUMBER",
+    "SAFE_DIVIDE",  # BigQuery safe-division — not valid on other dialects
+    "IFF",          # Snowflake / Databricks shorthand for CASE WHEN
+    "DECODE",       # Oracle legacy conditional
+    "LPAD", "RPAD", "INITCAP", "INSTR",
+    "ARRAY_CONTAINS", "ARRAY_SIZE",
+    "COLLECT_LIST", "COLLECT_SET",
+    "PERCENTILE_APPROX",
+    "TO_JSON", "FROM_JSON", "PARSE_JSON", "GET_JSON_OBJECT",
+    "EXPLODE", "POSEXPLODE",
 }
+
 
 
 def _collect_schema_columns(db_connection: DatabaseConnectionModel) -> Set[str]:

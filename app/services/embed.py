@@ -722,12 +722,21 @@ async def get_embed_chart_data_by_dashboard(
         )
 
     # Decide which SQL to execute
+    # NOTE: x_axis stores the first result-column name (may be an alias like "month").
     date_col = chart.x_axis
 
-    apply_date_filter_intent = (
-        bool(start_date)
-        and bool(end_date)
-        and chart.is_time_based
+    # Intent: apply a date filter whenever the caller supplies both boundary params.
+    # We intentionally do NOT gate on chart.is_time_based here — that flag is often
+    # NULL or False in the DB even for genuine time-series charts, and the date-range
+    # discovery endpoint (get_embed_chart_date_range) does not check it either.
+    # The actual gate is whether we can resolve a date column, done below.
+    apply_date_filter_intent = bool(start_date) and bool(end_date)
+
+    logger.info(
+        f"[EMBED][FILTER] Date filter check — chart {str(chart_id)[:8]}... "
+        f"start_date={start_date!r} end_date={end_date!r} "
+        f"is_time_based={chart.is_time_based!r} x_axis={chart.x_axis!r} "
+        f"filter_intent={apply_date_filter_intent}"
     )
 
     # Execute the query via the external engine manager
@@ -748,20 +757,42 @@ async def get_embed_chart_data_by_dashboard(
             db_type=connection.db_type,
         )
 
-        # Infer date column if intent is to filter but x_axis is missing
+        # If we intend to filter but x_axis is not stored, infer the date column
+        # by running the query with LIMIT 1 and taking the first result column —
+        # identical to the logic in get_embed_chart_date_range().
         if apply_date_filter_intent and not date_col:
             clean_query = chart.query.strip().rstrip(";")
             db_type_lower = (connection.db_type or "").lower()
             infer_sql = f"SELECT * FROM ({clean_query}) AS _embed_infer_subq LIMIT 1"
             if "mssql" in db_type_lower or "sqlserver" in db_type_lower:
                 infer_sql = f"SELECT TOP 1 * FROM ({clean_query}) AS _embed_infer_subq"
+            logger.info(
+                f"[EMBED][FILTER] x_axis not stored — running inference query for chart "
+                f"{str(chart_id)[:8]}..."
+            )
             with ext_engine.connect() as conn:
                 result = conn.execute(sqlalchemy.text(infer_sql))
                 keys = list(result.keys())
                 if keys:
                     date_col = keys[0]
+                    logger.info(
+                        f"[EMBED][FILTER] Inferred date column from query result: {date_col!r}"
+                    )
+                else:
+                    logger.warning(
+                        f"[EMBED][FILTER] Inference query returned no columns — "
+                        f"cannot apply date filter for chart {str(chart_id)[:8]}..."
+                    )
 
+        # Actual filter gate: intent + a resolved column name
         apply_date_filter = apply_date_filter_intent and bool(date_col)
+
+        if apply_date_filter_intent and not apply_date_filter:
+            logger.warning(
+                f"[EMBED][FILTER] Date filter SKIPPED — chart {str(chart_id)[:8]}... "
+                f"reason=no_date_column_resolved "
+                f"(x_axis={chart.x_axis!r}, is_time_based={chart.is_time_based!r})"
+            )
 
         if apply_date_filter:
             # Validate dates before they reach the DB driver
@@ -776,8 +807,11 @@ async def get_embed_chart_data_by_dashboard(
             )
             bind_params = {"start_date": start_date_val, "end_date": end_date_val}
             logger.info(
-                f"[EMBED] Date filter applied — chart {str(chart_id)[:8]}... "
-                f"range: {start_date_val} → {end_date_val}"
+                f"[EMBED][FILTER] Date filter APPLIED — chart {str(chart_id)[:8]}... "
+                f"date_column={date_col!r} range={start_date_val} → {end_date_val}"
+            )
+            logger.debug(
+                f"[EMBED][FILTER] Filtered SQL for chart {str(chart_id)[:8]}...:\n{sql_to_run}"
             )
         else:
             sql_to_run  = chart.query
@@ -936,6 +970,10 @@ async def get_embed_chart_date_range(
         elif "databricks" in db_type:
             min_expr = f'MIN(CAST(`{date_col}` AS DATE))'
             max_expr = f'MAX(CAST(`{date_col}` AS DATE))'
+        
+        elif "oracle" in db_type:
+            min_expr = f'MIN(TRUNC("{date_col}"))'
+            max_expr = f'MAX(TRUNC("{date_col}"))'
         else:
             # PostgreSQL
             min_expr = f'MIN("{date_col}"::date)'
