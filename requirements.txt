@@ -53,6 +53,7 @@ jsonpatch==1.33
 jsonpointer==3.0.0
 kombu==5.5.3
 langchain==1.2.12
+litellm
 langchain-classic==1.0.1
 langchain-community==0.4.1
 langchain-core==1.2.19
