@@ -681,9 +681,7 @@ class ShareTokenModel(Base):
     creator = relationship("UserModel")
 
 
-# Migration pending — run manually:
-#   alembic revision --autogenerate -m "add_apps"
-#   alembic upgrade head
+
 class AppModel(Base):
     """
     Represents a registered external application (e.g. a customer's website)
@@ -711,9 +709,7 @@ class AppModel(Base):
     creator = relationship("UserModel")
 
 
-# Migration pending — run manually:
-#   alembic revision --autogenerate -m "add_dashboard_allowed_domains"
-#   alembic upgrade head
+
 class DashboardAllowedDomainModel(Base):
     """
     Join table linking dashboards to allowed app domains.
