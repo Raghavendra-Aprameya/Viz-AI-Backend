@@ -125,14 +125,11 @@ def check_origin(origin: str | None, allowed_domains: list[str]) -> tuple[bool, 
     Returns:
         Tuple of (is_allowed, reason_string)
     """
-    # If origin is null/missing (direct browser tab load), allow for testing
+
     if not origin:
         return True, "origin_null_allowed_for_testing"
     
-    # Normalize origin to bare hostname
     origin_hostname = normalize_domain(origin)
-    
-    # Normalize allowed domains for comparison
     normalized_allowed = [normalize_domain(d) for d in allowed_domains]
     
     if origin_hostname in normalized_allowed:
@@ -178,12 +175,6 @@ async def create_share_token(
     """
     Create or return an existing share token for a dashboard.
 
-    STEP 1: User clicked "Create shareable link"
-    STEP 2: Validate request
-    STEP 2a: Generate UUID token
-    STEP 2b: HMAC-sign the token
-    STEP 2c: Persist token to store
-
     Args:
         dashboard_id: UUID of the dashboard
         user_id: UUID of the requesting user
@@ -196,14 +187,12 @@ async def create_share_token(
     """
     start_time = time.time()
 
-    # [STEP 6] Shareable link requested
     logger.info(
         f"[EMBED][STEP 6] Shareable link requested — "
         f"dashboard {str(dashboard_id)[:8]}..."
     )
 
-    # [STEP 2] Validate the request
-    # Verify dashboard exists
+  
     dashboard = db.query(DashboardModel).filter(
         DashboardModel.id == dashboard_id
     ).first()
@@ -217,7 +206,7 @@ async def create_share_token(
             detail="Dashboard not found",
         )
 
-    # Verify user has owner/admin role on this dashboard's project
+   
     user_role = db.query(UserProjectRoleModel).filter(
         and_(
             UserProjectRoleModel.user_id == user_id,
@@ -227,7 +216,7 @@ async def create_share_token(
 
     role_name = "owner" if (user_role and user_role.is_owner) else "member"
 
-    # Get current allowed domains for this dashboard
+   
     allowed_domains = get_allowed_domains_list(dashboard_id, db)
     logger.info(
         f"[EMBED][STEP 6] Shareable link requested — dashboard {str(dashboard_id)[:8]}..., "
@@ -239,7 +228,7 @@ async def create_share_token(
         f"dashboard {str(dashboard_id)[:8]}..., role {role_name}"
     )
 
-    # Check if an active token already exists for this dashboard
+
     existing_token = db.query(ShareTokenModel).filter(
         and_(
             ShareTokenModel.dashboard_id == dashboard_id,
@@ -248,7 +237,7 @@ async def create_share_token(
     ).first()
 
     if existing_token:
-        # Check if it's still valid (not expired)
+       
         if existing_token.expires_at is None or existing_token.expires_at > datetime.now(timezone.utc):
             embed_url = _build_embed_url(str(existing_token.token_id), base_url)
             duration_ms = int((time.time() - start_time) * 1000)
@@ -271,17 +260,17 @@ async def create_share_token(
                 },
             }
 
-    # [STEP 7] Generate UUID token
+
     token_id = uuid4()
     logger.info(
         f"[EMBED][STEP 7] Token generated — token: {str(token_id)[:8]}..., "
         f"dashboard: {str(dashboard_id)[:8]}..., domains: {allowed_domains}"
     )
 
-    # HMAC-sign the token
+
     signature = _sign_token(str(token_id), str(dashboard_id))
 
-    # Persist token to store with allowed_domains snapshot
+   
     expires_at = None
     if expires_in_days is not None and expires_in_days > 0:
         expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
@@ -308,7 +297,7 @@ async def create_share_token(
 
     embed_url = _build_embed_url(str(token_id), base_url)
 
-    # [STEP 8] Return iframe snippet to frontend
+
     iframe_snippet = _build_iframe_snippet(embed_url)
     logger.info(
         f"[EMBED][STEP 8] Snippet returned to client for dashboard {str(dashboard_id)[:8]}..."
@@ -348,8 +337,6 @@ async def revoke_share_token(
         dict with revocation result
     """
     start_time = time.time()
-
-    # Verify dashboard exists
     dashboard = db.query(DashboardModel).filter(
         DashboardModel.id == dashboard_id
     ).first()
@@ -360,7 +347,6 @@ async def revoke_share_token(
             detail="Dashboard not found",
         )
 
-    # Revoke all active tokens
     active_tokens = db.query(ShareTokenModel).filter(
         and_(
             ShareTokenModel.dashboard_id == dashboard_id,
@@ -417,7 +403,7 @@ async def get_share_token(
     if not token:
         return None
 
-    # Check if expired
+
     if token.expires_at and token.expires_at < datetime.now(timezone.utc):
         return None
 
@@ -441,7 +427,7 @@ async def validate_embed_token(
 ) -> ShareTokenModel:
     """
     Validate an embed token for rendering or data requests.
-    Implements STEP 10-12 checks including origin domain-lock.
+    
 
     Args:
         token_id: UUID of the token
@@ -456,12 +442,11 @@ async def validate_embed_token(
     """
     start_time = time.time()
 
-    # [STEP 10] Embed request received
+
     logger.info(
         f"[EMBED][STEP 10] Embed request — token: {str(token_id)[:8]}..., origin: {origin}"
     )
 
-    # [STEP 12] Token validation
     token = db.query(ShareTokenModel).filter(
         ShareTokenModel.token_id == token_id
     ).first()
@@ -503,7 +488,7 @@ async def validate_embed_token(
             },
         )
 
-    # Verify HMAC signature
+
     if not _verify_signature(str(token.token_id), str(token.dashboard_id), token.hmac_signature):
         logger.error(
             f"[EMBED][STEP 12] Token validation — result: invalid, reason: hmac_mismatch"
@@ -520,7 +505,6 @@ async def validate_embed_token(
         f"[EMBED][STEP 12] Token validation — result: valid"
     )
 
-    # [STEP 11] Origin header check (domain-lock enforcement)
     allowed_domains = token.allowed_domains_snapshot or []
     if allowed_domains:
         is_allowed, result = check_origin(origin, allowed_domains)
@@ -542,7 +526,7 @@ async def validate_embed_token(
             f"skipping domain lock"
         )
 
-    # Update access tracking
+   
     token.last_accessed = datetime.now(timezone.utc)
     token.access_count += 1
     db.commit()
@@ -573,7 +557,6 @@ async def get_embed_dashboard_data_by_dashboard_id(
             detail="Dashboard not found",
         )
 
-    # Get all charts for this dashboard
     dashboard_charts = (
         db.query(DashboardChartsModel)
         .filter(DashboardChartsModel.dashboard_id == dashboard.id)
@@ -624,7 +607,7 @@ def _validate_iso_date(value: str, param_name: str) -> str:
     from datetime import date as _dt
     try:
         parsed = _dt.fromisoformat(value)
-        return parsed.isoformat()  # canonical YYYY-MM-DD
+        return parsed.isoformat()  
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -645,15 +628,11 @@ def _build_date_filtered_query(
     """
     Wrap *base_query* as a subquery and append a dialect-aware
     date-range WHERE clause using bind parameters (:start_date / :end_date).
-
-    The column is always double-quoted to avoid reserved-word collisions.
-    Bind parameters are used exclusively — never string-formatted dates.
     """
     db_type_lower = (db_type or "").lower()
 
-    # Dialect-aware date cast expression
     if "mysql" in db_type_lower or "mariadb" in db_type_lower:
-        cast_expr = f'DATE(`{date_column}`)'  # MySQL uses backtick quoting
+        cast_expr = f'DATE(`{date_column}`)'  
     elif "mssql" in db_type_lower or "sqlserver" in db_type_lower:
         cast_expr = f'CAST([{date_column}] AS DATE)'
     elif "sqlite" in db_type_lower:
@@ -661,7 +640,6 @@ def _build_date_filtered_query(
     elif "databricks" in db_type_lower:
         cast_expr = f'CAST(`{date_column}` AS DATE)'
     else:
-        # PostgreSQL default
         cast_expr = f'"{date_column}"::date'
 
     return (
@@ -710,7 +688,7 @@ async def get_embed_chart_data_by_dashboard(
             detail="Chart not found",
         )
 
-    # Get the database connection
+   
     connection = db.query(DatabaseConnectionModel).filter(
         DatabaseConnectionModel.id == dc.database_connection_id
     ).first()
@@ -720,16 +698,8 @@ async def get_embed_chart_data_by_dashboard(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Database connection not found",
         )
-
-    # Decide which SQL to execute
-    # NOTE: x_axis stores the first result-column name (may be an alias like "month").
+    
     date_col = chart.x_axis
-
-    # Intent: apply a date filter whenever the caller supplies both boundary params.
-    # We intentionally do NOT gate on chart.is_time_based here — that flag is often
-    # NULL or False in the DB even for genuine time-series charts, and the date-range
-    # discovery endpoint (get_embed_chart_date_range) does not check it either.
-    # The actual gate is whether we can resolve a date column, done below.
     apply_date_filter_intent = bool(start_date) and bool(end_date)
 
     logger.info(
@@ -739,13 +709,13 @@ async def get_embed_chart_data_by_dashboard(
         f"filter_intent={apply_date_filter_intent}"
     )
 
-    # Execute the query via the external engine manager
+   
     try:
         from app.core.db import external_engine_manager
         from cryptography.fernet import Fernet
         import sqlalchemy
 
-        # Decrypt connection string
+  
         fernet = Fernet(settings.ENCRYPTION_KEY.encode())
         decrypted_conn_str = fernet.decrypt(
             connection.db_connection_string.encode()
@@ -757,9 +727,7 @@ async def get_embed_chart_data_by_dashboard(
             db_type=connection.db_type,
         )
 
-        # If we intend to filter but x_axis is not stored, infer the date column
-        # by running the query with LIMIT 1 and taking the first result column —
-        # identical to the logic in get_embed_chart_date_range().
+     
         if apply_date_filter_intent and not date_col:
             clean_query = chart.query.strip().rstrip(";")
             db_type_lower = (connection.db_type or "").lower()
@@ -784,7 +752,7 @@ async def get_embed_chart_data_by_dashboard(
                         f"cannot apply date filter for chart {str(chart_id)[:8]}..."
                     )
 
-        # Actual filter gate: intent + a resolved column name
+    
         apply_date_filter = apply_date_filter_intent and bool(date_col)
 
         if apply_date_filter_intent and not apply_date_filter:
@@ -795,7 +763,7 @@ async def get_embed_chart_data_by_dashboard(
             )
 
         if apply_date_filter:
-            # Validate dates before they reach the DB driver
+           
             start_date_val = _validate_iso_date(start_date, "start_date")
             end_date_val   = _validate_iso_date(end_date,   "end_date")
             sql_to_run = _build_date_filtered_query(
@@ -874,9 +842,6 @@ async def get_embed_chart_date_range(
     """
     Discover the min and max date values for a time-based chart.
 
-    Wraps the chart's stored query as a subquery and runs
-    ``SELECT MIN(date_col), MAX(date_col)`` against the real data source.
-    Returns ISO-formatted date strings so the frontend can populate picker bounds.
 
     If the chart is not time-based, or the date column is unknown,
     both ``min_date`` and ``max_date`` will be ``None``.
@@ -936,7 +901,7 @@ async def get_embed_chart_date_range(
             db_type=connection.db_type,
         )
 
-        # Infer date column if x_axis is missing
+     
         clean_query = chart.query.strip().rstrip(";")
         if not date_col:
             infer_sql = f"SELECT * FROM ({clean_query}) AS _embed_infer_subq LIMIT 1"
@@ -948,7 +913,6 @@ async def get_embed_chart_date_range(
                 if keys:
                     date_col = keys[0]
 
-        # Early exit only when there is still no date column to query on
         if not date_col:
             return {
                 "min_date": None,
@@ -957,7 +921,7 @@ async def get_embed_chart_date_range(
                 "is_time_based": bool(chart.is_time_based),
             }
 
-        # Dialect-aware MIN/MAX expression
+  
         if "mysql" in db_type or "mariadb" in db_type:
             min_expr = f'MIN(DATE(`{date_col}`))'  
             max_expr = f'MAX(DATE(`{date_col}`))'  
@@ -975,7 +939,7 @@ async def get_embed_chart_date_range(
             min_expr = f'MIN(TRUNC("{date_col}"))'
             max_expr = f'MAX(TRUNC("{date_col}"))'
         else:
-            # PostgreSQL
+        
             min_expr = f'MIN("{date_col}"::date)'
             max_expr = f'MAX("{date_col}"::date)'
 
@@ -998,7 +962,7 @@ async def get_embed_chart_date_range(
             raw_min, raw_max = row[0], row[1]
             if raw_min is not None:
                 min_date = _json_safe_value(raw_min)
-                # Truncate to date portion if datetime was returned
+
                 if isinstance(min_date, str) and "T" in min_date:
                     min_date = min_date[:10]
             if raw_max is not None:
@@ -1028,7 +992,6 @@ async def get_embed_chart_date_range(
             f"— duration: {duration_ms}ms — error: {str(e)}",
             exc_info=True,
         )
-        # Non-fatal: return nulls so the frontend falls back gracefully
         return {
             "min_date": None,
             "max_date": None,
