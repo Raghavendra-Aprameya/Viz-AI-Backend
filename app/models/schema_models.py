@@ -313,6 +313,9 @@ class DashboardModel(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id"), nullable=False)
     description = Column(Text)
     created_by = Column(UUID(as_uuid=True), ForeignKey("user.id"), nullable=False)
+    is_autopilot = Column(Boolean, nullable=False, default=False)
+    kpi_goals = Column(Text, nullable=True)
+    kpi_queries = Column(JSONB, nullable=True)
     user = relationship("UserModel", back_populates="dashboards")
     project = relationship("ProjectModel", back_populates="dashboards")
     users = relationship(

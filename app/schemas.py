@@ -370,6 +370,8 @@ class CreateDashboardRequest(BaseModel):
     Attributes:
         dashboard_name: Name of the dashboard
         description: Optional description of the dashboard
+        is_autopilot: Whether the dashboard was created via Autopilot mode
+        kpi_goals: Free-text KPI/metric goals provided by the user for Autopilot generation
     """
 
     dashboard_name: str = Field(
@@ -377,6 +379,8 @@ class CreateDashboardRequest(BaseModel):
         validation_alias=AliasChoices("dashboard_name", "title"),
     )
     description: Optional[str] = None
+    is_autopilot: bool = False
+    kpi_goals: Optional[str] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -391,6 +395,8 @@ class DashboardResponse(BaseModel):
         description: Optional description of the dashboard
         project_id: UUID of the project the dashboard belongs to
         created_by: UUID of the user who created the dashboard
+        is_autopilot: Whether the dashboard was created via Autopilot mode
+        kpi_goals: Free-text KPI/metric goals for Autopilot dashboards
     """
 
     id: UUID
@@ -398,6 +404,9 @@ class DashboardResponse(BaseModel):
     description: Optional[str] = None
     project_id: UUID
     created_by: UUID
+    is_autopilot: bool = False
+    kpi_goals: Optional[str] = None
+    kpi_queries: Optional[List[Any]] = None
 
 
 class CreateDashboardResponse(BaseModel):
@@ -628,6 +637,38 @@ class UpdateDashboardRequest(BaseModel):
 
     title: Optional[str] = None
     description: Optional[str] = None
+
+
+class GenerateKpiQueriesRequest(BaseModel):
+    """
+    Request model for generating KPI infographic queries for an Autopilot Dashboard.
+
+    Attributes:
+        connection_id: UUID of the database connection to generate KPIs for
+        db_schema: Database schema (string or dict)
+        db_type: Database type (postgres, mysql, databricks, etc.)
+        num_kpis: Number of KPI cards to generate (default 5)
+        force: If true, regenerate even if kpi_queries are already stored
+    """
+
+    connection_id: str
+    db_schema: Any
+    db_type: str = "postgres"
+    num_kpis: int = 5
+    force: bool = False
+
+
+class GenerateKpiQueriesResponse(BaseModel):
+    """
+    Response model for KPI query generation.
+
+    Attributes:
+        kpi_queries: List of KPI descriptor objects
+        generated: Whether queries were newly generated (True) or returned from cache (False)
+    """
+
+    kpi_queries: List[Any]
+    generated: bool
 
 
 class UpdateRoleRequest(BaseModel):

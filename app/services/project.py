@@ -8,8 +8,11 @@ It also includes functions to manage permissions and blacklists.
 It uses FastAPI for routing and SQLAlchemy for database interactions.
 """
 
+import json
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+import httpx
 from fastapi import Depends, HTTPException, Path, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -41,7 +44,7 @@ from app.schemas import (
     UpdateRoleRequest,
 )
 from app.utils.access import require_permission
-from app.utils.constants import Permissions as Permission
+from app.utils.constants import LLM_KPI_URL, Permissions as Permission
 from app.utils.token_parser import get_current_user
 
 
@@ -397,6 +400,8 @@ async def create_dashboard(
             description=data.description,
             project_id=project_id,
             created_by=user_id,
+            is_autopilot=data.is_autopilot,
+            kpi_goals=data.kpi_goals,
         )
 
         db.add(new_dashboard)
@@ -555,6 +560,8 @@ async def list_users_all_dashboard(
                     "project_id": dashboard.project_id,
                     "created_by": dashboard.created_by,
                     "is_favorite": user_dashboard.is_favorite,
+                    "is_autopilot": dashboard.is_autopilot,
+                    "kpi_queries": dashboard.kpi_queries,
                 }
             )
 
@@ -1212,3 +1219,70 @@ async def read_data_service(data: ReadDataRequest, db: Session, token_payload: d
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}",
         ) from e
+
+
+async def generate_kpi_queries_service(
+    dashboard_id: UUID,
+    connection_id: str,
+    db_schema: Any,
+    db_type: str,
+    num_kpis: int,
+    force: bool,
+    db: Session,
+    token_payload: dict,
+) -> Dict[str, Any]:
+    """
+    Generate and persist KPI infographic queries for an Autopilot Dashboard.
+
+    On first call (or when force=True) this calls the LLM service to produce
+    aggregation SQL descriptors, saves them to dashboard.kpi_queries, and returns
+    them. On subsequent calls without force=True it returns the stored list.
+    """
+    dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+    if not dashboard:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+
+    # Return cached result unless force-refresh is requested
+    if dashboard.kpi_queries and not force:
+        return {"kpi_queries": dashboard.kpi_queries, "generated": False}
+
+    # Call LLM service to generate KPI descriptors
+    llm_payload: Dict[str, Any] = {
+        "db_schema": db_schema,
+        "db_type": db_type,
+        "connection_id": str(connection_id),
+        "kpi_goals": dashboard.kpi_goals,
+        "num_kpis": num_kpis,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(LLM_KPI_URL, json=llm_payload)
+            response.raise_for_status()
+            llm_data = response.json()
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LLM service unreachable: {str(exc)}",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM service error: {exc.response.status_code} - {exc.response.text}",
+        ) from exc
+
+    kpi_queries: List[Dict[str, Any]] = llm_data.get("kpis", [])
+
+    # Persist to dashboard row
+    dashboard.kpi_queries = kpi_queries
+    try:
+        db.commit()
+        db.refresh(dashboard)
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save KPI queries: {str(db_err)}",
+        ) from db_err
+
+    return {"kpi_queries": kpi_queries, "generated": True}

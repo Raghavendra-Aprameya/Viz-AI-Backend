@@ -81,6 +81,8 @@ from app.schemas import (
     GetHomeInsightsResponse,
     OntologyVersionResponse,
     StartOntologyEnrichmentResponse,
+    GenerateKpiQueriesRequest,
+    GenerateKpiQueriesResponse,
 )
 
 # Service imports
@@ -103,6 +105,7 @@ from app.services.project import (
     blacklist_service,
     update_blacklist_service,
     read_data_service,
+    generate_kpi_queries_service,
 )
 
 from app.services.db_connection import (
@@ -1338,6 +1341,37 @@ async def get_charts_for_dashboard(
         list: A list of charts associated with the specified dashboard.
     """
     return await get_charts_for_dashboard_service(dashboard_id, db, token_payload)
+
+
+@backend_router.post(
+    "/dashboards/{dashboard_id}/generate-kpi-queries",
+    status_code=status.HTTP_200_OK,
+    response_model=GenerateKpiQueriesResponse,
+)
+async def generate_kpi_queries_route(
+    dashboard_id: UUID = Path(..., description="Dashboard ID to generate KPI queries for"),
+    data: GenerateKpiQueriesRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Generate (or return cached) KPI infographic queries for an Autopilot Dashboard.
+
+    On first call the LLM service analyses the database schema and KPI goals to
+    produce N aggregation SQL descriptors. Results are saved to the dashboard row
+    and returned. Subsequent calls return the stored list without hitting the LLM
+    unless force=True is passed.
+    """
+    return await generate_kpi_queries_service(
+        dashboard_id=dashboard_id,
+        connection_id=data.connection_id,
+        db_schema=data.db_schema,
+        db_type=data.db_type,
+        num_kpis=data.num_kpis,
+        force=data.force,
+        db=db,
+        token_payload=token_payload,
+    )
 
 
 @backend_router.delete(

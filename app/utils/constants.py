@@ -53,6 +53,7 @@ ALLOWED_METHODS = ["*"]
 ALLOWED_HEADERS = ["*", "Authorization"]
 
 LLM_SERVICE_URL = os.getenv("LLM_SERVICE_URL", "http://localhost:8001/queries/")
+LLM_KPI_URL = os.getenv("LLM_KPI_URL", "http://localhost:8001/api/v1/kpi-queries")
 LLM_SPREADSHEET_URL = os.getenv(
     "LLM_SPREADSHEET_URL",
     "http://localhost:8001/generate-sheet-queries/",
