@@ -652,8 +652,8 @@ class GenerateKpiQueriesRequest(BaseModel):
     """
 
     connection_id: str
-    db_schema: Any
-    db_type: str = "postgres"
+    db_schema: Optional[Any] = None  # if omitted, fetched from DatabaseConnectionModel
+    db_type: Optional[str] = None  # if omitted, fetched from DatabaseConnectionModel
     num_kpis: int = 5
     force: bool = False
 

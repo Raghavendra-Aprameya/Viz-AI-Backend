@@ -1246,6 +1246,31 @@ async def generate_kpi_queries_service(
     if dashboard.kpi_queries and not force:
         return {"kpi_queries": dashboard.kpi_queries, "generated": False}
 
+    # If db_schema or db_type are not provided, fetch them from the DatabaseConnectionModel
+    if not db_schema or not db_type:
+        connection_record = (
+            db.query(DatabaseConnectionModel)
+            .filter(DatabaseConnectionModel.id == UUID(str(connection_id)))
+            .first()
+        )
+        if not connection_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Database connection {connection_id} not found",
+            )
+        if not db_schema:
+            raw_schema = connection_record.db_schema
+            if raw_schema:
+                try:
+                    import json as _json
+                    db_schema = _json.loads(raw_schema) if isinstance(raw_schema, str) else raw_schema
+                except Exception:
+                    db_schema = raw_schema
+            else:
+                db_schema = {}
+        if not db_type:
+            db_type = connection_record.db_type or "postgres"
+
     # Call LLM service to generate KPI descriptors
     llm_payload: Dict[str, Any] = {
         "db_schema": db_schema,
