@@ -2224,6 +2224,13 @@ _SQL_RESERVED_TOKENS: Set[str] = {
     "CALENDAR_MONTH", "CALENDAR_YEAR", "CALENDAR_QUARTER",
     "DAY_ONLY", "HOUR_IN_DAY",
     "INTERVAL",
+
+    # Boolean literals
+    "TRUE",
+    "FALSE",
+    
+    # Null literal
+    "NULL",
     # type names (in CAST expressions)
     "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "TEXT", "VARCHAR", "CHAR",
     "DATE", "TIMESTAMP", "TIMESTAMPTZ", "DATETIME", "NUMERIC", "DECIMAL", "FLOAT",
@@ -2834,6 +2841,41 @@ Rules:
 - If a measure cannot be reliably translated (e.g. it references Power BI-only
   functions, calculated tables, or columns not in the schema), mark it as
   status="pending" with an empty formula and include a brief translation_error.
+
+══════════════════════════════════════════════════
+METRIC FORMULA FORMAT — CRITICAL RULE
+══════════════════════════════════════════════════
+- Metrics are EXPRESSIONS, not SQL queries.
+- Output MUST contain only the metric formula (aggregation expression).
+- Table references must use table.column format.
+- Generated formulas must be compatible with the existing ontology metric validation pipeline.
+
+FORBIDDEN CONSTRUCTS:
+You MUST NOT generate any of the following:
+  ✗ SELECT
+  ✗ FROM
+  ✗ JOIN
+  ✗ GROUP BY
+  ✗ ORDER BY
+  ✗ HAVING
+  ✗ WITH
+  ✗ CTEs
+  ✗ Nested SELECT statements
+  ✗ Standalone SQL queries
+
+POSITIVE EXAMPLES (DO THIS):
+  ✓ SUM(order_header.price)
+  ✓ COUNT(order_header.order_id)
+  ✓ COUNT(DISTINCT order_header.customer_id)
+  ✓ SUM(order_header.price) - SUM(sale_return.refund_amount)
+  ✓ AVG(order_header.price)
+  ✓ CASE WHEN order_header.status = 'COMPLETED' THEN order_header.price ELSE 0 END
+
+NEGATIVE EXAMPLES (NEVER DO THIS):
+  ✗ SELECT SUM(price) FROM order_header
+  ✗ (SELECT SUM(refund_amount) FROM sale_return)
+  ✗ SELECT COUNT(*) FROM order_header
+  ✗ WITH sales AS (...) SELECT ...
 
 Output format — return a JSON array:
 [
