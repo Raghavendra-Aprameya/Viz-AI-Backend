@@ -1,14 +1,16 @@
+import io
 import json
 import logging
 import os
 import re
 import time
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, UploadFile, status
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
@@ -2222,6 +2224,13 @@ _SQL_RESERVED_TOKENS: Set[str] = {
     "CALENDAR_MONTH", "CALENDAR_YEAR", "CALENDAR_QUARTER",
     "DAY_ONLY", "HOUR_IN_DAY",
     "INTERVAL",
+
+    # Boolean literals
+    "TRUE",
+    "FALSE",
+    
+    # Null literal
+    "NULL",
     # type names (in CAST expressions)
     "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "TEXT", "VARCHAR", "CHAR",
     "DATE", "TIMESTAMP", "TIMESTAMPTZ", "DATETIME", "NUMERIC", "DECIMAL", "FLOAT",
@@ -2814,4 +2823,287 @@ async def submit_enrichment_answers(
         "graph": enriched_graph,
         "ontology": enriched_ontology,
         "metric_warnings": metric_warnings,
+    }
+
+
+_DAX_TRANSLATION_SYSTEM_PROMPT = """\
+You are a DAX-to-SQL translation expert for a NL2SQL system.
+You will receive a list of Power BI DAX measures and must convert each one into a
+SQL formula compatible with the specified database dialect, using ONLY the available
+tables and columns from the user's connected datasource.
+
+Rules:
+- Translate the business intent of the DAX expression into SQL using the available schema.
+- Use ONLY real table.column names from the provided schema_columns.
+- Follow the SQL dialect rules provided below exactly.
+- Preserve the business meaning of each measure.
+- Do NOT hallucinate table or column names.
+- If a measure cannot be reliably translated (e.g. it references Power BI-only
+  functions, calculated tables, or columns not in the schema), mark it as
+  status="pending" with an empty formula and include a brief translation_error.
+
+══════════════════════════════════════════════════
+METRIC FORMULA FORMAT — CRITICAL RULE
+══════════════════════════════════════════════════
+- Metrics are EXPRESSIONS, not SQL queries.
+- Output MUST contain only the metric formula (aggregation expression).
+- Table references must use table.column format.
+- Generated formulas must be compatible with the existing ontology metric validation pipeline.
+
+FORBIDDEN CONSTRUCTS:
+You MUST NOT generate any of the following:
+  ✗ SELECT
+  ✗ FROM
+  ✗ JOIN
+  ✗ GROUP BY
+  ✗ ORDER BY
+  ✗ HAVING
+  ✗ WITH
+  ✗ CTEs
+  ✗ Nested SELECT statements
+  ✗ Standalone SQL queries
+
+POSITIVE EXAMPLES (DO THIS):
+  ✓ SUM(order_header.price)
+  ✓ COUNT(order_header.order_id)
+  ✓ COUNT(DISTINCT order_header.customer_id)
+  ✓ SUM(order_header.price) - SUM(sale_return.refund_amount)
+  ✓ AVG(order_header.price)
+  ✓ CASE WHEN order_header.status = 'COMPLETED' THEN order_header.price ELSE 0 END
+
+NEGATIVE EXAMPLES (NEVER DO THIS):
+  ✗ SELECT SUM(price) FROM order_header
+  ✗ (SELECT SUM(refund_amount) FROM sale_return)
+  ✗ SELECT COUNT(*) FROM order_header
+  ✗ WITH sales AS (...) SELECT ...
+
+Output format — return a JSON array:
+[
+  {
+    "name": "Measure Name",
+    "description": "Plain English description",
+    "formula": "SQL expression or empty string",
+    "status": "active" or "pending",
+    "translation_error": "reason if pending, else empty string"
+  }
+]
+"""
+
+
+def _extract_measures_from_pbit(file_bytes: bytes) -> List[Dict[str, Any]]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            schema_names = [n for n in zf.namelist() if "DataModelSchema" in n]
+            if not schema_names:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Unable to extract DataModelSchema from the uploaded .pbit file.",
+                )
+            with zf.open(schema_names[0]) as schema_file:
+                raw = schema_file.read()
+            try:
+                schema_text = raw.decode("utf-16-le")
+            except UnicodeDecodeError:
+                schema_text = raw.decode("utf-8", errors="replace")
+            schema = json.loads(schema_text)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unable to extract DataModelSchema from the uploaded .pbit file.",
+        ) from exc
+
+    measures: List[Dict[str, Any]] = []
+    for table in schema.get("model", {}).get("tables", []):
+        table_name = table.get("name", "")
+        for measure in table.get("measures", []):
+            name = measure.get("name", "").strip()
+            raw_expr = measure.get("expression") or ""
+            if isinstance(raw_expr, list):
+                raw_expr = "\n".join(str(part) for part in raw_expr)
+            expression = str(raw_expr).strip()
+            if name:
+                measures.append({"table": table_name, "name": name, "expression": expression})
+    return measures
+
+
+async def _translate_dax_measures(
+    measures: List[Dict[str, Any]],
+    schema_columns: Dict[str, list],
+    db_type: Optional[str],
+) -> List[Dict[str, Any]]:
+    dialect_instructions = _get_db_type_sql_instructions(db_type)
+    system_prompt = _DAX_TRANSLATION_SYSTEM_PROMPT + "\n" + dialect_instructions
+
+    user_payload = json.dumps(
+        {
+            "db_type": db_type or "unknown",
+            "schema_columns": schema_columns,
+            "measures": measures,
+        },
+        ensure_ascii=False,
+    )
+
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+        result = await llm.ainvoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_payload),
+            ]
+        )
+        raw_content = result.content if hasattr(result, "content") else str(result)
+        json_match = re.search(r"\[.*\]", raw_content, re.DOTALL)
+        if not json_match:
+            raise ValueError("LLM did not return a JSON array")
+        translated: List[Dict[str, Any]] = json.loads(json_match.group(0))
+        if not isinstance(translated, list):
+            raise ValueError("Unexpected LLM response shape")
+        return translated
+    except Exception as exc:
+        logger.warning("DAX translation LLM call failed: %s", str(exc))
+        return [
+            {
+                "name": m["name"],
+                "description": f"Imported from Power BI (table: {m['table']})",
+                "formula": "",
+                "status": "pending",
+                "translation_error": f"Translation failed: {str(exc)}",
+            }
+            for m in measures
+        ]
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def process_pbit_upload(
+    connection_id: UUID,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    token_payload: dict = None,
+) -> Dict[str, Any]:
+    if not (file.filename or "").lower().endswith(".pbit"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .pbit files are supported.",
+        )
+
+    db_connection = _get_connection_or_404(db, connection_id)
+
+    file_bytes = await file.read()
+    measures = _extract_measures_from_pbit(file_bytes)
+    del file_bytes
+
+    if not measures:
+        return {"status": "success", "imported_metrics": 0, "pending_metrics": 0, "duplicate_metrics": 0}
+
+    latest_version = _get_latest_ontology_version(db, connection_id)
+    if not latest_version:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No ontology found for this connection. Please bootstrap the ontology first.",
+        )
+
+    current_ontology = _safe_json_loads(latest_version.ontology_json, {})
+    schema_columns = _build_enrichment_schema_columns(current_ontology)
+    ont_classes: List[Dict[str, Any]] = [
+        c for c in (current_ontology.get("classes") or []) if isinstance(c, dict)
+    ]
+
+    translated = await _translate_dax_measures(measures, schema_columns, db_connection.db_type)
+
+    existing_metrics: List[Dict[str, Any]] = [
+        m for m in (current_ontology.get("metrics") or []) if isinstance(m, dict)
+    ]
+    existing_names_lower = {str(m.get("name") or "").lower() for m in existing_metrics}
+
+    imported_count = 0
+    pending_count = 0
+    duplicate_count = 0
+
+    for item in translated:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        name_lower = name.lower()
+        if name_lower in existing_names_lower:
+            logger.info("Skipping duplicate PBIT metric: %s", name)
+            duplicate_count += 1
+            continue
+
+        formula = str(item.get("formula") or "").strip()
+        metric_status = str(item.get("status") or "active").strip()
+        description = str(item.get("description") or f"Imported from Power BI").strip()
+
+        if not formula:
+            metric_status = "pending"
+
+        new_metric: Dict[str, Any] = {
+            "id": f"metric:{name}",
+            "name": name,
+            "definition": description,
+            "formula": formula,
+        }
+
+        if item.get("translation_error"):
+            new_metric["translation_error"] = str(item["translation_error"])
+
+        if formula:
+            inferred_class = _infer_class_from_formula(formula, ont_classes)
+            if inferred_class:
+                new_metric["based_on_class"] = inferred_class
+
+        existing_metrics.append(new_metric)
+        existing_names_lower.add(name_lower)
+
+        if metric_status == "pending":
+            pending_count += 1
+        else:
+            imported_count += 1
+
+    updated_ontology = dict(current_ontology)
+    updated_ontology["metrics"] = existing_metrics
+
+    try:
+        updated_ontology, _ = _validate_metric_formula_columns(updated_ontology, db_connection)
+    except Exception as exc:
+        logger.warning("Metric formula validation failed during PBIT import (non-fatal): %s", str(exc))
+
+    try:
+        updated_graph = _ontology_to_graph(updated_ontology)
+    except Exception as exc:
+        logger.warning("_ontology_to_graph failed during PBIT import: %s", str(exc))
+        updated_graph = _safe_json_loads(latest_version.graph_json, {"nodes": [], "edges": [], "stats": {}})
+
+    next_version_number = latest_version.version_number + 1
+    user_id = token_payload.get("sub") if token_payload else None
+
+    new_version = OntologyVersionModel(
+        id=uuid4(),
+        datasource_connection_id=connection_id,
+        version_number=next_version_number,
+        version_label=f"pbit_import_v{next_version_number}",
+        status="published",
+        is_base=False,
+        ontology_json=json.dumps(updated_ontology),
+        ontology_ttl=_ontology_to_ttl(updated_ontology),
+        graph_json=json.dumps(updated_graph),
+        created_by=UUID(user_id) if user_id else None,
+    )
+    db.add(new_version)
+    db.commit()
+    db.refresh(new_version)
+
+    logger.info(
+        "PBIT import complete | connection_id=%s | imported=%d | pending=%d | duplicates=%d",
+        str(connection_id), imported_count, pending_count, duplicate_count,
+    )
+
+    return {
+        "status": "success",
+        "imported_metrics": imported_count,
+        "pending_metrics": pending_count,
+        "duplicate_metrics": duplicate_count,
     }

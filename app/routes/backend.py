@@ -21,6 +21,7 @@ from fastapi import (
     Body,
     Query,
     BackgroundTasks,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect
 )
@@ -171,6 +172,7 @@ from app.services.ontology import (
     enrichment_chat_message,
     submit_enrichment_answers,
     validate_latest_ontology_ttl,
+    process_pbit_upload,
 )
 
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
@@ -1866,3 +1868,16 @@ async def delete_home_insight(
         db=db,
         token_payload=token_payload
     )
+
+
+@backend_router.post(
+    "/connections/{connection_id}/pbit-upload",
+    status_code=status.HTTP_200_OK,
+)
+async def upload_pbit_file(
+    connection_id: UUID = Path(..., description="Connection ID to import PBIT measures into"),
+    file: UploadFile = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await process_pbit_upload(connection_id, file, db, token_payload)
