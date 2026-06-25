@@ -2251,6 +2251,10 @@ _SQL_RESERVED_TOKENS: Set[str] = {
     "PERCENTILE_APPROX",
     "TO_JSON", "FROM_JSON", "PARSE_JSON", "GET_JSON_OBJECT",
     "EXPLODE", "POSEXPLODE",
+    # Power BI / DAX-style keywords that appear in PBIT metric formulas
+    "FILTER", "RELATED", "CALCULATETABLE", "CALCULATE", "SUMMARIZE",
+    "VALUES", "EARLIER", "EARLIEST", "BLANK", "LOOKUPVALUE",
+    "SELECTEDVALUE", "HASONEVALUE", "HASONEFILTER",
 }
 
 
@@ -2289,9 +2293,19 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     even if their name does not appear in _SQL_RESERVED_TOKENS. This prevents
     dialect-specific function names from being incorrectly flagged as missing
     schema columns, which was causing infinite clarification loops.
+
+    Important: string literals (both single- and double-quoted) are stripped
+    before identifier extraction so that filter values like 'AVAILABLE' or
+    'Ejar Signed' are never mistaken for column references.
     """
     if not isinstance(formula, str) or not formula.strip():
         return set()
+
+    # ── Strip string literals so their contents aren't treated as identifiers ──
+    # Handles both single-quoted ('AVAILABLE') and double-quoted ("value") strings,
+    # including escaped quotes within them (e.g. 'it''s' or "say ""hello""").
+    cleaned = re.sub(r"'(?:[^'\\]|\\.)*'", " ", formula)   # single-quoted
+    cleaned = re.sub(r'"(?:[^"\\]|\\.)*"', " ", cleaned)   # double-quoted
 
     identifiers: Set[str] = set()
     # Pattern matches either `alias.column` or a bare identifier.
@@ -2299,7 +2313,7 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     pattern = re.compile(
         r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*)"
     )
-    for match in pattern.finditer(formula):
+    for match in pattern.finditer(cleaned):
         _alias, qualified_col, bare = match.group(1), match.group(2), match.group(3)
         if qualified_col:
             # Take the column part only; the alias is a SQL-local alias, not a real column.
@@ -2315,7 +2329,7 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
             # then '(' is a function name, not a column reference.  This handles
             # dialect-specific functions like TIMESTAMPDIFF, DATEDIFF, AGE, DATE_FORMAT,
             # NVL, TRUNC, CALENDAR_MONTH, etc. that are not in _SQL_RESERVED_TOKENS.
-            rest = formula[match.end():]
+            rest = cleaned[match.end():]
             if rest.lstrip().startswith("("):
                 continue
             identifiers.add(bare.lower())
