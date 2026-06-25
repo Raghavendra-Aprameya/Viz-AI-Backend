@@ -2182,6 +2182,42 @@ async def _apply_answers_to_ontology(ontology: Dict[str, Any], answers: Dict[str
 # (correctly) refuses to use such formulas, so saving them is misleading.
 # ---------------------------------------------------------------------------
 
+
+_RE_BLOCK_COMMENT   = re.compile(r"/\*.*?\*/", re.DOTALL)  # /* ... */
+_RE_LINE_COMMENT    = re.compile(r"--[^\n]*")               # -- ...
+_RE_SINGLE_QUOTED   = re.compile(r"'(?:[^'\\]|\\.)*'")     # 'string value'
+_RE_DOUBLE_QUOTED   = re.compile(r'"(?:[^"\\]|\\.)*"')     # "string value"
+_RE_BACKTICK_QUOTED = re.compile(r"`[^`]*`")               # `identifier`
+_RE_AS_ALIAS        = re.compile(r"\bAS\s+[A-Za-z_][A-Za-z0-9_]*", re.IGNORECASE)  # AS alias
+
+# Formula pre-sanitization — strip non-identifier content before regex scan
+def _sanitize_formula_for_identifier_extraction(formula: str) -> str:
+    """
+    Remove all content from a SQL formula string that can never be a column
+    reference, before the identifier-extraction regex runs.
+
+    Strips (in order — order matters to avoid partial-match corruption):
+      1. Block comments  /* ... */        — words in comments are not columns
+      2. Line comments   -- ...           — same
+      3. Single-quoted literals 'value'   — SQL string values in WHERE/IN clauses
+      4. Double-quoted literals "value"   — string values in SQLite/MySQL ANSI mode
+      5. Backtick-quoted tokens `name`    — Databricks/MySQL quoted identifiers;
+                                           their bare content is already captured
+                                           by the table.column branch of the regex
+      6. AS <alias>                       — output aliases are not schema columns
+
+    Each stripped region is replaced by a single space so surrounding token
+    boundaries remain valid for the subsequent word-boundary regex pass.
+    """
+    s = _RE_BLOCK_COMMENT.sub(" ", formula)
+    s = _RE_LINE_COMMENT.sub(" ", s)
+    s = _RE_SINGLE_QUOTED.sub(" ", s)
+    s = _RE_DOUBLE_QUOTED.sub(" ", s)
+    s = _RE_BACKTICK_QUOTED.sub(" ", s)
+    s = _RE_AS_ALIAS.sub(" ", s)
+    return s
+
+
 _SQL_RESERVED_TOKENS: Set[str] = {
     # aggregates / window
     "SUM", "COUNT", "AVG", "MAX", "MIN", "DISTINCT",
@@ -2284,6 +2320,15 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     Handles both `alias.column` (returns "column") and bare `column` tokens,
     while filtering out SQL keywords, function names, and type names.
 
+    Pre-sanitization pass (via _sanitize_formula_for_identifier_extraction):
+      Strips block/line comments, single- and double-quoted string literals,
+      backtick-quoted tokens, and AS aliases BEFORE the regex runs.  Without
+      this step, words inside quoted string values — e.g. 'Ejar Signed',
+      'AVAILABLE', 'Proposal Cancelled' — are extracted as bare identifiers,
+      then falsely flagged as missing schema columns, causing valid metrics to
+      be dropped.  This is a generic fix; it works for any formula from any
+      source (enrichment chat, PBIT import, future ingestion paths).
+
     Key filter: identifiers immediately followed by '(' are SQL function calls
     (e.g. TIMESTAMPDIFF, DATEDIFF, AGE, DATE_FORMAT) and are always skipped,
     even if their name does not appear in _SQL_RESERVED_TOKENS. This prevents
@@ -2293,13 +2338,17 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     if not isinstance(formula, str) or not formula.strip():
         return set()
 
+    # Generic pre-sanitization: strip everything that can never be a column
+    # reference before running the identifier regex.
+    sanitized = _sanitize_formula_for_identifier_extraction(formula)
+
     identifiers: Set[str] = set()
     # Pattern matches either `alias.column` or a bare identifier.
     # Groups: (1)=alias, (2)=qualified-column; (3)=bare identifier (when no dot).
     pattern = re.compile(
         r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*)"
     )
-    for match in pattern.finditer(formula):
+    for match in pattern.finditer(sanitized):
         _alias, qualified_col, bare = match.group(1), match.group(2), match.group(3)
         if qualified_col:
             # Take the column part only; the alias is a SQL-local alias, not a real column.
@@ -2315,7 +2364,7 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
             # then '(' is a function name, not a column reference.  This handles
             # dialect-specific functions like TIMESTAMPDIFF, DATEDIFF, AGE, DATE_FORMAT,
             # NVL, TRUNC, CALENDAR_MONTH, etc. that are not in _SQL_RESERVED_TOKENS.
-            rest = formula[match.end():]
+            rest = sanitized[match.end():]
             if rest.lstrip().startswith("("):
                 continue
             identifiers.add(bare.lower())
@@ -2876,6 +2925,47 @@ NEGATIVE EXAMPLES (NEVER DO THIS):
   ✗ (SELECT SUM(refund_amount) FROM sale_return)
   ✗ SELECT COUNT(*) FROM order_header
   ✗ WITH sales AS (...) SELECT ...
+
+══════════════════════════════════════════════════
+FORBIDDEN DAX CONSTRUCTS — translate these into SQL, never emit them verbatim
+══════════════════════════════════════════════════
+The following are DAX / Power BI-only functions that do NOT exist in any SQL
+dialect. If the original DAX measure uses them, you MUST translate their intent
+into standard SQL. Never include them in the output formula.
+
+  ✗ RELATED(Table[Column])
+      → Use the column directly as table.column (the schema already captures
+        the joined structure). e.g. RELATED(proposals.status) → proposals.status
+
+  ✗ CALCULATE(<expr>, <filter>, ...)
+      → Translate as: the aggregation expression with the filter expressed as
+        a SQL FILTER (WHERE ...) clause or a CASE WHEN ... END guard.
+
+  ✗ ALL(<table_or_column>)  /  ALLEXCEPT(<table>, <col>)
+      → Use a plain aggregation without the DAX filter context.
+
+  ✗ EARLIER(<column>)  /  EARLIEST(<column>)
+      → Translate using a correlated subquery or window function (LAG/LEAD).
+
+  ✗ RANKX(<table>, <expr>)
+      → Use RANK() OVER (ORDER BY <expr> DESC).
+
+  ✗ TOPN(<n>, <table>, <expr>)
+      → Use ORDER BY <expr> DESC LIMIT <n> in a subquery context.
+
+  ✗ USERELATIONSHIP(col1, col2)
+      → This is not translatable to a standalone expression.
+        Mark status="pending" and set translation_error explaining why.
+
+  ✗ SELECTEDVALUE(<column>), VALUES(<column>), ALLSELECTED(<column>)
+      → These depend on Power BI slicer context and have no SQL equivalent.
+        Mark status="pending".
+
+  ✗ DIVIDE(<numerator>, <denominator>)  (DAX safe-divide)
+      → Translate as: numerator / NULLIF(denominator, 0)  (or dialect equivalent)
+
+If you cannot translate a measure without one of the above constructs, set
+status="pending", formula="", and explain in translation_error.
 
 Output format — return a JSON array:
 [
