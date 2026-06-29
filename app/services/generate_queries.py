@@ -79,6 +79,53 @@ async def post_to_llm(url: str, payload: dict) -> Any:
         )
 
 
+def _fetch_postgres_enum_values(connection_string: str) -> dict:
+    """
+    Returns a mapping of {enum_type_name: [value1, value2, ...]} for all
+    user-defined enum types found in the PostgreSQL database.
+    Falls back to an empty dict on any error.
+    """
+    try:
+        from sqlalchemy import create_engine, text as sa_text
+        engine = create_engine(connection_string, pool_pre_ping=True)
+        with engine.connect() as conn:
+            rows = conn.execute(sa_text(
+                "SELECT t.typname AS enum_name, e.enumlabel AS enum_value "
+                "FROM pg_type t "
+                "JOIN pg_enum e ON t.oid = e.enumtypid "
+                "ORDER BY t.typname, e.enumsortorder"
+            )).fetchall()
+        enum_map: dict = {}
+        for row in rows:
+            enum_map.setdefault(row[0], []).append(row[1])
+        engine.dispose()
+        return enum_map
+    except Exception as exc:
+        logger.warning(f"Could not fetch PostgreSQL enum values: {exc}")
+        return {}
+
+
+def _inject_enum_values_into_schema(db_schema_json: str, enum_map: dict) -> str:
+    """
+    For every column whose stored type name matches a key in enum_map, inject
+    an 'enum_values' list so the LLM knows the exact valid literals.
+    Returns the (possibly updated) JSON string.
+    """
+    if not enum_map:
+        return db_schema_json
+    try:
+        schema = json.loads(db_schema_json)
+        for table in schema.get("tables", []):
+            for col in table.get("columns", []):
+                col_type = col.get("type", "")
+                if col_type in enum_map and "enum_values" not in col:
+                    col["enum_values"] = enum_map[col_type]
+        return json.dumps(schema)
+    except Exception as exc:
+        logger.warning(f"Could not inject enum values into schema: {exc}")
+        return db_schema_json
+
+
 async def generate_and_store_charts(
     db: Session,
     datasource_connection_id: UUID,
@@ -115,10 +162,19 @@ async def generate_and_store_charts(
     sample_data = None
     if db_conn.consent_given:
         sample_data = get_sample_data(decrypt_conn_string)
-    db_schema = json.loads(db_conn.db_schema)
     logger.debug(f"Processing database connection: {db_conn.connection_name}, type: {db_conn.db_type}")
+
+    # For PostgreSQL, enrich the stored schema with actual enum values so the
+    # LLM generates queries with the correct enum literals.
+    enriched_db_schema = db_conn.db_schema
+    if db_conn.db_type and "postgres" in db_conn.db_type.lower():
+        enum_map = _fetch_postgres_enum_values(decrypt_conn_string)
+        if enum_map:
+            logger.debug(f"Found {len(enum_map)} PostgreSQL enum types: {list(enum_map.keys())}")
+            enriched_db_schema = _inject_enum_values_into_schema(db_conn.db_schema, enum_map)
+
     llm_payload = {
-        "db_schema": db_conn.db_schema,
+        "db_schema": enriched_db_schema,
         "db_type": db_conn.db_type,
         "role": query_request.role,
         "domain": query_request.domain,

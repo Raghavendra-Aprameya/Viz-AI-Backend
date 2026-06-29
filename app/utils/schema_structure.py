@@ -338,12 +338,20 @@ def get_schema_structure(connection_string: str, queue, loop):
                                     "references": fk.get("referred_table", "")
                                 })
 
+                    def _build_column_info(col):
+                        col_type = col["type"]
+                        col_info = {"name": col["name"], "type": str(col_type)}
+                        # Capture enum values so the LLM uses the exact valid literals
+                        if hasattr(col_type, "enums") and col_type.enums:
+                            col_info["enum_values"] = list(col_type.enums)
+                        return col_info
+
                     schema_info["tables"].append({
                         "name": qualified_table_name,
                         "catalog": databricks_catalog if is_databricks else None,
                         "schema": databricks_schema if is_databricks else (oracle_schema.upper() if is_oracle and oracle_schema else None),
                         "table": table_name,
-                        "columns": columns if is_databricks else [{"name": col["name"], "type": str(col["type"])} for col in columns],
+                        "columns": columns if is_databricks else [_build_column_info(col) for col in columns],
                         "primary_keys": primary_keys,
                         "foreign_keys": foreign_keys
                     })
