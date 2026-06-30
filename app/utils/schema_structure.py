@@ -63,12 +63,116 @@ except ImportError:
 # Set up logger
 logger = logging.getLogger(__name__)
 
+def _extract_enum_map(connection, db_type: str, **kwargs) -> Dict[str, List[str]]:
+    """
+    Dispatcher that extracts enum/constrained-value columns for the given db_type.
+
+    Returns a dict whose keys are either:
+      - The enum type name (PostgreSQL, e.g. "unit_status")
+      - A "table.column" composite key (MySQL / Oracle, e.g. "units.status")
+
+    Values are the ordered list of allowed string literals.
+    Always returns {} on any failure (fail-open).
+    """
+    try:
+        db_lower = (db_type or "").lower()
+
+        if db_lower in ("postgres", "postgresql", "pg"):
+            rows = connection.execute(text(
+                """
+                SELECT t.typname AS enum_type, e.enumlabel AS label
+                FROM pg_type t
+                JOIN pg_enum e ON t.oid = e.enumtypid
+                ORDER BY t.typname, e.enumsortorder
+                """
+            )).mappings().all()
+            result: Dict[str, List[str]] = {}
+            for row in rows:
+                key = str(row["enum_type"]).lower()
+                result.setdefault(key, []).append(str(row["label"]))
+            return result
+
+        elif db_lower in ("mysql",):
+            rows = connection.execute(text(
+                """
+                SELECT table_name, column_name, column_type
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND column_type LIKE 'enum(%)'
+                """
+            )).mappings().all()
+            result = {}
+            for row in rows:
+                raw = str(row["column_type"])  # e.g. "enum('a','b','c')"
+                inner = re.sub(r"^enum\((.+)\)$", r"\1", raw, flags=re.IGNORECASE)
+                values = [
+                    v.strip().strip("'").strip('"')
+                    for v in inner.split(",")
+                    if v.strip().strip("'").strip('"')
+                ]
+                if values:
+                    tbl = str(row["table_name"]).lower()
+                    col = str(row["column_name"]).lower()
+                    result[f"{tbl}.{col}"] = values
+            return result
+
+        elif db_lower in ("oracledb", "oracle"):
+            oracle_schema = kwargs.get("oracle_schema", "")
+            schema_filter = ""
+            params: Dict[str, Any] = {}
+            if oracle_schema:
+                schema_filter = "AND UPPER(cc.owner) = :owner AND UPPER(ck.owner) = :owner"
+                params["owner"] = oracle_schema.upper()
+            rows = connection.execute(text(
+                f"""
+                SELECT cc.table_name, cc.column_name, ck.search_condition
+                FROM all_cons_columns cc
+                JOIN all_constraints ck
+                  ON cc.constraint_name = ck.constraint_name
+                 AND cc.owner = ck.owner
+                WHERE ck.constraint_type = 'C'
+                  AND UPPER(ck.search_condition) LIKE '%IN (%'
+                  {schema_filter}
+                """
+            ), params).mappings().all()
+            result = {}
+            in_pattern = re.compile(
+                r"\bIN\s*\(\s*('(?:[^'\\]|\\.)*'(?:\s*,\s*'(?:[^'\\]|\\.)*')*)\s*\)",
+                re.IGNORECASE,
+            )
+            for row in rows:
+                search_cond = str(row.get("search_condition") or "")
+                m = in_pattern.search(search_cond)
+                if not m:
+                    continue
+                values = [
+                    v.strip().strip("'")
+                    for v in m.group(1).split(",")
+                    if v.strip().strip("'")
+                ]
+                if values:
+                    tbl = str(row["table_name"]).lower()
+                    col = str(row["column_name"]).lower()
+                    result[f"{tbl}.{col}"] = values
+            return result
+
+        elif db_lower in ("databricks",):
+            return {}
+
+        else:
+            return {}
+
+    except Exception as exc:
+        logger.warning("_extract_enum_map failed for db_type=%s: %s", db_type, exc)
+        return {}
+
+
 # ---- get_schema_structure (blocking; run in thread) ----
 def get_schema_structure(connection_string: str, queue, loop):
     engine = None
     schema_info = {"tables": []}
-    min_date = datetime.fromisoformat("2003-01-06")
-    max_date = datetime.fromisoformat("2005-06-11")
+    schema_info["min_date"] = None
+    schema_info["max_date"] = None
 
     try:
         # Parse connection string to detect database type
@@ -96,7 +200,33 @@ def get_schema_structure(connection_string: str, queue, loop):
 
         with engine.connect() as connection:
             logger.info("Database connection established")
-            
+
+            # Determine db_type string for enum extraction
+            _scheme = (parsed_url.scheme or "").lower()
+            if is_oracle:
+                _db_type_for_enum = "oracledb"
+            elif is_databricks:
+                _db_type_for_enum = "databricks"
+            elif "mysql" in _scheme or "pymysql" in _scheme or "mariadb" in _scheme:
+                _db_type_for_enum = "mysql"
+            elif "postgres" in _scheme or "psycopg" in _scheme:
+                _db_type_for_enum = "postgres"
+            else:
+                _db_type_for_enum = _scheme
+
+            # Extract enum map once per connection (fail-open)
+            enum_map = _extract_enum_map(
+                connection,
+                _db_type_for_enum,
+                oracle_schema=oracle_schema,
+            )
+            if enum_map:
+                logger.info(
+                    "Enum map extracted: %d enum types/columns for db_type=%s",
+                    len(enum_map),
+                    _db_type_for_enum,
+                )
+
             # Databricks: use information_schema to preserve 3-level namespace
             if is_databricks:
                 if not databricks_catalog or not databricks_schema:
@@ -338,12 +468,35 @@ def get_schema_structure(connection_string: str, queue, loop):
                                     "references": fk.get("referred_table", "")
                                 })
 
+                    if is_databricks:
+                        serialized_columns = columns  # already dicts from information_schema
+                    else:
+                        serialized_columns = []
+                        for col in columns:
+                            col_type_str = str(col["type"])
+                            col_entry: Dict[str, Any] = {
+                                "name": col["name"],
+                                "type": col_type_str,
+                            }
+                            # PostgreSQL: match column type string against enum type name keys
+                            if _db_type_for_enum == "postgres":
+                                for enum_type_name, enum_labels in enum_map.items():
+                                    if enum_type_name.lower() in col_type_str.lower():
+                                        col_entry["enum_values"] = enum_labels
+                                        break
+                            else:
+                                # MySQL / Oracle: match on "table_name.col_name" composite key
+                                tbl_col_key = f"{table_name}.{col['name']}".lower()
+                                if tbl_col_key in enum_map:
+                                    col_entry["enum_values"] = enum_map[tbl_col_key]
+                            serialized_columns.append(col_entry)
+
                     schema_info["tables"].append({
                         "name": qualified_table_name,
                         "catalog": databricks_catalog if is_databricks else None,
                         "schema": databricks_schema if is_databricks else (oracle_schema.upper() if is_oracle and oracle_schema else None),
                         "table": table_name,
-                        "columns": columns if is_databricks else [{"name": col["name"], "type": str(col["type"])} for col in columns],
+                        "columns": serialized_columns,
                         "primary_keys": primary_keys,
                         "foreign_keys": foreign_keys
                     })
@@ -374,9 +527,39 @@ def get_schema_structure(connection_string: str, queue, loop):
                         "error": str(table_error)
                     })
 
-            schema_info["min_date"] = min_date.isoformat()
-            schema_info["max_date"] = max_date.isoformat()
-            
+            # Discover actual date range from date/datetime columns (best-effort, fail-open)
+            if not is_databricks:
+                _min_dates: List[str] = []
+                _max_dates: List[str] = []
+                for tbl_entry in schema_info["tables"]:
+                    if tbl_entry.get("error"):
+                        continue
+                    tbl_nm = tbl_entry.get("table") or tbl_entry.get("name", "")
+                    if not tbl_nm:
+                        continue
+                    date_cols = [
+                        c["name"] for c in (tbl_entry.get("columns") or [])
+                        if isinstance(c, dict) and re.search(r"\b(DATE|DATETIME|TIMESTAMP)\b", c.get("type", ""), re.IGNORECASE)
+                    ]
+                    if not date_cols:
+                        continue
+                    for dc in date_cols[:1]:  # one column per table is enough
+                        try:
+                            _schema_prefix = ""
+                            if is_oracle and oracle_schema:
+                                _schema_prefix = f'"{oracle_schema.upper()}".'
+                            row = connection.execute(
+                                text(f'SELECT MIN("{dc}") AS mn, MAX("{dc}") AS mx FROM {_schema_prefix}"{tbl_nm}"')
+                            ).mappings().first()
+                            if row and row["mn"] and row["mx"]:
+                                _min_dates.append(str(row["mn"])[:10])
+                                _max_dates.append(str(row["mx"])[:10])
+                        except Exception:
+                            pass
+                if _min_dates:
+                    schema_info["min_date"] = min(_min_dates)
+                    schema_info["max_date"] = max(_max_dates)
+
             logger.info(f"Schema extraction completed successfully: {len(schema_info['tables'])} tables extracted")
 
     except Exception as e:
@@ -425,9 +608,7 @@ def get_salesforce_schema_structure(credentials: Dict[str, Any], queue, loop) ->
         })
         return {"tables": [], "min_date": None, "max_date": None}
 
-    schema_info = {"tables": []}
-    min_date = datetime.fromisoformat("2003-01-06")
-    max_date = datetime.fromisoformat("2005-06-11")
+    schema_info = {"tables": [], "min_date": None, "max_date": None}
 
     sf = None
     try:
@@ -540,12 +721,21 @@ def get_salesforce_schema_structure(credentials: Dict[str, Any], queue, loop) ->
                     }
                     mapped_type = type_mapping.get(field_type, "VARCHAR(255)")
 
-                    columns.append({
+                    col_entry_sf: Dict[str, Any] = {
                         "name": field_name,
                         "type": mapped_type,
                         "salesforce_type": field_type,
                         "label": field_label,
-                    })
+                    }
+                    if field_type in ("picklist", "multipicklist"):
+                        active_values = [
+                            pv["value"]
+                            for pv in field.get("picklistValues", [])
+                            if pv.get("active", True)
+                        ]
+                        if active_values:
+                            col_entry_sf["enum_values"] = active_values
+                    columns.append(col_entry_sf)
 
                 # Extract relationships (foreign keys)
                 foreign_keys = []
@@ -601,9 +791,6 @@ def get_salesforce_schema_structure(credentials: Dict[str, Any], queue, loop) ->
                     "error": str(obj_error)
                 })
 
-        schema_info["min_date"] = min_date.isoformat()
-        schema_info["max_date"] = max_date.isoformat()
-
         logger.info(f"Salesforce schema extraction completed: {len(schema_info['tables'])} objects extracted")
 
     except SalesforceAuthenticationFailed as e:
@@ -613,8 +800,6 @@ def get_salesforce_schema_structure(credentials: Dict[str, Any], queue, loop) ->
             "type": "error",
             "message": error_msg
         })
-        schema_info["min_date"] = None
-        schema_info["max_date"] = None
 
     except Exception as e:
         error_msg = f"Error fetching Salesforce schema: {str(e)}"
@@ -623,7 +808,5 @@ def get_salesforce_schema_structure(credentials: Dict[str, Any], queue, loop) ->
             "type": "error",
             "message": error_msg
         })
-        schema_info["min_date"] = None
-        schema_info["max_date"] = None
 
     return schema_info
