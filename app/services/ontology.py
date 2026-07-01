@@ -2581,6 +2581,17 @@ def _validate_metric_formula_columns(
     # Build valid table set for table-reference normalization (Fix 1B).
     valid_tables = _collect_schema_tables(db_connection)
 
+    known_metric_names: Set[str] = set()
+    for metric in metrics:
+        if isinstance(metric, dict):
+            name = str(metric.get("name") or "").strip().lower()
+            if name:
+                known_metric_names.add(name)
+                underscored = re.sub(r"[^a-z0-9]+", "_", name).strip("_")
+                if underscored:
+                    known_metric_names.add(underscored)
+    valid_identifiers = schema_cols | known_metric_names
+
     kept: List[Dict[str, Any]] = []
     for metric in metrics:
         if not isinstance(metric, dict):
@@ -2594,8 +2605,10 @@ def _validate_metric_formula_columns(
         # through without one — they are unresolved pending stubs and would show up
         # as null-property entries in the ontology viewer.
         metric_id = str(metric.get("id") or "")
+        is_pending = str(metric.get("status") or "").strip().lower() == "pending"
+        has_error = bool(metric.get("translation_error"))
         if not formula and not denominator:
-            if metric_id.startswith("metric:"):
+            if metric_id.startswith("metric:") and not is_pending and not has_error:
                 warnings.append({
                     "metric_name": metric.get("name") or "(unnamed metric)",
                     "formula": "",
@@ -2648,7 +2661,7 @@ def _validate_metric_formula_columns(
             kept.append(metric)
             continue
 
-        missing = sorted(ident for ident in identifiers if ident not in schema_cols)
+        missing = sorted(ident for ident in identifiers if ident not in valid_identifiers)
         if not missing:
             kept.append(metric)
             continue
@@ -3205,13 +3218,23 @@ into standard SQL. Never include them in the output formula.
       → Translate as: numerator / NULLIF(denominator, 0)  (or dialect equivalent)
 
 If you cannot translate a measure without one of the above constructs, set
-status="pending", formula="", and explain in translation_error.
+status="pending", but DO NOT leave formula empty if a meaningful SQL or composite formula can be written. Set formula to the best SQL approximation and explain in translation_error.
+
+══════════════════════════════════════════════════
+COMPOSITE MEASURES (MEASURE REFERENCING MEASURE)
+══════════════════════════════════════════════════
+Many DAX measures reference other measures rather than physical database columns
+(e.g., [Gross Profit] / [Net Sales] or [GLA Leased YTD %] referencing [GLA Leased YTD]).
+When translating a composite measure:
+- You MUST preserve references to other known measures present in the input `measures` list by using their exact or snake_case measure names (e.g., gross_profit / NULLIF(net_sales, 0)).
+- Do NOT reject or mark status="pending" just because a measure references another measure in the model.
+- Set status="active" if all referenced measures or columns exist in the model or schema.
 
 ══════════════════════════════════════════════════
 COLUMN EXISTENCE VALIDATION — MANDATORY
 ══════════════════════════════════════════════════
-Before emitting ANY formula you MUST verify that every column referenced in the
-output formula exists in the provided schema_columns list.
+Before emitting ANY formula you MUST verify that every column or measure referenced in the
+output formula exists in the provided schema_columns list OR in the input measures list.
 
 This rule applies to ALL column references, including those inside:
   - FILTER (WHERE col IN (...)) or FILTER (WHERE col ILIKE '...')
@@ -3219,9 +3242,9 @@ This rule applies to ALL column references, including those inside:
   - CASE WHEN col = 'value' THEN ... constructs
   - JOIN ON conditions or any other conditional expression
 
-If ANY column in the translated formula does NOT appear in schema_columns:
+If ANY identifier in the translated formula does NOT appear in schema_columns AND is NOT another measure name in the model:
   → Set status="pending"
-  → Set formula=""
+  → Set formula="" (or best approximation if partial)
   → Set translation_error to explain which column is missing
 
 EXAMPLE — column missing in schema (mark pending):
@@ -3239,7 +3262,7 @@ EXAMPLE — all columns exist (emit formula):
   ✓ Correct output: {"status": "active",
                       "formula": "SUM(deals.total_gla) FILTER (WHERE deals.deal_status IN ('Active'))"}
 
-NEVER emit a formula that uses a column name absent from schema_columns.
+NEVER emit a formula that uses a physical column name absent from schema_columns.
 Even if the column name appears plausible or was present in the DAX source, if it
 is not in schema_columns it does NOT exist in the target SQL database.
 
