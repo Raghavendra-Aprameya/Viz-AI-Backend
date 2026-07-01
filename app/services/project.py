@@ -9,7 +9,8 @@ It uses FastAPI for routing and SQLAlchemy for database interactions.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
 import httpx
@@ -1221,6 +1222,82 @@ async def read_data_service(data: ReadDataRequest, db: Session, token_payload: d
         ) from e
 
 
+_KPI_FORMULA_LINE_RE = re.compile(r"^(Formula:\s*)(.+)$", re.MULTILINE)
+_KPI_TABLE_COL_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)")
+_KPI_SQL_KEYWORDS: Set[str] = {
+    "SUM", "COUNT", "AVG", "MAX", "MIN", "DISTINCT", "CASE", "WHEN", "THEN",
+    "ELSE", "END", "FILTER", "WHERE", "IN", "AND", "OR", "NOT", "IS", "NULL",
+    "LIKE", "ILIKE", "BETWEEN", "CAST", "COALESCE", "NULLIF", "ROUND", "FLOOR",
+    "CEIL", "ABS", "POWER", "TRUE", "FALSE", "INTEGER", "TEXT", "NUMERIC",
+    "DECIMAL", "DATE", "TIMESTAMP", "OVER", "PARTITION", "BY", "ORDER", "AS",
+    "DISTINCT", "LEFT", "RIGHT", "INNER", "OUTER", "JOIN", "ON", "FROM",
+    "SELECT", "GROUP", "HAVING", "LIMIT", "OFFSET", "WITH",
+}
+
+
+def _collect_valid_kpi_columns(db_schema: Any) -> Set[str]:
+    """
+    Extract a lowercase set of every column name from a parsed db_schema dict.
+    Handles both dict columns ({"name": "...", "type": "..."}) and plain string columns.
+    Returns an empty set when db_schema is absent or malformed — callers treat
+    an empty set as "skip validation" so no metrics are wrongly stripped.
+    """
+    valid: Set[str] = set()
+    if not isinstance(db_schema, dict):
+        return valid
+    for table in db_schema.get("tables", []) or []:
+        if not isinstance(table, dict):
+            continue
+        for col in table.get("columns", []) or []:
+            if isinstance(col, dict):
+                name = (col.get("name") or "").strip()
+            elif isinstance(col, str):
+                name = col.strip()
+            else:
+                name = ""
+            if name:
+                valid.add(name.lower())
+    return valid
+
+
+def _sanitize_kpi_goals_formulas(kpi_goals: str, valid_cols: Set[str]) -> str:
+    """
+    Scan the kpi_goals string for ``Formula: <expr>`` lines.  For each formula,
+    extract every ``table.column`` reference (after stripping SQL string literals)
+    and verify that the column token exists in ``valid_cols``.
+
+    When a column reference is not found the formula line is replaced with a
+    safe hint that tells the downstream LLM to derive the metric from the real
+    schema instead of blindly trusting a possibly hallucinated column name.
+
+    Lines that have no column references (e.g. plain text goals) are untouched.
+    """
+    if not kpi_goals or not valid_cols:
+        return kpi_goals
+
+    def _formula_columns_valid(formula: str) -> bool:
+        # Strip SQL string literals so values like 'Proposal Rejected' are not
+        # mistaken for column names.
+        sanitized = re.sub(r"'[^']*'", " ", formula)
+        sanitized = re.sub(r'"[^"]*"', " ", sanitized)
+        for m in _KPI_TABLE_COL_RE.finditer(sanitized):
+            col = m.group(1).lower()
+            if col.upper() not in _KPI_SQL_KEYWORDS and col not in valid_cols:
+                return False
+        return True
+
+    def _replace_line(m: re.Match) -> str:
+        prefix, formula = m.group(1), m.group(2)
+        if not _formula_columns_valid(formula):
+            return (
+                f"{prefix}[Formula references columns not found in schema"
+                " — generate from schema]"
+            )
+        return m.group(0)
+
+    return _KPI_FORMULA_LINE_RE.sub(_replace_line, kpi_goals)
+
+
 async def generate_kpi_queries_service(
     dashboard_id: UUID,
     connection_id: str,
@@ -1271,12 +1348,24 @@ async def generate_kpi_queries_service(
         if not db_type:
             db_type = connection_record.db_type or "postgres"
 
+    # Fix 4 — Validate every Formula: line in kpi_goals against the real schema
+    # before injecting into the LLM payload.  Any formula that references a column
+    # not present in db_schema is replaced with an explicit hint so the LLM derives
+    # the metric from the actual schema instead of propagating a hallucinated column.
+    kpi_goals_for_llm = dashboard.kpi_goals
+    if kpi_goals_for_llm:
+        valid_cols = _collect_valid_kpi_columns(
+            db_schema if isinstance(db_schema, dict) else {}
+        )
+        if valid_cols:
+            kpi_goals_for_llm = _sanitize_kpi_goals_formulas(kpi_goals_for_llm, valid_cols)
+
     # Call LLM service to generate KPI descriptors
     llm_payload: Dict[str, Any] = {
         "db_schema": db_schema,
         "db_type": db_type,
         "connection_id": str(connection_id),
-        "kpi_goals": dashboard.kpi_goals,
+        "kpi_goals": kpi_goals_for_llm,
         "num_kpis": num_kpis,
     }
 

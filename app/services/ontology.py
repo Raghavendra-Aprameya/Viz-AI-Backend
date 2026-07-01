@@ -591,6 +591,67 @@ def _build_enrichment_schema_columns(
     return result
 
 
+def _build_raw_schema_columns(db_connection: "DatabaseConnectionModel") -> Dict[str, list]:
+    """
+    Build a table_name → [{name, type, use_in_formula}] mapping directly from the
+    connection's raw ``db_schema`` and ``ds_graph_json`` fields.
+
+    This is used to *augment* the ontology-derived schema_columns passed to the DAX
+    translation LLM so that every real column in the database is visible, even when
+    the ontology ``attributes`` are sparse or stale (e.g. right after a fresh bootstrap
+    before enrichment has run).
+    """
+    by_table: Dict[str, list] = {}
+
+    def _add_col(table: str, name: str, col_type: str = "unknown") -> None:
+        if not table or not name:
+            return
+        entry = {
+            "name": name,
+            "type": col_type,
+            "use_in_formula": f"{table}.{name}",
+        }
+        by_table.setdefault(table, []).append(entry)
+
+    # ── ds_graph_json nodes ──────────────────────────────────────────────────
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {})
+    for node in ds_graph.get("nodes", []) or []:
+        table = (node.get("table") or node.get("label") or "").strip()
+        if not table:
+            continue
+        for col in node.get("columns", []) or []:
+            if isinstance(col, dict):
+                col_name = (col.get("name") or "").strip()
+                col_type = str(col.get("type") or "unknown")
+            elif isinstance(col, str):
+                col_name = col.strip()
+                col_type = "unknown"
+            else:
+                continue
+            _add_col(table, col_name, col_type)
+
+    # ── db_schema JSON blob ──────────────────────────────────────────────────
+    schema = _safe_json_loads(db_connection.db_schema, {})
+    for table_entry in schema.get("tables", []) or []:
+        if not isinstance(table_entry, dict):
+            continue
+        table = (table_entry.get("name") or "").strip()
+        if not table:
+            continue
+        for col in table_entry.get("columns", []) or []:
+            if isinstance(col, dict):
+                col_name = (col.get("name") or "").strip()
+                col_type = str(col.get("type") or "unknown")
+            elif isinstance(col, str):
+                col_name = col.strip()
+                col_type = "unknown"
+            else:
+                continue
+            _add_col(table, col_name, col_type)
+
+    return by_table
+
+
 def _friendly_label(raw: str) -> str:
     if not raw:
         return "Field"
@@ -2296,21 +2357,39 @@ def _collect_schema_columns(db_connection: DatabaseConnectionModel) -> Set[str]:
     Build a lowercase set of every column name present in the datasource schema.
     We deliberately include columns from all tables because metric formulas may
     span joins and we only check identifier existence here, not table affinity.
+
+    Handles two column storage formats:
+      - dict: {"name": "col_name", "type": "..."} — standard enrichment format
+      - str:  "col_name"                           — compact list format used by some
+                                                     schema-extraction pipelines
     """
     cols: Set[str] = set()
+
+    def _extract_col_name(col: Any) -> str:
+        if isinstance(col, dict):
+            return (col.get("name") or "").strip()
+        if isinstance(col, str):
+            return col.strip()
+        return ""
+
+    # ── ds_graph_json nodes ──────────────────────────────────────────────────
     ds_graph = _safe_json_loads(db_connection.ds_graph_json, {})
     for node in ds_graph.get("nodes", []) or []:
         for col in node.get("columns", []) or []:
-            name = (col.get("name") or "").strip()
+            name = _extract_col_name(col)
             if name:
                 cols.add(name.lower())
-    # Some pipelines also stash column lists under db_schema → tables[].columns[]
+
+    # ── db_schema JSON blob (tables[].columns[]) ─────────────────────────────
     schema = _safe_json_loads(db_connection.db_schema, {})
     for table in schema.get("tables", []) or []:
+        if not isinstance(table, dict):
+            continue
         for col in table.get("columns", []) or []:
-            name = (col.get("name") or "").strip() if isinstance(col, dict) else ""
+            name = _extract_col_name(col)
             if name:
                 cols.add(name.lower())
+
     return cols
 
 
@@ -3128,6 +3207,42 @@ into standard SQL. Never include them in the output formula.
 If you cannot translate a measure without one of the above constructs, set
 status="pending", formula="", and explain in translation_error.
 
+══════════════════════════════════════════════════
+COLUMN EXISTENCE VALIDATION — MANDATORY
+══════════════════════════════════════════════════
+Before emitting ANY formula you MUST verify that every column referenced in the
+output formula exists in the provided schema_columns list.
+
+This rule applies to ALL column references, including those inside:
+  - FILTER (WHERE col IN (...)) or FILTER (WHERE col ILIKE '...')
+  - CALCULATE(<expr>, Table[col] = "value") filter conditions
+  - CASE WHEN col = 'value' THEN ... constructs
+  - JOIN ON conditions or any other conditional expression
+
+If ANY column in the translated formula does NOT appear in schema_columns:
+  → Set status="pending"
+  → Set formula=""
+  → Set translation_error to explain which column is missing
+
+EXAMPLE — column missing in schema (mark pending):
+  DAX: CALCULATE(SUM('deals'[total_gla]),
+                 FILTER('deals', 'deals'[admin_display_status] IN {"Rejected"}))
+  schema_columns contains: total_gla, deal_id, tenant_name
+  (admin_display_status is NOT present)
+  ✓ Correct output: {"status": "pending", "formula": "",
+                      "translation_error": "Column 'admin_display_status' not found in schema_columns"}
+
+EXAMPLE — all columns exist (emit formula):
+  DAX: CALCULATE(SUM('deals'[total_gla]),
+                 FILTER('deals', 'deals'[deal_status] IN {"Active"}))
+  schema_columns contains: total_gla, deal_id, deal_status
+  ✓ Correct output: {"status": "active",
+                      "formula": "SUM(deals.total_gla) FILTER (WHERE deals.deal_status IN ('Active'))"}
+
+NEVER emit a formula that uses a column name absent from schema_columns.
+Even if the column name appears plausible or was present in the DAX source, if it
+is not in schema_columns it does NOT exist in the target SQL database.
+
 Output format — return a JSON array:
 [
   {
@@ -3183,7 +3298,28 @@ async def _translate_dax_measures(
     measures: List[Dict[str, Any]],
     schema_columns: Dict[str, list],
     db_type: Optional[str],
+    db_connection: Optional["DatabaseConnectionModel"] = None,
 ) -> List[Dict[str, Any]]:
+    # Fix 1 — augment ontology-derived schema_columns with every real column from
+    # the connection's raw db_schema / ds_graph_json so the LLM has the authoritative
+    # and complete column list when translating DAX filter expressions.
+    if db_connection is not None:
+        raw_cols = _build_raw_schema_columns(db_connection)
+        merged: Dict[str, list] = dict(raw_cols)
+        for table, cols in schema_columns.items():
+            if table not in merged:
+                merged[table] = list(cols)
+            else:
+                existing_names = {
+                    c.get("name", "").lower()
+                    for c in merged[table]
+                    if isinstance(c, dict)
+                }
+                for col in cols:
+                    if isinstance(col, dict) and col.get("name", "").lower() not in existing_names:
+                        merged[table].append(col)
+        schema_columns = merged
+
     dialect_instructions = _get_db_type_sql_instructions(db_type)
     system_prompt = _DAX_TRANSLATION_SYSTEM_PROMPT + "\n" + dialect_instructions
 
@@ -3261,7 +3397,9 @@ async def process_pbit_upload(
         c for c in (current_ontology.get("classes") or []) if isinstance(c, dict)
     ]
 
-    translated = await _translate_dax_measures(measures, schema_columns, db_connection.db_type)
+    translated = await _translate_dax_measures(
+        measures, schema_columns, db_connection.db_type, db_connection
+    )
 
     existing_metrics: List[Dict[str, Any]] = [
         m for m in (current_ontology.get("metrics") or []) if isinstance(m, dict)

@@ -3,7 +3,7 @@ import os
 from app.core.settings import settings
 load_dotenv()
 from langchain_openai import ChatOpenAI 
-MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+MODEL = os.getenv("LLM_MODEL", "gpt-5.4-mini")
 llm = ChatOpenAI(
     model=MODEL,
     temperature=0.3,

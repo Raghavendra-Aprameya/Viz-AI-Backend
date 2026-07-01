@@ -364,7 +364,7 @@ async def generate_kpi_queries_with_llm(
                 detail="OpenAI API key is not configured. Set OPENAI_API_KEY in .env (or legacy OPENAPI_API_KEY)."
             )
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             temperature=0.1,
             max_tokens=1500,
             api_key=openai_api_key,
@@ -663,7 +663,7 @@ async def generate_insights_from_results(
                 detail="OpenAI API key is not configured. Set OPENAI_API_KEY in .env (or legacy OPENAPI_API_KEY)."
             )
         llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             temperature=0.1,
             max_tokens=2500,
             api_key=openai_api_key,
