@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from app.core.base import Base
 from app.models.schema_models import *
+from app.models.knowledge_graph_models import *
 
 from alembic import context
 
