@@ -54,7 +54,7 @@ def upgrade() -> None:
         VALUES
           (gen_random_uuid(), 'openai',  'gpt-4o',           0.00500, 0.01500, '2024-01-01'),
           (gen_random_uuid(), 'openai',  'gpt-5.4-mini',      0.00015, 0.00060, '2024-07-01'),
-          (gen_random_uuid(), 'openai',  'gpt-4.1-mini',     0.00040, 0.00160, '2025-04-14'),
+          (gen_random_uuid(), 'openai',  'gpt-5.4-mini',     0.00040, 0.00160, '2025-04-14'),
           (gen_random_uuid(), 'openai',  'gpt-4.1',          0.00200, 0.00800, '2025-04-14'),
           (gen_random_uuid(), 'google',  'gemini-2.5-flash', 0.00015, 0.00035, '2025-05-01'),
           (gen_random_uuid(), 'google',  'gemini-pro',       0.00025, 0.00050, '2024-01-01'),
