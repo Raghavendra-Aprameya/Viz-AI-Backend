@@ -1,4 +1,4 @@
-"""Local filesystem helpers for knowledge-graph PDF uploads."""
+"""Local filesystem helpers for knowledge-graph document uploads."""
 
 from __future__ import annotations
 
@@ -17,19 +17,25 @@ def get_upload_root() -> Path:
     return path
 
 
-def build_pdf_path(user_id: UUID, graph_id: UUID) -> Path:
+def build_file_path(user_id: UUID, graph_id: UUID, extension: str) -> Path:
+    ext = extension if extension.startswith(".") else f".{extension}"
     user_dir = get_upload_root() / str(user_id)
     user_dir.mkdir(parents=True, exist_ok=True)
-    return user_dir / f"{graph_id}.pdf"
+    return user_dir / f"{graph_id}{ext}"
 
 
-def save_pdf_bytes(user_id: UUID, graph_id: UUID, content: bytes) -> str:
-    path = build_pdf_path(user_id, graph_id)
+def save_upload_bytes(
+    user_id: UUID,
+    graph_id: UUID,
+    content: bytes,
+    extension: str,
+) -> str:
+    path = build_file_path(user_id, graph_id, extension)
     path.write_bytes(content)
     return str(path)
 
 
-def delete_pdf(file_path: str | None) -> None:
+def delete_upload(file_path: str | None) -> None:
     if not file_path:
         return
     path = Path(file_path)

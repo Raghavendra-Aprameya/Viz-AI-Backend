@@ -1,5 +1,5 @@
 """
-Knowledge graph business logic: sync PDF upload, get, list, delete.
+Knowledge graph business logic: sync PDF/DOCX upload, get, list, delete.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from app.services.knowledge_graph.schemas import (
     KnowledgeGraphListResponse,
     KnowledgeGraphUploadResponse,
 )
-from app.services.knowledge_graph import llm_client, pdf_parser, storage
+from app.services.knowledge_graph import document_parser, llm_client, storage
 from app.utils.token_parser import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -64,22 +64,23 @@ def _owned_graph_or_404(
     return row
 
 
-async def upload_knowledge_graph_pdf(
+async def upload_knowledge_graph(
     file: UploadFile,
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ) -> KnowledgeGraphUploadResponse:
     user_id = _user_id_from_token(token_payload)
     content = await file.read()
-    pdf_parser.validate_pdf_upload(file.filename, content)
+    kind = document_parser.validate_upload(file.filename, content)
+    extension = document_parser.file_extension(kind)
 
     graph_id = uuid4()
-    filename = file.filename or f"{graph_id}.pdf"
+    filename = file.filename or f"{graph_id}{extension}"
     file_path: str | None = None
 
     try:
-        page_count, chunks = pdf_parser.extract_pages_and_chunks(content)
-        file_path = storage.save_pdf_bytes(user_id, graph_id, content)
+        page_count, chunks = document_parser.extract_pages_and_chunks(content, kind)
+        file_path = storage.save_upload_bytes(user_id, graph_id, content, extension)
 
         graph_payload: Dict[str, Any] = await llm_client.extract_knowledge_graph(
             filename=filename,
@@ -98,18 +99,19 @@ async def upload_knowledge_graph_pdf(
         db.add(row)
         db.commit()
         logger.info(
-            "Knowledge graph created | graph_id=%s user_id=%s pages=%s",
+            "Knowledge graph created | graph_id=%s user_id=%s kind=%s pages=%s",
             graph_id,
             user_id,
+            kind,
             page_count,
         )
         return KnowledgeGraphUploadResponse(graph_id=graph_id)
     except HTTPException:
-        storage.delete_pdf(file_path)
+        storage.delete_upload(file_path)
         db.rollback()
         raise
     except Exception as exc:
-        storage.delete_pdf(file_path)
+        storage.delete_upload(file_path)
         db.rollback()
         logger.error("Knowledge graph upload failed: %s", exc, exc_info=True)
         raise HTTPException(
@@ -171,5 +173,5 @@ async def delete_knowledge_graph(
     file_path = row.file_path
     db.delete(row)
     db.commit()
-    storage.delete_pdf(file_path)
+    storage.delete_upload(file_path)
     return KnowledgeGraphDeleteResponse(message="Knowledge graph deleted")

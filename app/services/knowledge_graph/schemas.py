@@ -1,5 +1,5 @@
 """
-Pydantic schemas for PDF knowledge graph APIs.
+Pydantic schemas for PDF/DOCX knowledge graph APIs.
 """
 
 from datetime import datetime

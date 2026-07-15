@@ -1,5 +1,5 @@
 """
-Knowledge graph routes: PDF upload → sync graph build → fetch/list/delete.
+Knowledge graph routes: PDF/DOCX upload → sync graph build → fetch/list/delete.
 """
 
 from uuid import UUID
@@ -33,7 +33,7 @@ async def upload_knowledge_graph(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(get_current_user),
 ):
-    return await kg_service.upload_knowledge_graph_pdf(file, db, token_payload)
+    return await kg_service.upload_knowledge_graph(file, db, token_payload)
 
 
 @knowledge_graph_router.get(
