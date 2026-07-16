@@ -1,19 +1,25 @@
 """
-Knowledge graph business logic: sync PDF/DOCX upload, get, list, delete.
+Knowledge graph business logic: upload, list, get, delete.
+
+Uses extractor.py (google.genai + built-in zipfile) — no fitz/PyMuPDF or python-docx required.
+
+File storage: uploads/knowledge_graphs/<user_id>/<graph_id>.<ext>
+Ownership enforced: other users receive 404.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
-from uuid import UUID, uuid4
+import os
+from pathlib import Path
+from uuid import UUID
 
-from fastapi import Depends, HTTPException, UploadFile, status
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
 from app.models.knowledge_graph_models import DocumentKnowledgeGraphModel
+from app.services.knowledge_graph.extractor import extract_knowledge_graph
 from app.services.knowledge_graph.schemas import (
     KnowledgeGraphDeleteResponse,
     KnowledgeGraphDetailResponse,
@@ -21,33 +27,170 @@ from app.services.knowledge_graph.schemas import (
     KnowledgeGraphListResponse,
     KnowledgeGraphUploadResponse,
 )
-from app.services.knowledge_graph import document_parser, llm_client, storage
-from app.utils.token_parser import get_current_user
 
 logger = logging.getLogger(__name__)
 
+_UPLOAD_BASE = os.getenv("KG_UPLOAD_DIR", "uploads/knowledge_graphs")
+_MAX_FILE_MB = int(os.getenv("KG_MAX_FILE_MB", "20"))
+_MAX_PAGES = int(os.getenv("KG_MAX_PAGES", "20"))
 
-def _user_id_from_token(token_payload: dict) -> UUID:
+_MIME_TO_EXT = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+}
+
+
+def _detect_mime(filename: str, content_type: str | None) -> str:
+    ext = Path(filename).suffix.lower()
+    if ext == ".pdf":
+        return "application/pdf"
+    if ext == ".docx":
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if content_type in _MIME_TO_EXT:
+        return content_type
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Only PDF and DOCX files are accepted.",
+    )
+
+
+def _user_id_str(token_payload: dict) -> str:
     sub = token_payload.get("sub")
     if not sub:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
         )
+    return str(sub)
+
+
+def _load_graph(row: DocumentKnowledgeGraphModel) -> dict:
+    """Safely deserialise graph_json (stored as Text in DB)."""
+    if not row.graph_json:
+        return {"nodes": [], "edges": [], "stats": {}}
+    if isinstance(row.graph_json, dict):
+        return row.graph_json
     try:
-        return UUID(str(sub))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid user id in token",
-        ) from exc
+        return json.loads(row.graph_json)
+    except Exception:
+        return {"nodes": [], "edges": [], "stats": {}}
 
 
-def _owned_graph_or_404(
+# ── Upload ─────────────────────────────────────────────────────────────────────
+
+async def upload_knowledge_graph(
+    file: UploadFile,
     db: Session,
+    token_payload: dict,
+) -> KnowledgeGraphUploadResponse:
+    user_id_str = _user_id_str(token_payload)
+    filename = file.filename or "upload"
+    mime = _detect_mime(filename, file.content_type)
+
+    content = await file.read()
+    size_mb = len(content) / (1024 * 1024)
+    if size_mb > _MAX_FILE_MB:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File exceeds {_MAX_FILE_MB} MB limit ({size_mb:.1f} MB).",
+        )
+
+    # Save file first so we have a path
+    upload_dir = Path(_UPLOAD_BASE) / user_id_str
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Temp filename (will rename after we have the graph_id from DB)
+    import uuid as _uuid
+    temp_id = str(_uuid.uuid4())
+    ext = _MIME_TO_EXT[mime]
+    file_path = str(upload_dir / f"{temp_id}{ext}")
+    with open(file_path, "wb") as fh:
+        fh.write(content)
+
+    # Extract
+    try:
+        graph = await extract_knowledge_graph(file_path, mime)
+    except Exception as exc:
+        logger.exception("Extraction failed for %s", filename)
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Knowledge graph extraction failed: {exc}",
+        )
+
+    page_count = graph.get("stats", {}).get("page_count", 0)
+    if page_count > _MAX_PAGES:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Document exceeds {_MAX_PAGES}-page limit ({page_count} pages).",
+        )
+
+    # Persist to DB
+    row = DocumentKnowledgeGraphModel(
+        user_id=UUID(user_id_str),
+        filename=filename,
+        file_path=file_path,
+        page_count=page_count,
+        graph_json=json.dumps(graph),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    # Rename file to use the actual graph_id
+    new_path = str(upload_dir / f"{row.id}{ext}")
+    try:
+        os.rename(file_path, new_path)
+        row.file_path = new_path
+        db.commit()
+    except OSError:
+        pass  # Non-fatal — file still accessible at old path
+
+    logger.info("KG created %s: %d nodes, %d edges", row.id,
+                graph["stats"]["node_count"], graph["stats"]["edge_count"])
+    return KnowledgeGraphUploadResponse(graph_id=row.id)
+
+
+# ── List ───────────────────────────────────────────────────────────────────────
+
+async def list_knowledge_graphs(
+    db: Session,
+    token_payload: dict,
+) -> KnowledgeGraphListResponse:
+    user_id = UUID(_user_id_str(token_payload))
+    rows = (
+        db.query(DocumentKnowledgeGraphModel)
+        .filter(DocumentKnowledgeGraphModel.user_id == user_id)
+        .order_by(DocumentKnowledgeGraphModel.created_at.desc())
+        .all()
+    )
+    items = [
+        KnowledgeGraphListItem(
+            graph_id=r.id,
+            filename=r.filename,
+            page_count=r.page_count,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+    return KnowledgeGraphListResponse(items=items)
+
+
+# ── Get one ────────────────────────────────────────────────────────────────────
+
+async def get_knowledge_graph(
     graph_id: UUID,
-    user_id: UUID,
-) -> DocumentKnowledgeGraphModel:
+    db: Session,
+    token_payload: dict,
+) -> KnowledgeGraphDetailResponse:
+    user_id = UUID(_user_id_str(token_payload))
     row = (
         db.query(DocumentKnowledgeGraphModel)
         .filter(
@@ -57,121 +200,39 @@ def _owned_graph_or_404(
         .first()
     )
     if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge graph not found",
-        )
-    return row
-
-
-async def upload_knowledge_graph(
-    file: UploadFile,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user),
-) -> KnowledgeGraphUploadResponse:
-    user_id = _user_id_from_token(token_payload)
-    content = await file.read()
-    kind = document_parser.validate_upload(file.filename, content)
-    extension = document_parser.file_extension(kind)
-
-    graph_id = uuid4()
-    filename = file.filename or f"{graph_id}{extension}"
-    file_path: str | None = None
-
-    try:
-        page_count, chunks = document_parser.extract_pages_and_chunks(content, kind)
-        file_path = storage.save_upload_bytes(user_id, graph_id, content, extension)
-
-        graph_payload: Dict[str, Any] = await llm_client.extract_knowledge_graph(
-            filename=filename,
-            page_count=page_count,
-            chunks=chunks,
-        )
-
-        row = DocumentKnowledgeGraphModel(
-            id=graph_id,
-            user_id=user_id,
-            filename=filename,
-            file_path=file_path,
-            page_count=page_count,
-            graph_json=json.dumps(graph_payload),
-        )
-        db.add(row)
-        db.commit()
-        logger.info(
-            "Knowledge graph created | graph_id=%s user_id=%s kind=%s pages=%s",
-            graph_id,
-            user_id,
-            kind,
-            page_count,
-        )
-        return KnowledgeGraphUploadResponse(graph_id=graph_id)
-    except HTTPException:
-        storage.delete_upload(file_path)
-        db.rollback()
-        raise
-    except Exception as exc:
-        storage.delete_upload(file_path)
-        db.rollback()
-        logger.error("Knowledge graph upload failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create knowledge graph: {exc}",
-        ) from exc
-
-
-async def get_knowledge_graph(
-    graph_id: UUID,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user),
-) -> KnowledgeGraphDetailResponse:
-    user_id = _user_id_from_token(token_payload)
-    row = _owned_graph_or_404(db, graph_id, user_id)
-    try:
-        graph = json.loads(row.graph_json) if row.graph_json else {"nodes": [], "edges": [], "stats": {}}
-    except json.JSONDecodeError:
-        graph = {"nodes": [], "edges": [], "stats": {}}
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     return KnowledgeGraphDetailResponse(
         graph_id=row.id,
         filename=row.filename,
         page_count=row.page_count,
         created_at=row.created_at,
-        graph=graph,
+        graph=_load_graph(row),
     )
 
 
-async def list_knowledge_graphs(
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user),
-) -> KnowledgeGraphListResponse:
-    user_id = _user_id_from_token(token_payload)
-    rows = (
-        db.query(DocumentKnowledgeGraphModel)
-        .filter(DocumentKnowledgeGraphModel.user_id == user_id)
-        .order_by(DocumentKnowledgeGraphModel.created_at.desc())
-        .all()
-    )
-    items = [
-        KnowledgeGraphListItem(
-            graph_id=row.id,
-            filename=row.filename,
-            page_count=row.page_count,
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
-    return KnowledgeGraphListResponse(items=items)
-
+# ── Delete ─────────────────────────────────────────────────────────────────────
 
 async def delete_knowledge_graph(
     graph_id: UUID,
-    db: Session = Depends(get_db),
-    token_payload: dict = Depends(get_current_user),
+    db: Session,
+    token_payload: dict,
 ) -> KnowledgeGraphDeleteResponse:
-    user_id = _user_id_from_token(token_payload)
-    row = _owned_graph_or_404(db, graph_id, user_id)
-    file_path = row.file_path
+    user_id = UUID(_user_id_str(token_payload))
+    row = (
+        db.query(DocumentKnowledgeGraphModel)
+        .filter(
+            DocumentKnowledgeGraphModel.id == graph_id,
+            DocumentKnowledgeGraphModel.user_id == user_id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    if row.file_path:
+        try:
+            os.remove(row.file_path)
+        except OSError:
+            pass
     db.delete(row)
     db.commit()
-    storage.delete_upload(file_path)
     return KnowledgeGraphDeleteResponse(message="Knowledge graph deleted")
