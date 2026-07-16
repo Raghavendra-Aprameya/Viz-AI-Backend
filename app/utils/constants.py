@@ -58,6 +58,7 @@ LLM_SPREADSHEET_URL = os.getenv(
     "LLM_SPREADSHEET_URL",
     "http://localhost:8001/generate-sheet-queries/",
 )
+LLM_ONTOLOGY_URL = os.getenv("LLM_ONTOLOGY_URL", "http://localhost:8001/api/v1/llm/ontology")
 # External database connection pool settings
 EXTERNAL_POOL_SIZE = 5          # Conservative pool size per external DB
 EXTERNAL_MAX_OVERFLOW = 10      # Burst capacity (total: 15 connections)

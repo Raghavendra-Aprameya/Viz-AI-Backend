@@ -1,0 +1,53 @@
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
+class ColumnOntologyEdit(BaseModel):
+    business_definition: str
+    semantic_type: str
+    status: str
+
+class TableOntologyEdit(BaseModel):
+    description: str
+    category: str
+    status: str
+
+class OntologySyncResponse(BaseModel):
+    message: str
+
+class OntologyCategoryResponse(BaseModel):
+    categories: List[str]
+
+class OntologyTableSummary(BaseModel):
+    physical_name: str
+    category: str
+    status: str
+    is_ai_generated: bool
+
+class OntologyTableListResponse(BaseModel):
+    tables: List[OntologyTableSummary]
+
+class OntologyColumnSummary(BaseModel):
+    physical_name: str
+    semantic_type: str
+    business_definition: str
+    status: str
+
+class OntologyColumnListResponse(BaseModel):
+    columns: List[OntologyColumnSummary]
+
+class GenerateDescriptionResponse(BaseModel):
+    description: Optional[str] = None
+    category: Optional[str] = None
+    semantic_type: Optional[str] = None
+    business_definition: Optional[str] = None
+
+class BusinessMetric(BaseModel):
+    name: str
+    formula: str
+    description: Optional[str] = ""
+    source: Optional[str] = "Manual"
+    status: Optional[str] = "PENDING"
+
+class BusinessMetricsResponse(BaseModel):
+    metrics: List[BusinessMetric]
+

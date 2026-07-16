@@ -3035,6 +3035,25 @@ async def submit_enrichment_answers(
         enriched_ontology.setdefault("metadata", {})["enrichment_apply_error"] = True
     apply_elapsed = round(time.perf_counter() - apply_start, 3)
 
+    # NEW LOGIC: Mirror the metrics into the Data Explorer's business_metrics array
+    if "metrics" in answers_map and isinstance(answers_map["metrics"], dict):
+        business_metrics = enriched_ontology.setdefault("business_metrics", [])
+        for m_name, m_val in answers_map["metrics"].items():
+            if isinstance(m_val, dict) and m_val.get("formula"):
+                # Check if it already exists to update it, else append
+                existing = next((m for m in business_metrics if m.get("name") == m_name), None)
+                if existing:
+                    existing["formula"] = str(m_val["formula"])
+                    existing["description"] = str(m_val.get("description", ""))
+                else:
+                    business_metrics.append({
+                        "name": str(m_name),
+                        "formula": str(m_val["formula"]),
+                        "description": str(m_val.get("description", "")),
+                        "source": "Chatbot",
+                        "status": "APPROVED"
+                    })
+
     # Validate metric formulas against the actual schema. Metrics referencing
     # columns that don't exist would be ignored by NL2SQL anyway (it has strict
     # "no column hallucination" rules), so we drop them here and tell the user.
