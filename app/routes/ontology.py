@@ -212,7 +212,8 @@ def get_tables(datasource_id: uuid.UUID, category: str = None, db: Session = Dep
             physical_name=table.get("physical_name", ""),
             category=table.get("category", "Unknown"),
             status=table.get("status", "PENDING"),
-            is_ai_generated=True
+            is_ai_generated=True,
+            confidence=table.get("confidence")
         ))
         
     return {"tables": tables}
@@ -230,7 +231,8 @@ def get_columns(table_name: str, datasource_id: uuid.UUID, db: Session = Depends
                     physical_name=col.get("physical_name", ""),
                     semantic_type=col.get("semantic_type", "Unknown"),
                     business_definition=col.get("business_definition", ""),
-                    status=col.get("status", "PENDING")
+                    status=col.get("status", "PENDING"),
+                    confidence=col.get("confidence")
                 ))
             break
             
@@ -264,6 +266,8 @@ def generate_table_description(table_name: str, datasource_id: uuid.UUID, db: Se
     
     target_table["description"] = result.get("description", "")
     target_table["category"] = result.get("category", "")
+    if "confidence" in result:
+        target_table["confidence"] = result.get("confidence")
     
     ontology.ontology_json = json.dumps(data)
     db.commit()
@@ -300,6 +304,8 @@ def generate_column_description(table_name: str, column_name: str, datasource_id
     
     target_col["business_definition"] = result.get("business_definition", "")
     target_col["semantic_type"] = result.get("semantic_type", "")
+    if "confidence" in result:
+        target_col["confidence"] = result.get("confidence")
     
     ontology.ontology_json = json.dumps(data)
     db.commit()

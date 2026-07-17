@@ -22,6 +22,7 @@ class OntologyTableSummary(BaseModel):
     category: str
     status: str
     is_ai_generated: bool
+    confidence: Optional[float] = None
 
 class OntologyTableListResponse(BaseModel):
     tables: List[OntologyTableSummary]
@@ -31,6 +32,7 @@ class OntologyColumnSummary(BaseModel):
     semantic_type: str
     business_definition: str
     status: str
+    confidence: Optional[float] = None
 
 class OntologyColumnListResponse(BaseModel):
     columns: List[OntologyColumnSummary]
@@ -40,6 +42,7 @@ class GenerateDescriptionResponse(BaseModel):
     category: Optional[str] = None
     semantic_type: Optional[str] = None
     business_definition: Optional[str] = None
+    confidence: Optional[float] = None
 
 class BusinessMetric(BaseModel):
     name: str
