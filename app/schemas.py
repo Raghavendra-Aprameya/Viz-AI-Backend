@@ -58,6 +58,9 @@ class DBConnectionRequest(BaseModel):
     catalog_name: Optional[str] = None
     schema_name: Optional[str] = None
     access_token: Optional[str] = None
+    # SSL / extra query-param fields (form-based connections)
+    use_ssl: Optional[bool] = None
+    additional_params: Optional[str] = None
 
 
 # class DBConnectionResponse(BaseModel):

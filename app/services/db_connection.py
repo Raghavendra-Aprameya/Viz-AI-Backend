@@ -636,14 +636,41 @@ async def create_database_connection(
             username = data.username or data.name or ""
             if not all([username, password, host, db_name]):
                 raise HTTPException(status_code=400, detail="PostgreSQL requires username (or name), password, host, and database name")
+
+            # Build query-string params from optional SSL / schema / extra fields
+            query_params: dict = {}
             schema_name = (getattr(data, "schema_name", None) or "").strip()
-            search_path_suffix = f"?options=-csearch_path%3D{quote_plus(schema_name)}" if schema_name else ""
-            connection_string = f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}{search_path_suffix}"
+            if schema_name:
+                query_params["options"] = f"-csearch_path={schema_name}"
+            if getattr(data, "use_ssl", None):
+                query_params.setdefault("sslmode", "require")
+            extra = (getattr(data, "additional_params", None) or "").strip()
+            if extra:
+                # additional_params may be "sslmode=require&connect_timeout=10" style
+                for kv in extra.split("&"):
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        query_params[k.strip()] = v.strip()
+                    elif kv.strip():
+                        query_params[kv.strip()] = ""
+            query_suffix = ("?" + urlencode(query_params)) if query_params else ""
+            connection_string = f"postgresql://{username}:{quote_plus(str(password))}@{host}/{db_name}{query_suffix}"
         elif db_type == "mysql":
             username = data.username or data.name or ""
             if not all([username, password, host, db_name]):
                 raise HTTPException(status_code=400, detail="MySQL requires username (or name), password, host, and database name")
-            connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host}/{db_name}"
+            # Build SSL / extra params for MySQL too
+            query_params_mysql: dict = {}
+            if getattr(data, "use_ssl", None):
+                query_params_mysql["ssl"] = "true"
+            extra_mysql = (getattr(data, "additional_params", None) or "").strip()
+            if extra_mysql:
+                for kv in extra_mysql.split("&"):
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        query_params_mysql[k.strip()] = v.strip()
+            query_suffix_mysql = ("?" + urlencode(query_params_mysql)) if query_params_mysql else ""
+            connection_string = f"mysql+pymysql://{username}:{quote_plus(str(password))}@{host}/{db_name}{query_suffix_mysql}"
         elif db_type == "oracledb":
             # For Oracle, db_name is actually the service_name
             service_name = db_name
@@ -827,7 +854,11 @@ async def create_database_connection(
         tables_count = 0
     else:
         background_tasks.add_task(extract_tables_in_background, task_id, connection_string, db_entry.id, db_type)
-        tables_count = len(extract_table_names(connection_string))
+        # Do NOT call extract_table_names() here — it opens a live DB connection
+        # synchronously and blocks the HTTP response, causing a client-side timeout
+        # on slow or remote databases. The background task already extracts and
+        # stores the full schema; the count is updated from there.
+        tables_count = 0
 
     # --- Return immediately ---
     return {"taskId": task_id, "tablesCount": tables_count, "connectionId": str(db_entry.id)}
