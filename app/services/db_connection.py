@@ -473,17 +473,15 @@ def parse_and_encode_connection_string(connection_string: str) -> str:
     
     # Find positions of key separators
     at_positions = [i for i, char in enumerate(rest) if char == '@']
-    slash_pos = rest.find('/')
     query_pos = rest.find('?')
-    hash_pos = rest.find('#')
     
-    # Determine the boundary between auth and host
-    # Auth ends at the last @ before / or ? (whichever comes first)
-    boundary = len(rest)
-    if slash_pos != -1:
-        boundary = min(boundary, slash_pos)
-    if query_pos != -1:
-        boundary = min(boundary, query_pos)
+    # Determine the boundary between auth and host.
+    # Passwords may legally contain / and #, so we must NOT use slash_pos as a
+    # boundary — doing so would mistake a / inside the password for the start of
+    # the path, resulting in the wrong @ being chosen as the auth/host separator.
+    # Hostnames and ports can never contain @, so the last @ that appears before
+    # the query-string marker (?) is always the correct auth/host separator.
+    boundary = query_pos if query_pos != -1 else len(rest)
     
     # Find the last @ before the boundary (this separates auth from host)
     auth_end_pos = -1
@@ -616,10 +614,16 @@ async def create_database_connection(
             # Use username/password from URL if available, otherwise from data fields
             username = username or data.username or data.name or ""
             password = password or data.password or ""
-            connection_string = (
-                f"{parsed_url.scheme}://{username}:{quote_plus(str(password))}@"
-                f"{host}{':' + str(port) if port else ''}/{db_name}"
-            )
+            # connection_string is already correctly encoded by parse_and_encode_connection_string.
+            # Rebuilding it from parts would drop query parameters (e.g. ?sslmode=require),
+            # so we use the encoded string directly and only re-encode the password when the
+            # username/password came from data fields rather than the URL.
+            if not parsed_url.username and (data.username or data.name or data.password):
+                query_suffix = f"?{parsed_url.query}" if parsed_url.query else ""
+                connection_string = (
+                    f"{parsed_url.scheme}://{username}:{quote_plus(str(password))}@"
+                    f"{host}{':' + str(port) if port else ''}/{db_name}{query_suffix}"
+                )
             db_type = data.db_type
     else:
         # Construct connection string from individual fields

@@ -19,12 +19,12 @@ def create_super_admin():
         new_user = UserModel(
             username="another_super_admin",
             email="another_super_admin@vizai.com",
-            password=get_password_hash("password123"), # You can change this password
+            password=get_password_hash("password"), # password set to "password"
             is_super=True
         )
         db.add(new_user)
         db.commit()
-        print("✅ Successfully created 'another_super_admin' with password 'password123'!")
+        print("✅ Successfully created 'another_super_admin' with password 'password'!")
     except Exception as e:
         db.rollback()
         print(f"❌ Error: {e}")

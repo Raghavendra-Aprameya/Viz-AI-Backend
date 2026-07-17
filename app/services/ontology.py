@@ -2287,6 +2287,10 @@ _SQL_RESERVED_TOKENS: Set[str] = {
     "PERCENTILE_APPROX",
     "TO_JSON", "FROM_JSON", "PARSE_JSON", "GET_JSON_OBJECT",
     "EXPLODE", "POSEXPLODE",
+    # Power BI / DAX-style keywords that appear in PBIT metric formulas
+    "FILTER", "RELATED", "CALCULATETABLE", "CALCULATE", "SUMMARIZE",
+    "VALUES", "EARLIER", "EARLIEST", "BLANK", "LOOKUPVALUE",
+    "SELECTEDVALUE", "HASONEVALUE", "HASONEFILTER",
 }
 
 
@@ -2334,6 +2338,10 @@ def _extract_identifiers_from_formula(formula: str) -> Set[str]:
     even if their name does not appear in _SQL_RESERVED_TOKENS. This prevents
     dialect-specific function names from being incorrectly flagged as missing
     schema columns, which was causing infinite clarification loops.
+
+    Important: string literals (both single- and double-quoted) are stripped
+    before identifier extraction so that filter values like 'AVAILABLE' or
+    'Ejar Signed' are never mistaken for column references.
     """
     if not isinstance(formula, str) or not formula.strip():
         return set()
