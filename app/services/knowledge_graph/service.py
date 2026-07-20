@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.knowledge_graph_models import DocumentKnowledgeGraphModel
 from app.services.knowledge_graph.extractor import extract_knowledge_graph
+from app.services.knowledge_graph import neo4j_client
 from app.services.knowledge_graph.schemas import (
     KnowledgeGraphDeleteResponse,
     KnowledgeGraphDetailResponse,
@@ -153,6 +154,32 @@ async def upload_knowledge_graph(
     except OSError:
         pass  # Non-fatal — file still accessible at old path
 
+    # Fail-closed: API succeeds only when Postgres and AuraDB both complete.
+    try:
+        await neo4j_client.write_document_graph(
+            user_id=user_id_str,
+            graph_id=str(row.id),
+            graph=graph,
+        )
+    except Exception as exc:
+        logger.exception(
+            "AuraDB dual-write failed; rolling back Postgres | user_id=%s graph_id=%s",
+            user_id_str,
+            row.id,
+        )
+        stored_path = row.file_path
+        db.delete(row)
+        db.commit()
+        if stored_path:
+            try:
+                os.remove(stored_path)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Knowledge graph storage failed (AuraDB): {exc}",
+        )
+
     logger.info("KG created %s: %d nodes, %d edges", row.id,
                 graph["stats"]["node_count"], graph["stats"]["edge_count"])
     return KnowledgeGraphUploadResponse(graph_id=row.id)
@@ -217,7 +244,8 @@ async def delete_knowledge_graph(
     db: Session,
     token_payload: dict,
 ) -> KnowledgeGraphDeleteResponse:
-    user_id = UUID(_user_id_str(token_payload))
+    user_id_str = _user_id_str(token_payload)
+    user_id = UUID(user_id_str)
     row = (
         db.query(DocumentKnowledgeGraphModel)
         .filter(
@@ -228,6 +256,25 @@ async def delete_knowledge_graph(
     )
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    # Fail-closed: clear AuraDB first so a Neo4j outage leaves Postgres intact
+    # and the client can retry delete.
+    try:
+        await neo4j_client.delete_document_graph(
+            user_id=user_id_str,
+            graph_id=str(graph_id),
+        )
+    except Exception as exc:
+        logger.exception(
+            "AuraDB cleanup failed; Postgres graph retained | user_id=%s graph_id=%s",
+            user_id_str,
+            graph_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Knowledge graph delete failed (AuraDB): {exc}",
+        )
+
     if row.file_path:
         try:
             os.remove(row.file_path)
@@ -235,4 +282,5 @@ async def delete_knowledge_graph(
             pass
     db.delete(row)
     db.commit()
+
     return KnowledgeGraphDeleteResponse(message="Knowledge graph deleted")

@@ -64,6 +64,9 @@ async def lifespan(app: FastAPI):
     logger.info("All external engines disposed successfully")
     engine.dispose()
     logger.info("Main database engine disposed successfully")
+    from app.services.knowledge_graph.neo4j_client import close_driver
+    await close_driver()
+    logger.info("Neo4j AuraDB driver closed successfully")
 
 
 # For SQLAlchemy session, if used elsewhere
