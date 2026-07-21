@@ -3,3 +3,7 @@ __pycache__
 .txtg
 venv/
 .env
+
+# Local PDF uploads for knowledge graphs
+uploads/
+uploads/knowledge_graphs/
