@@ -20,6 +20,7 @@ from app.routes.allowed_domains import allowed_domains_router
 from app.routes.observability import observability_router
 from app.routes.ontology import router as ontology_router
 from app.routes.knowledge_graph import knowledge_graph_router
+from app.services.knowledge_graph import neo4j_keepalive
 from app.utils.constants import (
     ALLOWED_ORIGINS,
     ALLOWED_CREDENTIALS,
@@ -57,9 +58,11 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting VizAI Backend...")
+    neo4j_keepalive.start()
     yield
     # Shutdown
     logger.info("Shutting down VizAI Backend...")
+    await neo4j_keepalive.stop()
     from app.core.db import external_engine_manager, engine
     external_engine_manager.dispose_all()
     logger.info("All external engines disposed successfully")
