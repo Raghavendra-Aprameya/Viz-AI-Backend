@@ -12,6 +12,8 @@ from app.services.knowledge_graph.schemas import (
     KnowledgeGraphDeleteResponse,
     KnowledgeGraphDetailResponse,
     KnowledgeGraphListResponse,
+    KnowledgeGraphQueryRequest,
+    KnowledgeGraphQueryResponse,
     KnowledgeGraphUploadResponse,
 )
 from app.services.knowledge_graph import service as kg_service
@@ -34,6 +36,18 @@ async def upload_knowledge_graph(
     token_payload: dict = Depends(get_current_user),
 ):
     return await kg_service.upload_knowledge_graph(file, db, token_payload)
+
+
+@knowledge_graph_router.post(
+    "/query",
+    response_model=KnowledgeGraphQueryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def query_knowledge_graph(
+    body: KnowledgeGraphQueryRequest,
+    token_payload: dict = Depends(get_current_user),
+):
+    return await kg_service.query_knowledge_graph(body.question, token_payload)
 
 
 @knowledge_graph_router.get(

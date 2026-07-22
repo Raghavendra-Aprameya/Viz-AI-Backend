@@ -26,6 +26,8 @@ from app.services.knowledge_graph.schemas import (
     KnowledgeGraphDetailResponse,
     KnowledgeGraphListItem,
     KnowledgeGraphListResponse,
+    KnowledgeGraphQueryResponse,
+    KnowledgeGraphQuerySubgraph,
     KnowledgeGraphUploadResponse,
 )
 
@@ -284,3 +286,51 @@ async def delete_knowledge_graph(
     db.commit()
 
     return KnowledgeGraphDeleteResponse(message="Knowledge graph deleted")
+
+
+# ── Query (1-hop subgraph → context) ───────────────────────────────────────────
+
+async def query_knowledge_graph(
+    question: str,
+    token_payload: dict,
+) -> KnowledgeGraphQueryResponse:
+    """Match the user's merged AuraDB graph and return nodes/edges context only."""
+    user_id_str = _user_id_str(token_payload)
+    cleaned = (question or "").strip()
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="question is required",
+        )
+
+    if not neo4j_client.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Neo4j AuraDB is not configured",
+        )
+
+    terms = neo4j_client.extract_question_terms(cleaned)
+    try:
+        subgraph = await neo4j_client.query_user_subgraph(
+            user_id=user_id_str,
+            terms=terms,
+        )
+    except Exception as exc:
+        logger.exception(
+            "AuraDB subgraph query failed | user_id=%s question=%s",
+            user_id_str,
+            cleaned[:200],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Knowledge graph query failed (AuraDB): {exc}",
+        )
+
+    nodes = subgraph.get("nodes") or []
+    edges = subgraph.get("edges") or []
+    context = neo4j_client.subgraph_to_context(nodes, edges)
+    return KnowledgeGraphQueryResponse(
+        question=cleaned,
+        context=context,
+        subgraph=KnowledgeGraphQuerySubgraph(nodes=nodes, edges=edges),
+    )

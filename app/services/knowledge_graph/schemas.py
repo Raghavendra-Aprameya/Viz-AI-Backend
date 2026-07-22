@@ -59,3 +59,29 @@ class KnowledgeGraphListResponse(BaseModel):
 
 class KnowledgeGraphDeleteResponse(BaseModel):
     message: str
+
+
+class KnowledgeGraphQueryRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+
+
+class KnowledgeGraphQueryNode(BaseModel):
+    label: str
+    type: str = "Other"
+
+
+class KnowledgeGraphQueryEdge(BaseModel):
+    source: str
+    label: str
+    target: str
+
+
+class KnowledgeGraphQuerySubgraph(BaseModel):
+    nodes: List[KnowledgeGraphQueryNode] = Field(default_factory=list)
+    edges: List[KnowledgeGraphQueryEdge] = Field(default_factory=list)
+
+
+class KnowledgeGraphQueryResponse(BaseModel):
+    question: str
+    context: str
+    subgraph: KnowledgeGraphQuerySubgraph

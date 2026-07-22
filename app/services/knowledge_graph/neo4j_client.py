@@ -246,6 +246,202 @@ async def delete_document_graph(*, user_id: str, graph_id: str) -> None:
     )
 
 
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "on",
+        "for",
+        "by",
+        "with",
+        "from",
+        "at",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "where",
+        "when",
+        "how",
+        "why",
+        "show",
+        "me",
+        "my",
+        "our",
+        "please",
+        "give",
+        "get",
+        "list",
+        "tell",
+        "about",
+        "vs",
+        "versus",
+        "chart",
+        "graph",
+        "plot",
+        "data",
+    }
+)
+
+
+def extract_question_terms(question: str, *, max_terms: int = 12) -> list[str]:
+    """Tokenize a question into lowercase search terms (stopwords removed)."""
+    raw = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}", question or "")
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in raw:
+        value = token.lower()
+        if value in _STOPWORDS or value in seen:
+            continue
+        seen.add(value)
+        terms.append(value)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
+def subgraph_to_context(
+    nodes: list[dict[str, str]],
+    edges: list[dict[str, str]],
+) -> str:
+    """Serialize a 1-hop subgraph into prompt context (nodes + edges only)."""
+    if not nodes and not edges:
+        return (
+            "[KNOWLEDGE GRAPH CONTEXT]\n"
+            "No matching entities or relationships were found for this question.\n"
+        )
+
+    entity_lines = [
+        f"- {n['label']} ({n.get('type') or 'Other'})"
+        for n in nodes
+        if n.get("label")
+    ]
+    rel_lines = [
+        f"- {e['source']} -[{e['label']}]-> {e['target']}"
+        for e in edges
+        if e.get("source") and e.get("target")
+    ]
+    fact_lines = [
+        f"- {e['source']} {str(e.get('label') or 'related to').replace('_', ' ')} {e['target']}"
+        for e in edges
+        if e.get("source") and e.get("target")
+    ]
+
+    parts = [
+        "[KNOWLEDGE GRAPH CONTEXT]",
+        "Use only these facts. Do not invent entities or relationships.",
+        "",
+        "Entities:",
+        *(entity_lines or ["- (none)"]),
+        "",
+        "Relationships:",
+        *(rel_lines or ["- (none)"]),
+        "",
+        "Derived facts:",
+        *(fact_lines or ["- (none)"]),
+    ]
+    return "\n".join(parts) + "\n"
+
+
+async def query_user_subgraph(
+    *,
+    user_id: str,
+    terms: list[str],
+    max_nodes: int = 30,
+    max_edges: int = 50,
+) -> dict[str, Any]:
+    """
+    Fetch a 1-hop subgraph for one user filtered by case-insensitive label terms.
+
+    Returns ``{"nodes": [...], "edges": [...]}`` with label/type (and source/target
+    labels on edges). Does not include document file content.
+    """
+    if not is_configured():
+        raise RuntimeError("Neo4j AuraDB is not configured")
+
+    cleaned_terms = [t.strip().lower() for t in terms if t and t.strip()]
+    if not cleaned_terms:
+        return {"nodes": [], "edges": []}
+
+    await ensure_schema()
+    driver = _get_driver()
+
+    async with driver.session(database=_database()) as session:
+        result = await session.run(
+            """
+            MATCH (n:Entity {user_id: $user_id})
+            WHERE any(term IN $terms WHERE toLower(n.label) CONTAINS term)
+            WITH n
+            LIMIT $seed_limit
+            OPTIONAL MATCH (n)-[r]-(m:Entity {user_id: $user_id})
+            WHERE r.user_id = $user_id
+            RETURN
+              n.label AS n_label,
+              n.type AS n_type,
+              m.label AS m_label,
+              m.type AS m_type,
+              CASE WHEN r IS NULL THEN null ELSE coalesce(r.label, type(r)) END AS rel_label,
+              CASE WHEN r IS NULL THEN null ELSE startNode(r).label END AS start_label,
+              CASE WHEN r IS NULL THEN null ELSE endNode(r).label END AS end_label
+            LIMIT $row_limit
+            """,
+            user_id=user_id,
+            terms=cleaned_terms,
+            seed_limit=max_nodes,
+            row_limit=max(max_nodes * 4, max_edges * 2),
+        )
+        rows = [record.data() async for record in result]
+
+    nodes_by_key: dict[tuple[str, str], dict[str, str]] = {}
+    edges: list[dict[str, str]] = []
+    edge_keys: set[tuple[str, str, str]] = set()
+
+    def _add_node(label: str | None, entity_type: str | None) -> None:
+        if not label:
+            return
+        node_type = (entity_type or "Other").strip() or "Other"
+        key = (label, node_type)
+        if key not in nodes_by_key and len(nodes_by_key) < max_nodes:
+            nodes_by_key[key] = {"label": label, "type": node_type}
+
+    for row in rows:
+        _add_node(row.get("n_label"), row.get("n_type"))
+        _add_node(row.get("m_label"), row.get("m_type"))
+        source = row.get("start_label")
+        target = row.get("end_label")
+        rel = (row.get("rel_label") or "").strip()
+        if not source or not target or not rel:
+            continue
+        edge_key = (source, rel, target)
+        if edge_key in edge_keys or len(edges) >= max_edges:
+            continue
+        edge_keys.add(edge_key)
+        edges.append({"source": source, "label": rel, "target": target})
+
+    nodes = list(nodes_by_key.values())
+    logger.info(
+        "AuraDB subgraph query | user_id=%s terms=%s nodes=%s edges=%s",
+        user_id,
+        cleaned_terms,
+        len(nodes),
+        len(edges),
+    )
+    return {"nodes": nodes, "edges": edges}
+
+
 async def verify_connectivity() -> None:
     """Verify configured AuraDB credentials and prepare indexes."""
     if not is_configured():
