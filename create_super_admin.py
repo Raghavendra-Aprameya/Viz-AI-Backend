@@ -19,7 +19,7 @@ def create_super_admin():
         new_user = UserModel(
             username="another_super_admin",
             email="another_super_admin@vizai.com",
-            password=get_password_hash("password"), # You can change this password
+            password=get_password_hash("password/"), # You can change this password
             is_super=True
         )
         db.add(new_user)

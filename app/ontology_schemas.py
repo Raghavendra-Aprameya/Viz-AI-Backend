@@ -50,7 +50,18 @@ class BusinessMetric(BaseModel):
     description: Optional[str] = ""
     source: Optional[str] = "Manual"
     status: Optional[str] = "PENDING"
+    related_tables: Optional[List[str]] = []
 
 class BusinessMetricsResponse(BaseModel):
     metrics: List[BusinessMetric]
+
+class RelationshipSummary(BaseModel):
+    source: str
+    target: str
+    source_column: str
+    target_column: str
+    label: Optional[str] = None
+    
+class RelationshipListResponse(BaseModel):
+    relationships: List[RelationshipSummary]
 

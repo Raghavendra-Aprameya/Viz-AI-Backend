@@ -17,7 +17,9 @@ from app.ontology_schemas import (
     TableOntologyEdit,
     ColumnOntologyEdit,
     BusinessMetric,
-    BusinessMetricsResponse
+    BusinessMetricsResponse,
+    RelationshipSummary,
+    RelationshipListResponse
 )
 from app.utils.constants import LLM_ONTOLOGY_URL
 from sqlalchemy import create_engine, inspect
@@ -347,3 +349,46 @@ def update_column(table_name: str, column_name: str, datasource_id: uuid.UUID, e
     ontology.ontology_json = json.dumps(data)
     db.commit()
     return {"message": "Column updated."}
+
+@router.get("/tables/{table_name}/relationships", response_model=RelationshipListResponse)
+def get_table_relationships(table_name: str, datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+    ontology = _get_latest_ontology(db, datasource_id)
+    data = json.loads(ontology.ontology_json)
+    
+    relationships = []
+    for rel in data.get("relationships", []):
+        source_table = rel.get("source", "")
+        target_table = rel.get("target", "")
+        
+        # Check if the fully qualified name or just the table name matches
+        if source_table == table_name or source_table.endswith(f".{table_name}") or \
+           target_table == table_name or target_table.endswith(f".{table_name}"):
+            relationships.append(RelationshipSummary(
+                source=source_table,
+                target=target_table,
+                source_column=rel.get("source_column", ""),
+                target_column=rel.get("target_column", ""),
+                label=rel.get("label")
+            ))
+            
+    return {"relationships": relationships}
+
+@router.get("/tables/{table_name}/metrics", response_model=BusinessMetricsResponse)
+def get_table_metrics(table_name: str, datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+    ontology = _get_latest_ontology(db, datasource_id)
+    data = json.loads(ontology.ontology_json)
+    
+    metrics = []
+    for metric in data.get("business_metrics", []):
+        related_tables = metric.get("related_tables", [])
+        if table_name in related_tables:
+            metrics.append(BusinessMetric(
+                name=metric.get("name", ""),
+                formula=metric.get("formula", ""),
+                description=metric.get("description", ""),
+                source=metric.get("source", "Manual"),
+                status=metric.get("status", "PENDING"),
+                related_tables=related_tables
+            ))
+            
+    return {"metrics": metrics}

@@ -3040,18 +3040,29 @@ async def submit_enrichment_answers(
         business_metrics = enriched_ontology.setdefault("business_metrics", [])
         for m_name, m_val in answers_map["metrics"].items():
             if isinstance(m_val, dict) and m_val.get("formula"):
+                formula_str = str(m_val["formula"])
+                
+                # Dynamically extract related tables by checking if physical table names appear in the formula
+                related_tables = []
+                for t in enriched_ontology.get("tables", []):
+                    t_name = t.get("physical_name")
+                    if t_name and t_name in formula_str:
+                        related_tables.append(t_name)
+                        
                 # Check if it already exists to update it, else append
                 existing = next((m for m in business_metrics if m.get("name") == m_name), None)
                 if existing:
-                    existing["formula"] = str(m_val["formula"])
+                    existing["formula"] = formula_str
                     existing["description"] = str(m_val.get("description", ""))
+                    existing["related_tables"] = related_tables
                 else:
                     business_metrics.append({
                         "name": str(m_name),
-                        "formula": str(m_val["formula"]),
+                        "formula": formula_str,
                         "description": str(m_val.get("description", "")),
                         "source": "Chatbot",
-                        "status": "APPROVED"
+                        "status": "APPROVED",
+                        "related_tables": related_tables
                     })
 
     # Validate metric formulas against the actual schema. Metrics referencing
