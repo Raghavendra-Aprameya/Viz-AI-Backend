@@ -207,13 +207,25 @@ def get_tables(datasource_id: uuid.UUID, category: str = None, db: Session = Dep
     for table in data.get("tables", []):
         if category and table.get("category") != category:
             continue
-            
+
+        columns = table.get("columns") or []
+        confidence = table.get("confidence")
+        if confidence is None:
+            confidence = table.get("ai_confidence")
+
         tables.append(OntologyTableSummary(
             physical_name=table.get("physical_name", ""),
             category=table.get("category", "Unknown"),
             status=table.get("status", "PENDING"),
-            is_ai_generated=True,
-            confidence=table.get("confidence")
+            is_ai_generated=bool(table.get("is_ai_generated", False)),
+            confidence=confidence,
+            description=table.get("description") or None,
+            business_purpose=table.get("business_purpose") or None,
+            business_concepts=table.get("business_concepts") if isinstance(table.get("business_concepts"), list) else None,
+            common_questions=table.get("common_questions") if isinstance(table.get("common_questions"), list) else None,
+            last_updated=table.get("last_updated") or None,
+            tags=table.get("tags") if isinstance(table.get("tags"), list) else None,
+            column_count=len(columns) if isinstance(columns, list) else None,
         ))
         
     return {"tables": tables}

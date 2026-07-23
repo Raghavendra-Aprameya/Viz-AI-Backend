@@ -23,6 +23,13 @@ class OntologyTableSummary(BaseModel):
     status: str
     is_ai_generated: bool
     confidence: Optional[float] = None
+    description: Optional[str] = None
+    business_purpose: Optional[str] = None
+    business_concepts: Optional[List[str]] = None
+    common_questions: Optional[List[str]] = None
+    last_updated: Optional[str] = None
+    tags: Optional[List[str]] = None
+    column_count: Optional[int] = None
 
 class OntologyTableListResponse(BaseModel):
     tables: List[OntologyTableSummary]
