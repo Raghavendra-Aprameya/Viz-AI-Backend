@@ -173,6 +173,8 @@ from app.services.ontology import (
     submit_enrichment_answers,
     validate_latest_ontology_ttl,
     process_pbit_upload,
+    generate_catalog,
+    get_catalog_status,
 )
 
 from app.services.multiple_db_generate_queries import generate_trino_queries_service
@@ -329,6 +331,30 @@ async def get_latest_ontology_route(
     token_payload: dict = Depends(get_current_user),
 ):
     return await get_latest_ontology(connection_id, db, token_payload)
+
+
+@backend_router.post(
+    "/connections/{connection_id}/ontology/catalog/generate",
+    status_code=status.HTTP_200_OK,
+)
+async def generate_catalog_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await generate_catalog(connection_id, db, token_payload)
+
+
+@backend_router.get(
+    "/connections/{connection_id}/ontology/catalog/status",
+    status_code=status.HTTP_200_OK,
+)
+async def get_catalog_status_route(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    return await get_catalog_status(connection_id, db, token_payload)
 
 
 @backend_router.get(

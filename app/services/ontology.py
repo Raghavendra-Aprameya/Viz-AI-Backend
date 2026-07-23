@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.configs.config import llm
-from app.core.db import get_db
+from app.core.db import get_db, SessionLocal
 from app.models.schema_models import (
     DatabaseConnectionModel,
     OntologyEnrichmentSessionModel,
@@ -2775,6 +2776,322 @@ async def validate_latest_ontology_ttl(connection_id: UUID, db: Session = Depend
         "errors": errors,
         "triple_count": len(triple_lines),
     }
+
+
+# ─── Datasource-level AI Catalog generation ──────────────────────────────────
+#
+# In-memory registry of running/last-completed catalog generation jobs, keyed by
+# connection id (string). This intentionally avoids a new DB table/migration; job
+# state is transient progress metadata while the enriched results themselves are
+# persisted incrementally into the ontology version's `ontology_json["tables"]`.
+_CATALOG_JOBS: Dict[str, Dict[str, Any]] = {}
+
+_CATALOG_STAGES: List[str] = [
+    "Analyzing database schema...",
+    "Generating business descriptions...",
+    "Extracting business concepts...",
+    "Detecting relationships...",
+    "Generating business metrics...",
+    "Calculating confidence...",
+]
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_tables_for_catalog(db_connection: DatabaseConnectionModel) -> List[Dict[str, Any]]:
+    """Build [{name, columns:[{name,type}], relationships:[...]}] from the DS graph."""
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {"nodes": [], "edges": []})
+    nodes = ds_graph.get("nodes", []) or []
+    edges = ds_graph.get("edges", []) or []
+
+    id_to_name: Dict[str, str] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        id_to_name[str(n.get("id"))] = n.get("table") or n.get("label") or str(n.get("id"))
+
+    tables: List[Dict[str, Any]] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        name = n.get("table") or n.get("label") or str(n.get("id"))
+        cols = [
+            {"name": c.get("name"), "type": str(c.get("type", "unknown"))}
+            for c in (n.get("columns") or [])
+            if isinstance(c, dict) and c.get("name")
+        ]
+        rels: List[Dict[str, Any]] = []
+        for e in edges:
+            if not isinstance(e, dict):
+                continue
+            if str(e.get("source")) == str(n.get("id")):
+                rels.append(
+                    {
+                        "target": id_to_name.get(str(e.get("target")), str(e.get("target"))),
+                        "label": e.get("relationship_type") or e.get("label") or "references",
+                    }
+                )
+        tables.append({"name": name, "columns": cols, "relationships": rels})
+    return tables
+
+
+def _fallback_catalog_table(table: Dict[str, Any]) -> Dict[str, Any]:
+    name = table.get("name") or "table"
+    cols = [
+        {
+            "physical_name": c.get("name"),
+            "business_definition": "",
+            "semantic_type": "attribute",
+            "confidence": 0.5,
+            "status": "NEEDS_REVIEW",
+        }
+        for c in (table.get("columns") or [])
+    ]
+    return {
+        "physical_name": name,
+        "category": "Uncategorized",
+        "description": "",
+        "business_purpose": "",
+        "business_concepts": [],
+        "common_questions": [],
+        "ai_confidence": 0.5,
+        "tags": [],
+        "status": "NEEDS_REVIEW",
+        "is_ai_generated": True,
+        "columns": cols,
+        "last_updated": _now_iso(),
+    }
+
+
+async def _llm_enrich_table(db_type: Optional[str], table: Dict[str, Any]) -> Dict[str, Any]:
+    """Call the LLM microservice to enrich a single table; fall back gracefully."""
+    endpoint = os.getenv(
+        "ONTOLOGY_ENRICH_TABLE_URL", "http://127.0.0.1:8001/api/ontology/enrich-table"
+    )
+    timeout_seconds = float(os.getenv("ONTOLOGY_ENRICH_TABLE_TIMEOUT", "90"))
+    body = {
+        "db_type": db_type or "unknown",
+        "name": table.get("name"),
+        "columns": table.get("columns", []),
+        "relationships": table.get("relationships", []),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(endpoint, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("enrich-table returned non-object")
+        data.setdefault("physical_name", table.get("name"))
+        data.setdefault("status", "COMPLETED")
+        data.setdefault("is_ai_generated", True)
+        data["last_updated"] = _now_iso()
+        return data
+    except Exception as exc:
+        logger.warning("enrich-table call failed for %s | %s", table.get("name"), str(exc))
+        return _fallback_catalog_table(table)
+
+
+async def _run_catalog_generation(
+    connection_id: UUID,
+    tables_input: List[Dict[str, Any]],
+    db_type: Optional[str],
+) -> None:
+    """Background worker: enrich every table, persisting incrementally."""
+    key = str(connection_id)
+    job = _CATALOG_JOBS.get(key)
+    if job is None:
+        return
+    worker_db = SessionLocal()
+    try:
+        version = _get_latest_ontology_version(worker_db, connection_id)
+        if not version:
+            job["status"] = "error"
+            job["error"] = "No ontology version to attach catalog to."
+            return
+
+        ontology = _safe_json_loads(version.ontology_json, {}) or {}
+        existing: Dict[str, Dict[str, Any]] = {
+            t.get("physical_name"): t
+            for t in (ontology.get("tables") or [])
+            if isinstance(t, dict) and t.get("physical_name")
+        }
+        total = max(len(tables_input), 1)
+
+        for idx, table in enumerate(tables_input):
+            name = table.get("name")
+            job["per_table"][name] = "generating"
+            stage_idx = min(int(idx / total * len(_CATALOG_STAGES)), len(_CATALOG_STAGES) - 1)
+            job["current_stage"] = _CATALOG_STAGES[stage_idx]
+
+            enriched = await _llm_enrich_table(db_type, table)
+            existing[name] = enriched
+
+            job["per_table"][name] = "completed"
+            job["completed_tables"] = idx + 1
+
+            # Persist partial progress so polling reflects incremental completion.
+            ontology["tables"] = list(existing.values())
+            version.ontology_json = json.dumps(ontology)
+            worker_db.commit()
+
+        # Finalize metadata + confidence summary.
+        confidences = [
+            float(t.get("ai_confidence") or 0)
+            for t in existing.values()
+            if isinstance(t, dict)
+        ]
+        avg_conf = round(sum(confidences) / len(confidences), 3) if confidences else 0.0
+        meta = ontology.setdefault("metadata", {})
+        meta["catalog_generated_at"] = _now_iso()
+        meta["catalog_table_count"] = len(existing)
+        meta["catalog_avg_confidence"] = avg_conf
+        ontology["tables"] = list(existing.values())
+        version.ontology_json = json.dumps(ontology)
+        worker_db.commit()
+
+        job["status"] = "completed"
+        job["current_stage"] = "Completed"
+        job["completed_at"] = _now_iso()
+        job["avg_confidence"] = avg_conf
+    except Exception as exc:
+        logger.exception("Catalog generation failed for %s | %s", key, str(exc))
+        job["status"] = "error"
+        job["error"] = str(exc)
+    finally:
+        worker_db.close()
+
+
+def _catalog_status_payload(connection_id: UUID, db: Session) -> Dict[str, Any]:
+    version = _get_latest_ontology_version(db, connection_id)
+    ontology_payload = _safe_json_loads(version.ontology_json, {}) if version else {}
+    graph_payload = (
+        _safe_json_loads(version.graph_json, {"nodes": [], "edges": [], "stats": {}})
+        if version
+        else {"nodes": [], "edges": [], "stats": {}}
+    )
+    tables = ontology_payload.get("tables", []) if isinstance(ontology_payload, dict) else []
+    job = _CATALOG_JOBS.get(str(connection_id))
+
+    if job:
+        job_info = {
+            "status": job.get("status"),
+            "total_tables": job.get("total_tables", 0),
+            "completed_tables": job.get("completed_tables", 0),
+            "current_stage": job.get("current_stage"),
+            "per_table": job.get("per_table", {}),
+            "started_at": job.get("started_at"),
+            "completed_at": job.get("completed_at"),
+            "avg_confidence": job.get("avg_confidence"),
+            "error": job.get("error"),
+        }
+    elif tables:
+        meta = ontology_payload.get("metadata", {}) if isinstance(ontology_payload, dict) else {}
+        job_info = {
+            "status": "completed",
+            "total_tables": len(tables),
+            "completed_tables": len(tables),
+            "current_stage": "Completed",
+            "per_table": {t.get("physical_name"): t.get("status", "completed") for t in tables if isinstance(t, dict)},
+            "started_at": None,
+            "completed_at": meta.get("catalog_generated_at"),
+            "avg_confidence": meta.get("catalog_avg_confidence"),
+            "error": None,
+        }
+    else:
+        job_info = {
+            "status": "idle",
+            "total_tables": 0,
+            "completed_tables": 0,
+            "current_stage": None,
+            "per_table": {},
+            "started_at": None,
+            "completed_at": None,
+            "avg_confidence": None,
+            "error": None,
+        }
+
+    return {
+        "job": job_info,
+        "ontology_version_id": str(version.id) if version else None,
+        "version_label": version.version_label if version else None,
+        "status": version.status if version else None,
+        "is_base": bool(version.is_base) if version else False,
+        "graph": graph_payload,
+        "ontology": ontology_payload if isinstance(ontology_payload, dict) else {},
+    }
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def generate_catalog(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    """
+    Start a datasource-level AI Catalog generation. Ensures a base ontology
+    exists, then kicks off a background job that enriches every table. Returns
+    the initial job snapshot immediately; the frontend polls the status endpoint.
+    """
+    db_connection = _get_connection_or_404(db, connection_id)
+
+    # If a job is already running for this connection, return its current state.
+    existing_job = _CATALOG_JOBS.get(str(connection_id))
+    if existing_job and existing_job.get("status") == "running":
+        return _catalog_status_payload(connection_id, db)
+
+    # Ensure a base ontology exists (bootstrap if needed).
+    version = _get_latest_ontology_version(db, connection_id)
+    if not version:
+        ontology = _build_base_ontology(db_connection)
+        ontology = await _llm_refine_ontology(
+            ontology=ontology,
+            db_schema_json=db_connection.db_schema,
+            db_type=db_connection.db_type,
+        )
+        graph = _ontology_to_graph(ontology)
+        user_id = token_payload.get("sub") if token_payload else None
+        version = OntologyVersionModel(
+            id=uuid4(),
+            datasource_connection_id=connection_id,
+            version_number=1,
+            version_label="base_v1",
+            status="published",
+            is_base=True,
+            ontology_json=json.dumps(ontology),
+            ontology_ttl=_ontology_to_ttl(ontology),
+            graph_json=json.dumps(graph),
+            created_by=UUID(user_id) if user_id else None,
+        )
+        db.add(version)
+        db.commit()
+        db.refresh(version)
+
+    tables_input = _extract_tables_for_catalog(db_connection)
+    _CATALOG_JOBS[str(connection_id)] = {
+        "status": "running",
+        "total_tables": len(tables_input),
+        "completed_tables": 0,
+        "current_stage": _CATALOG_STAGES[0],
+        "per_table": {t["name"]: "queued" for t in tables_input},
+        "started_at": _now_iso(),
+        "completed_at": None,
+        "avg_confidence": None,
+        "error": None,
+    }
+
+    # Launch background enrichment on the running event loop. Keep a reference to
+    # the task on the job registry so it is not garbage-collected mid-flight.
+    task = asyncio.create_task(
+        _run_catalog_generation(connection_id, tables_input, db_connection.db_type)
+    )
+    _CATALOG_JOBS[str(connection_id)]["_task"] = task
+
+    return _catalog_status_payload(connection_id, db)
+
+
+@require_permission(Permission.VIEW_DATASOURCE)
+async def get_catalog_status(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    _get_connection_or_404(db, connection_id)
+    return _catalog_status_payload(connection_id, db)
 
 
 @require_permission(Permission.EDIT_DATASOURCE)
