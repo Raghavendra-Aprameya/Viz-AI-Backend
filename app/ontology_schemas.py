@@ -14,6 +14,14 @@ class TableOntologyEdit(BaseModel):
 class OntologySyncResponse(BaseModel):
     message: str
 
+class OntologySyncStatusResponse(BaseModel):
+    status: str  # idle | running | completed | error
+    total_tables: int = 0
+    completed_tables: int = 0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
 class OntologyCategoryResponse(BaseModel):
     categories: List[str]
 

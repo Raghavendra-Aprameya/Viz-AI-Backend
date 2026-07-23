@@ -1,5 +1,10 @@
 import uuid
 import json
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Optional
+
 import requests
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -8,6 +13,7 @@ from app.core.db import get_db
 from app.models.schema_models import OntologyVersionModel, DatabaseConnectionModel
 from app.ontology_schemas import (
     OntologySyncResponse,
+    OntologySyncStatusResponse,
     OntologyCategoryResponse,
     OntologyTableListResponse,
     OntologyTableSummary,
@@ -24,6 +30,14 @@ from sqlalchemy import create_engine, inspect
 from app.utils.crypt import decrypt_string
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+_SYNC_JOBS: dict[str, dict] = {}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 def _get_latest_ontology(db: Session, datasource_id: uuid.UUID) -> OntologyVersionModel:
     ontology = db.query(OntologyVersionModel).filter(
@@ -34,6 +48,15 @@ def _get_latest_ontology(db: Session, datasource_id: uuid.UUID) -> OntologyVersi
         raise HTTPException(status_code=404, detail="Ontology not found. Please sync first.")
     
     return ontology
+
+
+def _get_latest_ontology_optional(db: Session, datasource_id: uuid.UUID) -> Optional[OntologyVersionModel]:
+    return (
+        db.query(OntologyVersionModel)
+        .filter(OntologyVersionModel.datasource_connection_id == datasource_id)
+        .order_by(OntologyVersionModel.version_number.desc())
+        .first()
+    )
 
 def _fetch_physical_schema(db: Session, datasource_id: uuid.UUID) -> dict:
     conn = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == datasource_id).first()
@@ -72,6 +95,7 @@ def _add_pending_tables(chunk, enriched_tables):
         })
 
 def _sync_ontology_background(datasource_id: uuid.UUID):
+    key = str(datasource_id)
     db = next(get_db())
     try:
         # Extract schema
@@ -84,31 +108,63 @@ def _sync_ontology_background(datasource_id: uuid.UUID):
             for col in columns:
                 cols.append({"name": col.get("name"), "type": str(col.get("type"))})
             tables_payload.append({"name": table_name, "columns": cols})
-        
-        # Call LLM Service in chunks to prevent OpenAI timeouts on large schemas
-        chunk_size = 3
+
+        total = len(tables_payload)
+        if key in _SYNC_JOBS:
+            _SYNC_JOBS[key].update({"total_tables": total, "completed_tables": 0})
+
+        # Per-table enrich-table (same rich fields as cenomi: purpose, concepts, questions)
+        enrich_url = os.getenv(
+            "ONTOLOGY_ENRICH_TABLE_URL",
+            "http://127.0.0.1:8001/api/ontology/enrich-table",
+        )
+        conn = db.query(DatabaseConnectionModel).filter(
+            DatabaseConnectionModel.id == datasource_id
+        ).first()
+        db_type = getattr(conn, "db_type", None) if conn else None
+
         enriched_tables = []
-        for i in range(0, len(tables_payload), chunk_size):
-            chunk = tables_payload[i:i + chunk_size]
+        for i, table in enumerate(tables_payload):
             try:
                 response = requests.post(
-                    f"{LLM_ONTOLOGY_URL}/enrich-schema", 
-                    json={"tables": chunk},
-                    timeout=120
+                    enrich_url,
+                    json={
+                        "db_type": db_type or "unknown",
+                        "name": table.get("name"),
+                        "columns": table.get("columns", []),
+                        "relationships": [],
+                    },
+                    timeout=120,
                 )
                 if response.status_code == 200:
-                    enriched_tables.extend(response.json().get("tables", []))
+                    enriched = response.json()
+                    if isinstance(enriched, dict):
+                        enriched.setdefault("is_ai_generated", True)
+                        # Keep drafts reviewable unless LLM already set a status
+                        enriched.setdefault("status", "PENDING")
+                        enriched["last_updated"] = _now_iso()
+                        # Normalize confidence field for explorer UI
+                        if enriched.get("confidence") is None and enriched.get("ai_confidence") is not None:
+                            enriched["confidence"] = enriched.get("ai_confidence")
+                        enriched_tables.append(enriched)
+                    else:
+                        _add_pending_tables([table], enriched_tables)
                 else:
-                    print(f"Warning: Chunk {i} failed: {response.text}")
-                    _add_pending_tables(chunk, enriched_tables)
+                    logger.warning(
+                        "enrich-table failed for %s: %s",
+                        table.get("name"),
+                        response.text,
+                    )
+                    _add_pending_tables([table], enriched_tables)
             except Exception as e:
-                print(f"Warning: Chunk {i} exception: {e}")
-                _add_pending_tables(chunk, enriched_tables)
+                logger.warning("enrich-table exception for %s: %s", table.get("name"), e)
+                _add_pending_tables([table], enriched_tables)
+
+            if key in _SYNC_JOBS:
+                _SYNC_JOBS[key]["completed_tables"] = min(len(enriched_tables), total)
                 
         # Determine next version and preserve existing graph schema if any
-        latest = db.query(OntologyVersionModel).filter(
-            OntologyVersionModel.datasource_connection_id == datasource_id
-        ).order_by(OntologyVersionModel.version_number.desc()).first()
+        latest = _get_latest_ontology_optional(db, datasource_id)
         
         next_version = 1 if not latest else latest.version_number + 1
         
@@ -122,8 +178,7 @@ def _sync_ontology_background(datasource_id: uuid.UUID):
         existing_data["tables"] = enriched_tables
         if "business_metrics" not in existing_data:
             existing_data["business_metrics"] = []
-        
-        enriched_data = existing_data
+        existing_data.setdefault("metadata", {})["catalog_generated_at"] = _now_iso()
         
         # Insert into DB
         new_ontology = OntologyVersionModel(
@@ -131,19 +186,66 @@ def _sync_ontology_background(datasource_id: uuid.UUID):
             version_number=next_version,
             version_label=f"Auto-generated v{next_version}",
             status="draft",
-            ontology_json=json.dumps(enriched_data),
-            graph_json=json.dumps({"nodes": [], "edges": [], "stats": {}})
+            ontology_json=json.dumps(existing_data),
+            graph_json=latest.graph_json if latest else json.dumps({"nodes": [], "edges": [], "stats": {}}),
         )
         db.add(new_ontology)
         db.commit()
+
+        if key in _SYNC_JOBS:
+            _SYNC_JOBS[key].update({
+                "status": "completed",
+                "completed_at": _now_iso(),
+                "completed_tables": total,
+            })
     except Exception as e:
-        print(f"Background Sync Error: {str(e)}")
+        logger.exception("Background Sync Error for datasource %s", datasource_id)
+        if key in _SYNC_JOBS:
+            _SYNC_JOBS[key].update({
+                "status": "error",
+                "error": str(e),
+                "completed_at": _now_iso(),
+            })
     finally:
         db.close()
 
 
+@router.get("/datasources/{datasource_id}/sync/status", response_model=OntologySyncStatusResponse)
+def get_sync_status(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+    job = _SYNC_JOBS.get(str(datasource_id))
+    if not job:
+        ontology = _get_latest_ontology_optional(db, datasource_id)
+        if ontology:
+            data = json.loads(ontology.ontology_json or "{}")
+            tables = data.get("tables") or []
+            if tables:
+                return OntologySyncStatusResponse(
+                    status="completed",
+                    total_tables=len(tables),
+                    completed_tables=len(tables),
+                    completed_at=(data.get("metadata") or {}).get("catalog_generated_at"),
+                )
+        return OntologySyncStatusResponse(status="idle")
+    return OntologySyncStatusResponse(
+        **{k: job.get(k) for k in OntologySyncStatusResponse.model_fields}
+    )
+
+
 @router.post("/datasources/{datasource_id}/sync", response_model=OntologySyncResponse, status_code=202)
 def sync_ontology(datasource_id: uuid.UUID, background_tasks: BackgroundTasks):
+    key = str(datasource_id)
+    existing = _SYNC_JOBS.get(key)
+    if existing and existing.get("status") == "running":
+        return {"message": "Ontology synchronization already in progress."}
+
+    _SYNC_JOBS[key] = {
+        "status": "running",
+        "total_tables": 0,
+        "completed_tables": 0,
+        "started_at": _now_iso(),
+        "completed_at": None,
+        "error": None,
+    }
     background_tasks.add_task(_sync_ontology_background, datasource_id)
     return {"message": "Ontology synchronization started in the background."}
 
