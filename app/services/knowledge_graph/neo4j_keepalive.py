@@ -30,10 +30,9 @@ async def _loop() -> None:
 def start() -> None:
     """Start the keepalive task if Neo4j is configured. No-op otherwise."""
     global _task
-    if _task is not None or not is_configured():
-        return
-    _task = asyncio.create_task(_loop(), name="neo4j-keepalive")
-    logger.info("Neo4j AuraDB keepalive started (every %ss)", _interval_seconds())
+    # Temporarily disabled to avoid frequent hits on Neo4j free instance
+    return
+
 
 
 async def stop() -> None:
