@@ -576,6 +576,26 @@ def _build_enrichment_schema_columns(
         }
         by_table.setdefault(table, []).append(col)
 
+    for table_obj in (ontology.get("tables", []) or []):
+        if not isinstance(table_obj, dict):
+            continue
+        table = (table_obj.get("physical_name") or table_obj.get("name") or "").strip()
+        if not table:
+            continue
+        for col_obj in (table_obj.get("columns", []) or []):
+            if not isinstance(col_obj, dict):
+                continue
+            col_name = (col_obj.get("physical_name") or col_obj.get("name") or "").strip()
+            if not col_name:
+                continue
+            col_type = str(col_obj.get("data_type") or col_obj.get("type") or "unknown")
+            col = {
+                "name": col_name,
+                "type": col_type,
+                "use_in_formula": f"{table}.{col_name}",
+            }
+            by_table.setdefault(table, []).append(col)
+
     def _priority(c: dict) -> int:
         t = str(c.get("type", "")).upper()
         if any(k in t for k in ("INT", "FLOAT", "DECIMAL", "NUMERIC", "DOUBLE", "MONEY")):
@@ -1121,6 +1141,7 @@ async def _llm_enrichment_chat(
     user_message: str,
     thread_id: Optional[str] = None,
     db_type: Optional[str] = None,
+    db_connection: Optional["DatabaseConnectionModel"] = None,
 ) -> Dict[str, Any]:
     """
     Call OpenAI directly via LangChain with fully-typed structured output.
@@ -1132,6 +1153,19 @@ async def _llm_enrichment_chat(
     Databricks vs PostgreSQL vs MySQL).
     """
     schema_columns = _build_enrichment_schema_columns(ontology)
+    if db_connection:
+        raw_cols = _build_raw_schema_columns(db_connection)
+        for tbl, cols in raw_cols.items():
+            existing_col_names = {
+                str(c.get("name", "")).lower()
+                for c in schema_columns.get(tbl, [])
+                if isinstance(c, dict)
+            }
+            for rc in cols:
+                if str(rc.get("name", "")).lower() not in existing_col_names:
+                    schema_columns.setdefault(tbl, []).append(rc)
+                    existing_col_names.add(str(rc.get("name", "")).lower())
+
     column_index = _schema_column_index(schema_columns)
     schema_column_names = set(column_index.keys())
 
@@ -3211,7 +3245,12 @@ async def enrichment_chat_message(
     chat_history.append({"role": "user", "content": message})
     ontology = _safe_json_loads(base_version.ontology_json, {})
     llm_resp = await _llm_enrichment_chat(
-        ontology, chat_history, message, str(session_id), db_type=db_connection.db_type
+        ontology,
+        chat_history,
+        message,
+        str(session_id),
+        db_type=db_connection.db_type,
+        db_connection=db_connection,
     )
     assistant_message = llm_resp.get("assistant_message") or "I'm here to help! Feel free to share your business metrics, reporting rules, or any date preferences you'd like to set up."
     extracted_updates = llm_resp.get("extracted_updates") or {}
