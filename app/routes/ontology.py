@@ -2,6 +2,7 @@ import uuid
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models.schema_models import OntologyVersionModel, DatabaseConnectionModel
+from app.services.observability import ingest_trace
 from app.ontology_schemas import (
     OntologySyncResponse,
     OntologySyncStatusResponse,
@@ -125,19 +127,37 @@ def _sync_ontology_background(datasource_id: uuid.UUID):
 
         enriched_tables = []
         for i, table in enumerate(tables_payload):
+            start_time = time.time()
+            prompt_payload = {
+                "db_type": db_type or "unknown",
+                "name": table.get("name"),
+                "columns": table.get("columns", []),
+                "relationships": [],
+            }
             try:
                 response = requests.post(
                     enrich_url,
-                    json={
-                        "db_type": db_type or "unknown",
-                        "name": table.get("name"),
-                        "columns": table.get("columns", []),
-                        "relationships": [],
-                    },
+                    json=prompt_payload,
                     timeout=120,
                 )
+                latency_ms = int((time.time() - start_time) * 1000)
+                trace_payload = {
+                    "project_id": str(conn.project_id) if conn and conn.project_id else None,
+                    "ai_service": "ontology_sync_table",
+                    "latency_ms": latency_ms,
+                    "prompt_text": json.dumps(prompt_payload),
+                    "status": "success",
+                }
+                
                 if response.status_code == 200:
                     enriched = response.json()
+                    
+                    trace_payload["completion_text"] = response.text
+                    trace_payload["prompt_tokens"] = enriched.get("prompt_tokens", 0) if isinstance(enriched, dict) else 0
+                    trace_payload["completion_tokens"] = enriched.get("completion_tokens", 0) if isinstance(enriched, dict) else 0
+                    trace_payload["model_name"] = enriched.get("model_name", "unknown") if isinstance(enriched, dict) else "unknown"
+                    ingest_trace(db, trace_payload)
+                    
                     if isinstance(enriched, dict):
                         enriched.setdefault("is_ai_generated", True)
                         # Keep drafts reviewable unless LLM already set a status
@@ -150,6 +170,10 @@ def _sync_ontology_background(datasource_id: uuid.UUID):
                     else:
                         _add_pending_tables([table], enriched_tables)
                 else:
+                    trace_payload["status"] = "error"
+                    trace_payload["error_message"] = response.text
+                    ingest_trace(db, trace_payload)
+                    
                     logger.warning(
                         "enrich-table failed for %s: %s",
                         table.get("name"),
@@ -157,6 +181,17 @@ def _sync_ontology_background(datasource_id: uuid.UUID):
                     )
                     _add_pending_tables([table], enriched_tables)
             except Exception as e:
+                latency_ms = int((time.time() - start_time) * 1000)
+                trace_payload = {
+                    "project_id": str(conn.project_id) if conn and conn.project_id else None,
+                    "ai_service": "ontology_sync_table",
+                    "latency_ms": latency_ms,
+                    "prompt_text": json.dumps(prompt_payload),
+                    "status": "error",
+                    "error_message": str(e),
+                }
+                ingest_trace(db, trace_payload)
+                
                 logger.warning("enrich-table exception for %s: %s", table.get("name"), e)
                 _add_pending_tables([table], enriched_tables)
 
@@ -318,7 +353,7 @@ def get_tables(datasource_id: uuid.UUID, category: str = None, db: Session = Dep
         tables.append(OntologyTableSummary(
             physical_name=table.get("physical_name", ""),
             category=table.get("category", "Unknown"),
-            status=table.get("status", "PENDING"),
+            status=table.get("status", "PENDING_REVIEW"),
             is_ai_generated=bool(table.get("is_ai_generated", False)),
             confidence=confidence,
             description=table.get("description") or None,
@@ -372,11 +407,49 @@ def generate_table_description(table_name: str, datasource_id: uuid.UUID, db: Se
         "columns": [{"name": c.get("physical_name")} for c in target_table.get("columns", [])]
     }
     
-    resp = requests.post(f"{LLM_ONTOLOGY_URL}/generate-table-description", json=payload)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="LLM generation failed.")
+    conn = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == datasource_id).first()
+    project_id = str(conn.project_id) if conn and conn.project_id else None
+    
+    start_time = time.time()
+    try:
+        resp = requests.post(f"{LLM_ONTOLOGY_URL}/generate-table-description", json=payload)
+        latency_ms = int((time.time() - start_time) * 1000)
         
-    result = resp.json()
+        trace_payload = {
+            "project_id": project_id,
+            "ai_service": "ontology_generate_table_description",
+            "latency_ms": latency_ms,
+            "prompt_text": json.dumps(payload),
+            "status": "success" if resp.status_code == 200 else "error",
+            "error_message": resp.text if resp.status_code != 200 else None,
+            "completion_text": resp.text if resp.status_code == 200 else None,
+        }
+        
+        result = None
+        if resp.status_code == 200:
+            result = resp.json()
+            trace_payload["prompt_tokens"] = result.get("prompt_tokens", 0)
+            trace_payload["completion_tokens"] = result.get("completion_tokens", 0)
+            trace_payload["model_name"] = result.get("model_name", "unknown")
+            
+        ingest_trace(db, trace_payload)
+        
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500, detail="LLM generation failed.")
+            
+    except Exception as e:
+        if not isinstance(e, HTTPException):
+            latency_ms = int((time.time() - start_time) * 1000)
+            trace_payload = {
+                "project_id": project_id,
+                "ai_service": "ontology_generate_table_description",
+                "latency_ms": latency_ms,
+                "prompt_text": json.dumps(payload),
+                "status": "error",
+                "error_message": str(e),
+            }
+            ingest_trace(db, trace_payload)
+        raise e
     
     target_table["description"] = result.get("description", "")
     target_table["category"] = result.get("category", "")
@@ -410,11 +483,49 @@ def generate_column_description(table_name: str, column_name: str, datasource_id
         "column_name": column_name
     }
     
-    resp = requests.post(f"{LLM_ONTOLOGY_URL}/generate-column-description", json=payload)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="LLM generation failed.")
+    conn = db.query(DatabaseConnectionModel).filter(DatabaseConnectionModel.id == datasource_id).first()
+    project_id = str(conn.project_id) if conn and conn.project_id else None
+    
+    start_time = time.time()
+    try:
+        resp = requests.post(f"{LLM_ONTOLOGY_URL}/generate-column-description", json=payload)
+        latency_ms = int((time.time() - start_time) * 1000)
         
-    result = resp.json()
+        trace_payload = {
+            "project_id": project_id,
+            "ai_service": "ontology_generate_column_description",
+            "latency_ms": latency_ms,
+            "prompt_text": json.dumps(payload),
+            "status": "success" if resp.status_code == 200 else "error",
+            "error_message": resp.text if resp.status_code != 200 else None,
+            "completion_text": resp.text if resp.status_code == 200 else None,
+        }
+        
+        result = None
+        if resp.status_code == 200:
+            result = resp.json()
+            trace_payload["prompt_tokens"] = result.get("prompt_tokens", 0)
+            trace_payload["completion_tokens"] = result.get("completion_tokens", 0)
+            trace_payload["model_name"] = result.get("model_name", "unknown")
+            
+        ingest_trace(db, trace_payload)
+        
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500, detail="LLM generation failed.")
+            
+    except Exception as e:
+        if not isinstance(e, HTTPException):
+            latency_ms = int((time.time() - start_time) * 1000)
+            trace_payload = {
+                "project_id": project_id,
+                "ai_service": "ontology_generate_column_description",
+                "latency_ms": latency_ms,
+                "prompt_text": json.dumps(payload),
+                "status": "error",
+                "error_message": str(e),
+            }
+            ingest_trace(db, trace_payload)
+        raise e
     
     target_col["business_definition"] = result.get("business_definition", "")
     target_col["semantic_type"] = result.get("semantic_type", "")

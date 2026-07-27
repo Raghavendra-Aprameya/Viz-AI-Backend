@@ -2858,7 +2858,7 @@ def _fallback_catalog_table(table: Dict[str, Any]) -> Dict[str, Any]:
         "common_questions": [],
         "ai_confidence": 0.5,
         "tags": [],
-        "status": "NEEDS_REVIEW",
+        "status": "PENDING_REVIEW",
         "is_ai_generated": True,
         "columns": cols,
         "last_updated": _now_iso(),
@@ -2885,7 +2885,7 @@ async def _llm_enrich_table(db_type: Optional[str], table: Dict[str, Any]) -> Di
         if not isinstance(data, dict):
             raise ValueError("enrich-table returned non-object")
         data.setdefault("physical_name", table.get("name"))
-        data.setdefault("status", "COMPLETED")
+        data.setdefault("status", "PENDING_REVIEW")
         data.setdefault("is_ai_generated", True)
         data["last_updated"] = _now_iso()
         return data

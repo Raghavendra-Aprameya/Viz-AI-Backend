@@ -796,7 +796,9 @@ class OntologyEnrichmentSessionModel(Base):
 LLMTraceStatusEnum = SqlEnum("success", "error", "timeout", "cancelled", name="llm_trace_status")
 AIServiceEnum = SqlEnum(
     "probe_mode", "ai_assistant", "text_enhancement", "ontology_refinement",
-    "insights_generation", "query_generation", "chart_creation", "other",
+    "insights_generation", "query_generation", "chart_creation",
+    "ontology_sync_table", "ontology_generate_table_description", "ontology_generate_column_description",
+    "other",
     name="ai_service_type",
 )
 
