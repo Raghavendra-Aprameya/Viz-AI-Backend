@@ -29,7 +29,9 @@ def upgrade() -> None:
         DO $$ BEGIN
             CREATE TYPE ai_service_type AS ENUM (
                 'probe_mode','ai_assistant','text_enhancement',
-                'ontology_refinement','insights_generation','query_generation','other'
+                'ontology_refinement','ontology_sync_table',
+                'ontology_generate_table_description','ontology_generate_column_description',
+                'insights_generation','query_generation','chart_creation','other'
             );
         EXCEPTION WHEN duplicate_object THEN NULL;
         END $$;
@@ -53,8 +55,8 @@ def upgrade() -> None:
         INSERT INTO llm_pricing (id, provider, model_name, prompt_cost_per_1k, completion_cost_per_1k, effective_from)
         VALUES
           (gen_random_uuid(), 'openai',  'gpt-4o',           0.00500, 0.01500, '2024-01-01'),
-          (gen_random_uuid(), 'openai',  'gpt-4o-mini',      0.00015, 0.00060, '2024-07-01'),
-          (gen_random_uuid(), 'openai',  'gpt-4.1-mini',     0.00040, 0.00160, '2025-04-14'),
+          (gen_random_uuid(), 'openai',  'gpt-5.4-mini',      0.00015, 0.00060, '2024-07-01'),
+          (gen_random_uuid(), 'openai',  'gpt-5.4-mini',     0.00040, 0.00160, '2025-04-14'),
           (gen_random_uuid(), 'openai',  'gpt-4.1',          0.00200, 0.00800, '2025-04-14'),
           (gen_random_uuid(), 'google',  'gemini-2.5-flash', 0.00015, 0.00035, '2025-05-01'),
           (gen_random_uuid(), 'google',  'gemini-pro',       0.00025, 0.00050, '2024-01-01'),
@@ -70,7 +72,7 @@ def upgrade() -> None:
         sa.Column("chart_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("project_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("project.id", ondelete="SET NULL"), nullable=True),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("user.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("ai_service", sa.Enum("probe_mode","ai_assistant","text_enhancement","ontology_refinement","insights_generation","query_generation","other", name="ai_service_type", create_type=False), nullable=False, server_default="probe_mode"),
+        sa.Column("ai_service", sa.Enum("probe_mode","ai_assistant","text_enhancement","ontology_refinement","ontology_sync_table","ontology_generate_table_description","ontology_generate_column_description","insights_generation","query_generation","chart_creation","other", name="ai_service_type", create_type=False), nullable=False, server_default="probe_mode"),
         sa.Column("llm_provider", sa.String(50), nullable=True),
         sa.Column("model_name", sa.String(100), nullable=True),
         sa.Column("prompt_tokens", sa.Integer, nullable=True, server_default="0"),
@@ -101,7 +103,7 @@ def upgrade() -> None:
         sa.Column("rollup_date", sa.Date, nullable=False),
         sa.Column("project_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("project.id", ondelete="CASCADE"), nullable=True),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("user.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("ai_service", sa.Enum("probe_mode","ai_assistant","text_enhancement","ontology_refinement","insights_generation","query_generation","other", name="ai_service_type", create_type=False), nullable=False),
+        sa.Column("ai_service", sa.Enum("probe_mode","ai_assistant","text_enhancement","ontology_refinement","ontology_sync_table","ontology_generate_table_description","ontology_generate_column_description","insights_generation","query_generation","chart_creation","other", name="ai_service_type", create_type=False), nullable=False),
         sa.Column("model_name", sa.String(100), nullable=True),
         sa.Column("total_calls", sa.Integer, nullable=False, server_default="0"),
         sa.Column("total_prompt_tokens", sa.BigInteger, nullable=False, server_default="0"),

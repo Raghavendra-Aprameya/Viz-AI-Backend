@@ -25,6 +25,7 @@ def create_super_admin():
         db.add(new_user)
         db.commit()
         print("✅ Successfully created 'another_super_admin' with password 'password'!")
+        print("✅ Successfully created 'another_super_admin' with password 'password'!")
     except Exception as e:
         db.rollback()
         print(f"❌ Error: {e}")

@@ -18,6 +18,9 @@ from app.routes.embed import share_token_router, embed_router
 from app.routes.apps import apps_router
 from app.routes.allowed_domains import allowed_domains_router
 from app.routes.observability import observability_router
+from app.routes.ontology import router as ontology_router
+from app.routes.knowledge_graph import knowledge_graph_router
+from app.services.knowledge_graph import neo4j_keepalive
 from app.utils.constants import (
     ALLOWED_ORIGINS,
     ALLOWED_CREDENTIALS,
@@ -55,14 +58,19 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting VizAI Backend...")
+    neo4j_keepalive.start()
     yield
     # Shutdown
     logger.info("Shutting down VizAI Backend...")
+    await neo4j_keepalive.stop()
     from app.core.db import external_engine_manager, engine
     external_engine_manager.dispose_all()
     logger.info("All external engines disposed successfully")
     engine.dispose()
     logger.info("Main database engine disposed successfully")
+    from app.services.knowledge_graph.neo4j_client import close_driver
+    await close_driver()
+    logger.info("Neo4j AuraDB driver closed successfully")
 
 
 # For SQLAlchemy session, if used elsewhere
@@ -88,6 +96,8 @@ app.include_router(embed_router)  # Include public embed endpoints
 app.include_router(apps_router)  # Include app registration endpoints
 app.include_router(allowed_domains_router)  # Include allowed domains endpoints
 app.include_router(observability_router)    # Include observability endpoints
+app.include_router(ontology_router, prefix="/api/v1/ontology", tags=["Data Ontology Explorer"])
+app.include_router(knowledge_graph_router)  # PDF knowledge graphs
 
 # Embedded dashboard ECharts bundle (built via VIZ-AI-FRONTEND `npm run build:embed`)
 _embed_static_dir = os.path.join(os.path.dirname(__file__), "static", "embed")

@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.configs.config import llm
-from app.core.db import get_db
+from app.core.db import get_db, SessionLocal
 from app.models.schema_models import (
     DatabaseConnectionModel,
     OntologyEnrichmentSessionModel,
@@ -575,6 +576,26 @@ def _build_enrichment_schema_columns(
         }
         by_table.setdefault(table, []).append(col)
 
+    for table_obj in (ontology.get("tables", []) or []):
+        if not isinstance(table_obj, dict):
+            continue
+        table = (table_obj.get("physical_name") or table_obj.get("name") or "").strip()
+        if not table:
+            continue
+        for col_obj in (table_obj.get("columns", []) or []):
+            if not isinstance(col_obj, dict):
+                continue
+            col_name = (col_obj.get("physical_name") or col_obj.get("name") or "").strip()
+            if not col_name:
+                continue
+            col_type = str(col_obj.get("data_type") or col_obj.get("type") or "unknown")
+            col = {
+                "name": col_name,
+                "type": col_type,
+                "use_in_formula": f"{table}.{col_name}",
+            }
+            by_table.setdefault(table, []).append(col)
+
     def _priority(c: dict) -> int:
         t = str(c.get("type", "")).upper()
         if any(k in t for k in ("INT", "FLOAT", "DECIMAL", "NUMERIC", "DOUBLE", "MONEY")):
@@ -589,6 +610,67 @@ def _build_enrichment_schema_columns(
             break
         result[table] = sorted(cols, key=_priority)[:max_per_table]
     return result
+
+
+def _build_raw_schema_columns(db_connection: "DatabaseConnectionModel") -> Dict[str, list]:
+    """
+    Build a table_name → [{name, type, use_in_formula}] mapping directly from the
+    connection's raw ``db_schema`` and ``ds_graph_json`` fields.
+
+    This is used to *augment* the ontology-derived schema_columns passed to the DAX
+    translation LLM so that every real column in the database is visible, even when
+    the ontology ``attributes`` are sparse or stale (e.g. right after a fresh bootstrap
+    before enrichment has run).
+    """
+    by_table: Dict[str, list] = {}
+
+    def _add_col(table: str, name: str, col_type: str = "unknown") -> None:
+        if not table or not name:
+            return
+        entry = {
+            "name": name,
+            "type": col_type,
+            "use_in_formula": f"{table}.{name}",
+        }
+        by_table.setdefault(table, []).append(entry)
+
+    # ── ds_graph_json nodes ──────────────────────────────────────────────────
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {})
+    for node in ds_graph.get("nodes", []) or []:
+        table = (node.get("table") or node.get("label") or "").strip()
+        if not table:
+            continue
+        for col in node.get("columns", []) or []:
+            if isinstance(col, dict):
+                col_name = (col.get("name") or "").strip()
+                col_type = str(col.get("type") or "unknown")
+            elif isinstance(col, str):
+                col_name = col.strip()
+                col_type = "unknown"
+            else:
+                continue
+            _add_col(table, col_name, col_type)
+
+    # ── db_schema JSON blob ──────────────────────────────────────────────────
+    schema = _safe_json_loads(db_connection.db_schema, {})
+    for table_entry in schema.get("tables", []) or []:
+        if not isinstance(table_entry, dict):
+            continue
+        table = (table_entry.get("name") or "").strip()
+        if not table:
+            continue
+        for col in table_entry.get("columns", []) or []:
+            if isinstance(col, dict):
+                col_name = (col.get("name") or "").strip()
+                col_type = str(col.get("type") or "unknown")
+            elif isinstance(col, str):
+                col_name = col.strip()
+                col_type = "unknown"
+            else:
+                continue
+            _add_col(table, col_name, col_type)
+
+    return by_table
 
 
 def _friendly_label(raw: str) -> str:
@@ -1059,6 +1141,7 @@ async def _llm_enrichment_chat(
     user_message: str,
     thread_id: Optional[str] = None,
     db_type: Optional[str] = None,
+    db_connection: Optional["DatabaseConnectionModel"] = None,
 ) -> Dict[str, Any]:
     """
     Call OpenAI directly via LangChain with fully-typed structured output.
@@ -1070,6 +1153,19 @@ async def _llm_enrichment_chat(
     Databricks vs PostgreSQL vs MySQL).
     """
     schema_columns = _build_enrichment_schema_columns(ontology)
+    if db_connection:
+        raw_cols = _build_raw_schema_columns(db_connection)
+        for tbl, cols in raw_cols.items():
+            existing_col_names = {
+                str(c.get("name", "")).lower()
+                for c in schema_columns.get(tbl, [])
+                if isinstance(c, dict)
+            }
+            for rc in cols:
+                if str(rc.get("name", "")).lower() not in existing_col_names:
+                    schema_columns.setdefault(tbl, []).append(rc)
+                    existing_col_names.add(str(rc.get("name", "")).lower())
+
     column_index = _schema_column_index(schema_columns)
     schema_column_names = set(column_index.keys())
 
@@ -2300,22 +2396,134 @@ def _collect_schema_columns(db_connection: DatabaseConnectionModel) -> Set[str]:
     Build a lowercase set of every column name present in the datasource schema.
     We deliberately include columns from all tables because metric formulas may
     span joins and we only check identifier existence here, not table affinity.
+
+    Handles two column storage formats:
+      - dict: {"name": "col_name", "type": "..."} — standard enrichment format
+      - str:  "col_name"                           — compact list format used by some
+                                                     schema-extraction pipelines
     """
     cols: Set[str] = set()
+
+    def _extract_col_name(col: Any) -> str:
+        if isinstance(col, dict):
+            return (col.get("name") or "").strip()
+        if isinstance(col, str):
+            return col.strip()
+        return ""
+
+    # ── ds_graph_json nodes ──────────────────────────────────────────────────
     ds_graph = _safe_json_loads(db_connection.ds_graph_json, {})
     for node in ds_graph.get("nodes", []) or []:
         for col in node.get("columns", []) or []:
-            name = (col.get("name") or "").strip()
+            name = _extract_col_name(col)
             if name:
                 cols.add(name.lower())
-    # Some pipelines also stash column lists under db_schema → tables[].columns[]
+
+    # ── db_schema JSON blob (tables[].columns[]) ─────────────────────────────
     schema = _safe_json_loads(db_connection.db_schema, {})
     for table in schema.get("tables", []) or []:
+        if not isinstance(table, dict):
+            continue
         for col in table.get("columns", []) or []:
-            name = (col.get("name") or "").strip() if isinstance(col, dict) else ""
+            name = _extract_col_name(col)
             if name:
                 cols.add(name.lower())
+
     return cols
+
+
+def _collect_schema_tables(db_connection: DatabaseConnectionModel) -> Dict[str, str]:
+    """
+    Build a mapping of lowercased table reference → canonical SQL table reference.
+
+    Includes both bare table names and schema-qualified names so we can detect
+    and auto-correct invalid Power BI-style underscore-merged table references
+    (e.g. 'cenomi_target_gla_details' → 'target_gla_details').
+
+    Returned dict keys are what a formula might (incorrectly) use; values are
+    what should be used in SQL:
+      "target_gla_details"       → "target_gla_details"
+      "cenomi.target_gla_details"→ "cenomi.target_gla_details"
+    """
+    tables: Dict[str, str] = {}
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {})
+    for node in ds_graph.get("nodes", []) or []:
+        raw_table = (node.get("table") or node.get("label") or "").strip()
+        raw_schema = (node.get("schema") or "").strip()
+        if not raw_table:
+            continue
+        table_lower = raw_table.lower()
+        tables[table_lower] = table_lower
+        if raw_schema:
+            schema_lower = raw_schema.lower()
+            qualified = f"{schema_lower}.{table_lower}"
+            tables[qualified] = qualified
+    # Also include tables from the db_schema JSON blob
+    schema_blob = _safe_json_loads(db_connection.db_schema, {})
+    for tbl in schema_blob.get("tables", []) or []:
+        tbl_name = (tbl.get("name") or "").strip() if isinstance(tbl, dict) else ""
+        if tbl_name:
+            tables[tbl_name.lower()] = tbl_name.lower()
+    return tables
+
+
+def _normalize_formula_table_refs(formula: str, valid_tables: Dict[str, str]) -> Tuple[str, bool]:
+    """
+    Scan a metric formula for table.column references where the table token is
+    NOT a recognised schema table. Attempt auto-correction by treating underscore-
+    separated parts of the token as a (schema, table) pair:
+
+      Example: 'cenomi_target_gla_details' has no exact match →
+               try split at each '_':
+                 cenomi | target_gla_details  → 'target_gla_details' is valid → use it
+                                              → or 'cenomi.target_gla_details' if qualified
+               Prefer the bare table name (avoids 3-part schema.table.column).
+
+    Only table.column patterns are considered; bare identifiers are left unchanged
+    (column validation handles those separately).
+
+    Returns (possibly_corrected_formula, was_corrected).
+    """
+    if not formula or not valid_tables:
+        return formula, False
+
+    # Matches table.column (two-part dotted references only)
+    pattern = re.compile(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)"
+    )
+    was_corrected = False
+
+    def _find_correction(table_lower: str, col_part: str) -> Optional[str]:
+        """Return a corrected 'table.col' string, or None if the table is already valid."""
+        if table_lower in valid_tables:
+            return None  # Already correct — no change needed
+        # Try splitting at every underscore position in the table token.
+        # For 'cenomi_target_gla_details' the positions are indices 6, 13, 17.
+        underscores = [i for i, ch in enumerate(table_lower) if ch == "_"]
+        for ux in underscores:
+            schema_word = table_lower[:ux]
+            table_word = table_lower[ux + 1:]
+            if not schema_word or not table_word:
+                continue
+            # Prefer bare table (simplest; works when schema is in search_path)
+            if table_word in valid_tables:
+                return f"{table_word}.{col_part}"
+            # Fall back to schema-qualified reference
+            qualified = f"{schema_word}.{table_word}"
+            if qualified in valid_tables:
+                return f"{qualified}.{col_part}"
+        return None
+
+    def _replace(m: re.Match) -> str:
+        nonlocal was_corrected
+        corrected = _find_correction(m.group(1).lower(), m.group(2))
+        if corrected is not None:
+            was_corrected = True
+            return corrected
+        return m.group(0)
+
+    result = pattern.sub(_replace, formula)
+    return result, was_corrected
 
 
 def _extract_identifiers_from_formula(formula: str) -> Set[str]:
@@ -2388,6 +2596,13 @@ def _validate_metric_formula_columns(
     in its `formula` and `denominator` exists somewhere in the schema.
     Metrics with unresolvable columns are stripped out and reported.
 
+    Before column validation, table references in each formula are checked
+    against the real schema table names. If an invalid table reference is found
+    (e.g. 'cenomi_target_gla_details' generated by the LLM merging a Power BI
+    '<schema> <table>' pair with an underscore), it is automatically corrected
+    to either the bare table name ('target_gla_details') or the schema-qualified
+    name ('cenomi.target_gla_details'), whichever matches the connection schema.
+
     Returns (cleaned_ontology, warnings) where each warning is:
         {
             "metric_name": "...",
@@ -2406,6 +2621,20 @@ def _validate_metric_formula_columns(
         # No schema info available; skip validation rather than wrongly reject everything.
         return ontology, warnings
 
+    # Build valid table set for table-reference normalization (Fix 1B).
+    valid_tables = _collect_schema_tables(db_connection)
+
+    known_metric_names: Set[str] = set()
+    for metric in metrics:
+        if isinstance(metric, dict):
+            name = str(metric.get("name") or "").strip().lower()
+            if name:
+                known_metric_names.add(name)
+                underscored = re.sub(r"[^a-z0-9]+", "_", name).strip("_")
+                if underscored:
+                    known_metric_names.add(underscored)
+    valid_identifiers = schema_cols | known_metric_names
+
     kept: List[Dict[str, Any]] = []
     for metric in metrics:
         if not isinstance(metric, dict):
@@ -2419,8 +2648,10 @@ def _validate_metric_formula_columns(
         # through without one — they are unresolved pending stubs and would show up
         # as null-property entries in the ontology viewer.
         metric_id = str(metric.get("id") or "")
+        is_pending = str(metric.get("status") or "").strip().lower() == "pending"
+        has_error = bool(metric.get("translation_error"))
         if not formula and not denominator:
-            if metric_id.startswith("metric:"):
+            if metric_id.startswith("metric:") and not is_pending and not has_error:
                 warnings.append({
                     "metric_name": metric.get("name") or "(unnamed metric)",
                     "formula": "",
@@ -2436,12 +2667,44 @@ def _validate_metric_formula_columns(
             kept.append(metric)
             continue
 
+        # ── Table-reference normalization (Fix 1B) ───────────────────────────
+        # Correct invalid table names before column validation. This catches
+        # LLM-generated mistakes like 'cenomi_target_gla_details.col' that
+        # originate from Power BI's '<schema> <table>'[col] DAX convention.
+        if valid_tables:
+            if formula:
+                corrected_formula, formula_changed = _normalize_formula_table_refs(formula, valid_tables)
+                if formula_changed:
+                    logger.info(
+                        "Auto-corrected table references in metric '%s' formula: %r → %r",
+                        metric.get("name"),
+                        formula,
+                        corrected_formula,
+                    )
+                    formula = corrected_formula
+                    metric = dict(metric)
+                    metric["formula"] = corrected_formula
+            if denominator:
+                corrected_denom, denom_changed = _normalize_formula_table_refs(denominator, valid_tables)
+                if denom_changed:
+                    logger.info(
+                        "Auto-corrected table references in metric '%s' denominator: %r → %r",
+                        metric.get("name"),
+                        denominator,
+                        corrected_denom,
+                    )
+                    denominator = corrected_denom
+                    if not isinstance(metric, dict) or metric.get("formula") == formula:
+                        metric = dict(metric)
+                    metric["denominator"] = corrected_denom
+        # ── End table-reference normalization ────────────────────────────────
+
         identifiers = _extract_identifiers_from_formula(formula) | _extract_identifiers_from_formula(denominator)
         if not identifiers:
             kept.append(metric)
             continue
 
-        missing = sorted(ident for ident in identifiers if ident not in schema_cols)
+        missing = sorted(ident for ident in identifiers if ident not in valid_identifiers)
         if not missing:
             kept.append(metric)
             continue
@@ -2555,6 +2818,322 @@ async def validate_latest_ontology_ttl(connection_id: UUID, db: Session = Depend
         "errors": errors,
         "triple_count": len(triple_lines),
     }
+
+
+# ─── Datasource-level AI Catalog generation ──────────────────────────────────
+#
+# In-memory registry of running/last-completed catalog generation jobs, keyed by
+# connection id (string). This intentionally avoids a new DB table/migration; job
+# state is transient progress metadata while the enriched results themselves are
+# persisted incrementally into the ontology version's `ontology_json["tables"]`.
+_CATALOG_JOBS: Dict[str, Dict[str, Any]] = {}
+
+_CATALOG_STAGES: List[str] = [
+    "Analyzing database schema...",
+    "Generating business descriptions...",
+    "Extracting business concepts...",
+    "Detecting relationships...",
+    "Generating business metrics...",
+    "Calculating confidence...",
+]
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_tables_for_catalog(db_connection: DatabaseConnectionModel) -> List[Dict[str, Any]]:
+    """Build [{name, columns:[{name,type}], relationships:[...]}] from the DS graph."""
+    ds_graph = _safe_json_loads(db_connection.ds_graph_json, {"nodes": [], "edges": []})
+    nodes = ds_graph.get("nodes", []) or []
+    edges = ds_graph.get("edges", []) or []
+
+    id_to_name: Dict[str, str] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        id_to_name[str(n.get("id"))] = n.get("table") or n.get("label") or str(n.get("id"))
+
+    tables: List[Dict[str, Any]] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        name = n.get("table") or n.get("label") or str(n.get("id"))
+        cols = [
+            {"name": c.get("name"), "type": str(c.get("type", "unknown"))}
+            for c in (n.get("columns") or [])
+            if isinstance(c, dict) and c.get("name")
+        ]
+        rels: List[Dict[str, Any]] = []
+        for e in edges:
+            if not isinstance(e, dict):
+                continue
+            if str(e.get("source")) == str(n.get("id")):
+                rels.append(
+                    {
+                        "target": id_to_name.get(str(e.get("target")), str(e.get("target"))),
+                        "label": e.get("relationship_type") or e.get("label") or "references",
+                    }
+                )
+        tables.append({"name": name, "columns": cols, "relationships": rels})
+    return tables
+
+
+def _fallback_catalog_table(table: Dict[str, Any]) -> Dict[str, Any]:
+    name = table.get("name") or "table"
+    cols = [
+        {
+            "physical_name": c.get("name"),
+            "business_definition": "",
+            "semantic_type": "attribute",
+            "confidence": 0.5,
+            "status": "NEEDS_REVIEW",
+        }
+        for c in (table.get("columns") or [])
+    ]
+    return {
+        "physical_name": name,
+        "category": "Uncategorized",
+        "description": "",
+        "business_purpose": "",
+        "business_concepts": [],
+        "common_questions": [],
+        "ai_confidence": 0.5,
+        "tags": [],
+        "status": "PENDING_REVIEW",
+        "is_ai_generated": True,
+        "columns": cols,
+        "last_updated": _now_iso(),
+    }
+
+
+async def _llm_enrich_table(db_type: Optional[str], table: Dict[str, Any]) -> Dict[str, Any]:
+    """Call the LLM microservice to enrich a single table; fall back gracefully."""
+    endpoint = os.getenv(
+        "ONTOLOGY_ENRICH_TABLE_URL", "http://127.0.0.1:8001/api/ontology/enrich-table"
+    )
+    timeout_seconds = float(os.getenv("ONTOLOGY_ENRICH_TABLE_TIMEOUT", "90"))
+    body = {
+        "db_type": db_type or "unknown",
+        "name": table.get("name"),
+        "columns": table.get("columns", []),
+        "relationships": table.get("relationships", []),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.post(endpoint, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("enrich-table returned non-object")
+        data.setdefault("physical_name", table.get("name"))
+        data.setdefault("status", "PENDING_REVIEW")
+        data.setdefault("is_ai_generated", True)
+        data["last_updated"] = _now_iso()
+        return data
+    except Exception as exc:
+        logger.warning("enrich-table call failed for %s | %s", table.get("name"), str(exc))
+        return _fallback_catalog_table(table)
+
+
+async def _run_catalog_generation(
+    connection_id: UUID,
+    tables_input: List[Dict[str, Any]],
+    db_type: Optional[str],
+) -> None:
+    """Background worker: enrich every table, persisting incrementally."""
+    key = str(connection_id)
+    job = _CATALOG_JOBS.get(key)
+    if job is None:
+        return
+    worker_db = SessionLocal()
+    try:
+        version = _get_latest_ontology_version(worker_db, connection_id)
+        if not version:
+            job["status"] = "error"
+            job["error"] = "No ontology version to attach catalog to."
+            return
+
+        ontology = _safe_json_loads(version.ontology_json, {}) or {}
+        existing: Dict[str, Dict[str, Any]] = {
+            t.get("physical_name"): t
+            for t in (ontology.get("tables") or [])
+            if isinstance(t, dict) and t.get("physical_name")
+        }
+        total = max(len(tables_input), 1)
+
+        for idx, table in enumerate(tables_input):
+            name = table.get("name")
+            job["per_table"][name] = "generating"
+            stage_idx = min(int(idx / total * len(_CATALOG_STAGES)), len(_CATALOG_STAGES) - 1)
+            job["current_stage"] = _CATALOG_STAGES[stage_idx]
+
+            enriched = await _llm_enrich_table(db_type, table)
+            existing[name] = enriched
+
+            job["per_table"][name] = "completed"
+            job["completed_tables"] = idx + 1
+
+            # Persist partial progress so polling reflects incremental completion.
+            ontology["tables"] = list(existing.values())
+            version.ontology_json = json.dumps(ontology)
+            worker_db.commit()
+
+        # Finalize metadata + confidence summary.
+        confidences = [
+            float(t.get("ai_confidence") or 0)
+            for t in existing.values()
+            if isinstance(t, dict)
+        ]
+        avg_conf = round(sum(confidences) / len(confidences), 3) if confidences else 0.0
+        meta = ontology.setdefault("metadata", {})
+        meta["catalog_generated_at"] = _now_iso()
+        meta["catalog_table_count"] = len(existing)
+        meta["catalog_avg_confidence"] = avg_conf
+        ontology["tables"] = list(existing.values())
+        version.ontology_json = json.dumps(ontology)
+        worker_db.commit()
+
+        job["status"] = "completed"
+        job["current_stage"] = "Completed"
+        job["completed_at"] = _now_iso()
+        job["avg_confidence"] = avg_conf
+    except Exception as exc:
+        logger.exception("Catalog generation failed for %s | %s", key, str(exc))
+        job["status"] = "error"
+        job["error"] = str(exc)
+    finally:
+        worker_db.close()
+
+
+def _catalog_status_payload(connection_id: UUID, db: Session) -> Dict[str, Any]:
+    version = _get_latest_ontology_version(db, connection_id)
+    ontology_payload = _safe_json_loads(version.ontology_json, {}) if version else {}
+    graph_payload = (
+        _safe_json_loads(version.graph_json, {"nodes": [], "edges": [], "stats": {}})
+        if version
+        else {"nodes": [], "edges": [], "stats": {}}
+    )
+    tables = ontology_payload.get("tables", []) if isinstance(ontology_payload, dict) else []
+    job = _CATALOG_JOBS.get(str(connection_id))
+
+    if job:
+        job_info = {
+            "status": job.get("status"),
+            "total_tables": job.get("total_tables", 0),
+            "completed_tables": job.get("completed_tables", 0),
+            "current_stage": job.get("current_stage"),
+            "per_table": job.get("per_table", {}),
+            "started_at": job.get("started_at"),
+            "completed_at": job.get("completed_at"),
+            "avg_confidence": job.get("avg_confidence"),
+            "error": job.get("error"),
+        }
+    elif tables:
+        meta = ontology_payload.get("metadata", {}) if isinstance(ontology_payload, dict) else {}
+        job_info = {
+            "status": "completed",
+            "total_tables": len(tables),
+            "completed_tables": len(tables),
+            "current_stage": "Completed",
+            "per_table": {t.get("physical_name"): t.get("status", "completed") for t in tables if isinstance(t, dict)},
+            "started_at": None,
+            "completed_at": meta.get("catalog_generated_at"),
+            "avg_confidence": meta.get("catalog_avg_confidence"),
+            "error": None,
+        }
+    else:
+        job_info = {
+            "status": "idle",
+            "total_tables": 0,
+            "completed_tables": 0,
+            "current_stage": None,
+            "per_table": {},
+            "started_at": None,
+            "completed_at": None,
+            "avg_confidence": None,
+            "error": None,
+        }
+
+    return {
+        "job": job_info,
+        "ontology_version_id": str(version.id) if version else None,
+        "version_label": version.version_label if version else None,
+        "status": version.status if version else None,
+        "is_base": bool(version.is_base) if version else False,
+        "graph": graph_payload,
+        "ontology": ontology_payload if isinstance(ontology_payload, dict) else {},
+    }
+
+
+@require_permission(Permission.EDIT_DATASOURCE)
+async def generate_catalog(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    """
+    Start a datasource-level AI Catalog generation. Ensures a base ontology
+    exists, then kicks off a background job that enriches every table. Returns
+    the initial job snapshot immediately; the frontend polls the status endpoint.
+    """
+    db_connection = _get_connection_or_404(db, connection_id)
+
+    # If a job is already running for this connection, return its current state.
+    existing_job = _CATALOG_JOBS.get(str(connection_id))
+    if existing_job and existing_job.get("status") == "running":
+        return _catalog_status_payload(connection_id, db)
+
+    # Ensure a base ontology exists (bootstrap if needed).
+    version = _get_latest_ontology_version(db, connection_id)
+    if not version:
+        ontology = _build_base_ontology(db_connection)
+        ontology = await _llm_refine_ontology(
+            ontology=ontology,
+            db_schema_json=db_connection.db_schema,
+            db_type=db_connection.db_type,
+        )
+        graph = _ontology_to_graph(ontology)
+        user_id = token_payload.get("sub") if token_payload else None
+        version = OntologyVersionModel(
+            id=uuid4(),
+            datasource_connection_id=connection_id,
+            version_number=1,
+            version_label="base_v1",
+            status="published",
+            is_base=True,
+            ontology_json=json.dumps(ontology),
+            ontology_ttl=_ontology_to_ttl(ontology),
+            graph_json=json.dumps(graph),
+            created_by=UUID(user_id) if user_id else None,
+        )
+        db.add(version)
+        db.commit()
+        db.refresh(version)
+
+    tables_input = _extract_tables_for_catalog(db_connection)
+    _CATALOG_JOBS[str(connection_id)] = {
+        "status": "running",
+        "total_tables": len(tables_input),
+        "completed_tables": 0,
+        "current_stage": _CATALOG_STAGES[0],
+        "per_table": {t["name"]: "queued" for t in tables_input},
+        "started_at": _now_iso(),
+        "completed_at": None,
+        "avg_confidence": None,
+        "error": None,
+    }
+
+    # Launch background enrichment on the running event loop. Keep a reference to
+    # the task on the job registry so it is not garbage-collected mid-flight.
+    task = asyncio.create_task(
+        _run_catalog_generation(connection_id, tables_input, db_connection.db_type)
+    )
+    _CATALOG_JOBS[str(connection_id)]["_task"] = task
+
+    return _catalog_status_payload(connection_id, db)
+
+
+@require_permission(Permission.VIEW_DATASOURCE)
+async def get_catalog_status(connection_id: UUID, db: Session = Depends(get_db), token_payload: dict = None):
+    _get_connection_or_404(db, connection_id)
+    return _catalog_status_payload(connection_id, db)
 
 
 @require_permission(Permission.EDIT_DATASOURCE)
@@ -2674,7 +3253,12 @@ async def enrichment_chat_message(
     chat_history.append({"role": "user", "content": message})
     ontology = _safe_json_loads(base_version.ontology_json, {})
     llm_resp = await _llm_enrichment_chat(
-        ontology, chat_history, message, str(session_id), db_type=db_connection.db_type
+        ontology,
+        chat_history,
+        message,
+        str(session_id),
+        db_type=db_connection.db_type,
+        db_connection=db_connection,
     )
     assistant_message = llm_resp.get("assistant_message") or "I'm here to help! Feel free to share your business metrics, reporting rules, or any date preferences you'd like to set up."
     extracted_updates = llm_resp.get("extracted_updates") or {}
@@ -2815,6 +3399,25 @@ async def submit_enrichment_answers(
         enriched_ontology.setdefault("metadata", {})["enrichment_apply_error"] = True
     apply_elapsed = round(time.perf_counter() - apply_start, 3)
 
+    # NEW LOGIC: Mirror the metrics into the Data Explorer's business_metrics array
+    if "metrics" in answers_map and isinstance(answers_map["metrics"], dict):
+        business_metrics = enriched_ontology.setdefault("business_metrics", [])
+        for m_name, m_val in answers_map["metrics"].items():
+            if isinstance(m_val, dict) and m_val.get("formula"):
+                # Check if it already exists to update it, else append
+                existing = next((m for m in business_metrics if m.get("name") == m_name), None)
+                if existing:
+                    existing["formula"] = str(m_val["formula"])
+                    existing["description"] = str(m_val.get("description", ""))
+                else:
+                    business_metrics.append({
+                        "name": str(m_name),
+                        "formula": str(m_val["formula"]),
+                        "description": str(m_val.get("description", "")),
+                        "source": "Chatbot",
+                        "status": "APPROVED"
+                    })
+
     # Validate metric formulas against the actual schema. Metrics referencing
     # columns that don't exist would be ignored by NL2SQL anyway (it has strict
     # "no column hallucination" rules), so we drop them here and tell the user.
@@ -2900,6 +3503,31 @@ Rules:
   status="pending" with an empty formula and include a brief translation_error.
 
 ══════════════════════════════════════════════════
+POWER BI TABLE NAME RESOLUTION — CRITICAL RULE
+══════════════════════════════════════════════════
+Power BI DAX measures reference tables using two formats:
+  '<schema> <table>'[column]   e.g. 'cenomi target_gla_details'[target_gla]
+  '<table>'[column]             e.g. 'order_header'[price]
+
+The SPACE between the schema and table name is Power BI notation only.
+It does NOT become an underscore in SQL.
+
+You MUST resolve table references by looking at the `use_in_formula` hint
+provided for each column in `schema_columns`. This hint gives you the EXACT
+`table.column` string the database expects.
+
+FORBIDDEN — never join schema and table with an underscore:
+  ✗ cenomi_target_gla_details.target_gla   (incorrect: schema+table joined with _)
+  ✗ public_order_header.price              (incorrect: same error)
+
+CORRECT — always use the `use_in_formula` value from schema_columns:
+  ✓ target_gla_details.target_gla   (the bare table name, when schema is in search_path)
+  ✓ order_header.price
+
+If the DAX table reference has no matching entry in schema_columns, set
+status="pending" and leave the formula empty.
+
+══════════════════════════════════════════════════
 METRIC FORMULA FORMAT — CRITICAL RULE
 ══════════════════════════════════════════════════
 - Metrics are EXPRESSIONS, not SQL queries.
@@ -2973,7 +3601,53 @@ into standard SQL. Never include them in the output formula.
       → Translate as: numerator / NULLIF(denominator, 0)  (or dialect equivalent)
 
 If you cannot translate a measure without one of the above constructs, set
-status="pending", formula="", and explain in translation_error.
+status="pending", but DO NOT leave formula empty if a meaningful SQL or composite formula can be written. Set formula to the best SQL approximation and explain in translation_error.
+
+══════════════════════════════════════════════════
+COMPOSITE MEASURES (MEASURE REFERENCING MEASURE)
+══════════════════════════════════════════════════
+Many DAX measures reference other measures rather than physical database columns
+(e.g., [Gross Profit] / [Net Sales] or [GLA Leased YTD %] referencing [GLA Leased YTD]).
+When translating a composite measure:
+- You MUST preserve references to other known measures present in the input `measures` list by using their exact or snake_case measure names (e.g., gross_profit / NULLIF(net_sales, 0)).
+- Do NOT reject or mark status="pending" just because a measure references another measure in the model.
+- Set status="active" if all referenced measures or columns exist in the model or schema.
+
+══════════════════════════════════════════════════
+COLUMN EXISTENCE VALIDATION — MANDATORY
+══════════════════════════════════════════════════
+Before emitting ANY formula you MUST verify that every column or measure referenced in the
+output formula exists in the provided schema_columns list OR in the input measures list.
+
+This rule applies to ALL column references, including those inside:
+  - FILTER (WHERE col IN (...)) or FILTER (WHERE col ILIKE '...')
+  - CALCULATE(<expr>, Table[col] = "value") filter conditions
+  - CASE WHEN col = 'value' THEN ... constructs
+  - JOIN ON conditions or any other conditional expression
+
+If ANY identifier in the translated formula does NOT appear in schema_columns AND is NOT another measure name in the model:
+  → Set status="pending"
+  → Set formula="" (or best approximation if partial)
+  → Set translation_error to explain which column is missing
+
+EXAMPLE — column missing in schema (mark pending):
+  DAX: CALCULATE(SUM('deals'[total_gla]),
+                 FILTER('deals', 'deals'[admin_display_status] IN {"Rejected"}))
+  schema_columns contains: total_gla, deal_id, tenant_name
+  (admin_display_status is NOT present)
+  ✓ Correct output: {"status": "pending", "formula": "",
+                      "translation_error": "Column 'admin_display_status' not found in schema_columns"}
+
+EXAMPLE — all columns exist (emit formula):
+  DAX: CALCULATE(SUM('deals'[total_gla]),
+                 FILTER('deals', 'deals'[deal_status] IN {"Active"}))
+  schema_columns contains: total_gla, deal_id, deal_status
+  ✓ Correct output: {"status": "active",
+                      "formula": "SUM(deals.total_gla) FILTER (WHERE deals.deal_status IN ('Active'))"}
+
+NEVER emit a formula that uses a physical column name absent from schema_columns.
+Even if the column name appears plausible or was present in the DAX source, if it
+is not in schema_columns it does NOT exist in the target SQL database.
 
 Output format — return a JSON array:
 [
@@ -3030,7 +3704,28 @@ async def _translate_dax_measures(
     measures: List[Dict[str, Any]],
     schema_columns: Dict[str, list],
     db_type: Optional[str],
+    db_connection: Optional["DatabaseConnectionModel"] = None,
 ) -> List[Dict[str, Any]]:
+    # Fix 1 — augment ontology-derived schema_columns with every real column from
+    # the connection's raw db_schema / ds_graph_json so the LLM has the authoritative
+    # and complete column list when translating DAX filter expressions.
+    if db_connection is not None:
+        raw_cols = _build_raw_schema_columns(db_connection)
+        merged: Dict[str, list] = dict(raw_cols)
+        for table, cols in schema_columns.items():
+            if table not in merged:
+                merged[table] = list(cols)
+            else:
+                existing_names = {
+                    c.get("name", "").lower()
+                    for c in merged[table]
+                    if isinstance(c, dict)
+                }
+                for col in cols:
+                    if isinstance(col, dict) and col.get("name", "").lower() not in existing_names:
+                        merged[table].append(col)
+        schema_columns = merged
+
     dialect_instructions = _get_db_type_sql_instructions(db_type)
     system_prompt = _DAX_TRANSLATION_SYSTEM_PROMPT + "\n" + dialect_instructions
 
@@ -3108,7 +3803,9 @@ async def process_pbit_upload(
         c for c in (current_ontology.get("classes") or []) if isinstance(c, dict)
     ]
 
-    translated = await _translate_dax_measures(measures, schema_columns, db_connection.db_type)
+    translated = await _translate_dax_measures(
+        measures, schema_columns, db_connection.db_type, db_connection
+    )
 
     existing_metrics: List[Dict[str, Any]] = [
         m for m in (current_ontology.get("metrics") or []) if isinstance(m, dict)
