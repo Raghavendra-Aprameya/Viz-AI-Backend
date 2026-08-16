@@ -674,6 +674,15 @@ class GenerateKpiQueriesResponse(BaseModel):
     generated: bool
 
 
+class RegenerateKpiRequest(BaseModel):
+    """
+    Request model for regenerating a single KPI query.
+    """
+    connection_id: str
+    label: str
+    failed_query: str
+
+
 class UpdateRoleRequest(BaseModel):
     """
     Request model for updating a role.

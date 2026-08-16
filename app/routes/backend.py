@@ -83,6 +83,7 @@ from app.schemas import (
     OntologyVersionResponse,
     StartOntologyEnrichmentResponse,
     GenerateKpiQueriesRequest,
+    RegenerateKpiRequest,
     GenerateKpiQueriesResponse,
 )
 
@@ -107,6 +108,7 @@ from app.services.project import (
     update_blacklist_service,
     read_data_service,
     generate_kpi_queries_service,
+    regenerate_kpi_service,
 )
 
 from app.services.db_connection import (
@@ -1397,6 +1399,29 @@ async def generate_kpi_queries_route(
         db_type=data.db_type,
         num_kpis=data.num_kpis,
         force=data.force,
+        db=db,
+        token_payload=token_payload,
+    )
+
+
+@backend_router.post(
+    "/dashboards/{dashboard_id}/regenerate-kpi",
+    status_code=status.HTTP_200_OK,
+)
+async def regenerate_kpi_route(
+    dashboard_id: UUID = Path(..., description="Dashboard ID"),
+    data: RegenerateKpiRequest = None,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(get_current_user),
+):
+    """
+    Regenerate a single KPI query after it failed or returned 0.
+    """
+    return await regenerate_kpi_service(
+        dashboard_id=dashboard_id,
+        connection_id=data.connection_id,
+        label=data.label,
+        failed_query=data.failed_query,
         db=db,
         token_payload=token_payload,
     )

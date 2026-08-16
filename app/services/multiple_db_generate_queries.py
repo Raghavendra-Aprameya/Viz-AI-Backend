@@ -14,7 +14,7 @@ from app.utils.crypt import decrypt_string
 
 
 logger = logging.getLogger(__name__)
-LLM_ENDPOINT = "http://localhost:8001/generate_multiple_db_queries"
+LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "http://localhost:8001/generate_multiple_db_queries")
 
 def parse_query_metadata(response: dict):
     parsed_queries = []

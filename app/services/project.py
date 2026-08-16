@@ -1400,3 +1400,96 @@ async def generate_kpi_queries_service(
         ) from db_err
 
     return {"kpi_queries": kpi_queries, "generated": True}
+
+async def regenerate_kpi_service(
+    dashboard_id: UUID,
+    connection_id: str,
+    label: str,
+    failed_query: str,
+    db: Session,
+    token_payload: dict,
+) -> Dict[str, Any]:
+    """
+    Regenerates a single KPI query after it failed or returned 0, and updates the dashboard.
+    """
+    dashboard = db.query(DashboardModel).filter(DashboardModel.id == dashboard_id).first()
+    if not dashboard:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+
+    connection_record = (
+        db.query(DatabaseConnectionModel)
+        .filter(DatabaseConnectionModel.id == UUID(str(connection_id)))
+        .first()
+    )
+    if not connection_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database connection {connection_id} not found",
+        )
+    
+    db_schema = connection_record.db_schema or {}
+    if isinstance(db_schema, str):
+        try:
+            import json as _json
+            db_schema = _json.loads(db_schema)
+        except Exception:
+            pass
+            
+    db_type = connection_record.db_type or "postgres"
+
+    llm_payload: Dict[str, Any] = {
+        "db_schema": db_schema,
+        "db_type": db_type,
+        "connection_id": str(connection_id),
+        "label": label,
+        "failed_query": failed_query,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(f"{LLM_KPI_URL}/regenerate", json=llm_payload)
+            response.raise_for_status()
+            new_kpi = response.json()
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LLM service unreachable: {str(exc)}",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM service error: {exc.response.status_code} - {exc.response.text}",
+        ) from exc
+
+    # Update the dashboard's kpi_queries array
+    if dashboard.kpi_queries:
+        updated_kpis = []
+        # Create a new list to trigger SQLAlchemy JSON modification tracking, or use flag_modified
+        for k in dashboard.kpi_queries:
+            if k.get("label") == label:
+                # Merge old descriptor with new fields (query, format, subtitle)
+                updated_kpi = dict(k)
+                updated_kpi.update(new_kpi)
+                updated_kpis.append(updated_kpi)
+                # Keep a reference to return it
+                new_kpi_full = updated_kpi
+            else:
+                updated_kpis.append(k)
+        
+        dashboard.kpi_queries = updated_kpis
+        
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(dashboard, "kpi_queries")
+            db.commit()
+            db.refresh(dashboard)
+        except SQLAlchemyError as db_err:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save KPI query update: {str(db_err)}",
+            ) from db_err
+            
+        return {"success": True, "kpi": new_kpi_full}
+    
+    raise HTTPException(status_code=400, detail="Dashboard has no existing KPIs to update")
